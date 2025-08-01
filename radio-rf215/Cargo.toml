@@ -1,0 +1,10 @@
+[package]
+name = "radio-rf215"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embedded-hal = "1.0.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libgpiod = "0.2.2"
