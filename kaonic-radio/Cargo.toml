@@ -1,0 +1,14 @@
+[package]
+name = "kaonic-radio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+radio-rf215 = { path="../radio-rf215/" }
+log = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libgpiod = "0.2.2"
+linux-embedded-hal = { version = "0.4.0", default-features = false, features = [ "spi" ] }
+
+

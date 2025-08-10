@@ -1,0 +1,13 @@
+
+[build]
+target = "armv7-unknown-linux-gnueabihf"
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-ostl-linux-gnueabi-gcc"
+rustflags = [
+    "-C", "link-arg=--sysroot=/opt/st/stm32mp1-kaonic-protob/5.0.3-snapshot/sysroots/cortexa7t2hf-neon-vfpv4-ostl-linux-gnueabi/",
+    "-C", "target-cpu=cortex-a7",
+    "-C", "link-arg=-mfloat-abi=hard",
+    "-C", "link-arg=-mcpu=cortex-a7",
+    "-L", "/opt/st/stm32mp1-kaonic-protob/5.0.3-snapshot/sysroots/cortexa7t2hf-neon-vfpv4-ostl-linux-gnueabi/lib"
+]

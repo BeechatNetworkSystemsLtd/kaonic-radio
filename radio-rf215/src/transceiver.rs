@@ -21,6 +21,14 @@ impl Band for Band24 {
     const MAX_CHANNEL: RadioChannel = 511;
 }
 
-pub struct Transreceiver<B: Band, I: Bus + Copy> {
+pub struct Transreceiver<B: Band, I: Bus> {
     radio: Radio<B, I>,
+}
+
+impl<B: Band, I: Bus> Transreceiver<B, I> {
+    pub(crate) fn new() -> Self {
+        Self {
+            radio: Radio::<B, I>::new(),
+        }
+    }
 }

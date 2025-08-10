@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package kaonic;
+
+import "kaonic.proto";
+
+message TestCase {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message FactoryTestCaseResponse {
+  repeated TestCase test_cases = 1;
+}
+
+enum TestStatus {
+  PENDING = 0;
+  RUNNING = 1;
+  PASSED = 2;
+  FAILED = 3;
+  SKIPPED = 4;
+}
+
+message TestResult {
+  string test_id = 1;
+  TestStatus status = 2;
+  string message = 3;
+  int64 duration_ms = 4;
+}
+
+message RunTestRequest {
+  string test_id = 1;
+}
+
+message RunAllTestsRequest {}
+
+message TestStatusUpdate {
+  string test_id = 1;
+  TestStatus status = 2;
+  string message = 3;
+  int64 duration_ms = 4;
+  int32 current_test = 5;
+  int32 total_tests = 6;
+}
+
+message DeviceInfoResponse {
+  string serial = 1;
+  string machine = 2;
+}
+
+service Factory {
+  rpc GetTestCases(kaonic.Empty) returns (FactoryTestCaseResponse) {}
+  rpc RunTest(RunTestRequest) returns (TestResult) {}
+  rpc RunAllTests(RunAllTestsRequest) returns (stream TestStatusUpdate) {}
+  rpc GetDeviceInfo(kaonic.Empty) returns (DeviceInfoResponse) {}
+}
+

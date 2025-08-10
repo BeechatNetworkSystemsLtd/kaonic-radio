@@ -1,10 +1,11 @@
+use core::cell::RefCell;
 use core::marker::PhantomData;
 
 use crate::{
     bus::Bus,
     error::RadioError,
     regs::{
-        RG_RFXX_CCF0L, RG_RFXX_CMD, RG_RFXX_CNL, RG_RFXX_CNM, RG_RFXX_CS,
+        self, RG_RFXX_CCF0L, RG_RFXX_CMD, RG_RFXX_CNL, RG_RFXX_CNM, RG_RFXX_CS,
         RG_RFXX_FREQ_RESOLUTION_KHZ, RegisterAddress,
     },
 };
@@ -26,16 +27,15 @@ pub trait Band {
     const MAX_CHANNEL: RadioChannel;
 }
 
-pub struct RadioInterrupt {
-    mask: u8,
+/// Power amplifier current
+pub enum Pacur {
+    Reduction22mA = 0x00, // 3dB reduction of max. small signal gain
+    Reduction18mA = 0x01, // 2dB reduction of max. small signal gain
+    Reduction11mA = 0x02, // 1dB reduction of max. small signal gain
+    NoReduction = 0x03,   // max. transmit small signal gain
 }
 
-impl RadioInterrupt {
-    pub const fn new() -> Self {
-        Self { mask: 0 }
-    }
-}
-
+#[derive(Debug, PartialEq, Eq)]
 pub enum RadioState {
     PowerOff,
     Sleep,
@@ -43,6 +43,7 @@ pub enum RadioState {
     TrxPrep,
     Tx,
     Rx,
+    Transition,
 }
 
 /// Represents radio module part of the transceiver
@@ -50,28 +51,28 @@ pub enum RadioState {
 pub struct Radio<B, I>
 where
     B: Band,
-    I: Bus + Copy,
+    I: Bus,
 {
-    bus: I,
     state: RadioState,
     _band: PhantomData<B>,
+    _bus: PhantomData<I>,
 }
 
 impl<B, I> Radio<B, I>
 where
     B: Band,
-    I: Bus + Copy,
+    I: Bus,
 {
-    pub fn new(bus: I) -> Self {
+    pub fn new() -> Self {
         Self {
-            bus,
             state: RadioState::PowerOff,
             _band: PhantomData::default(),
+            _bus: PhantomData::default(),
         }
     }
 
     /// Requests transition into a 'state'
-    fn set_state(&mut self, state: RadioState) -> Result<(), RadioError> {
+    pub fn set_state(&mut self, bus: &mut I, state: RadioState) -> Result<(), RadioError> {
         let cmd = match state {
             RadioState::PowerOff => 0x00u8,
             RadioState::Sleep => 0x01u8,
@@ -79,18 +80,39 @@ where
             RadioState::TrxPrep => 0x03u8,
             RadioState::Tx => 0x04u8,
             RadioState::Rx => 0x05u8,
+            RadioState::Transition => return Err(RadioError::IncorrectState),
         };
 
-        self.bus.write_reg_u8(Self::abs_reg(RG_RFXX_CMD), cmd)?;
+        self.state = RadioState::Transition;
+
+        bus.write_reg_u8(Self::abs_reg(RG_RFXX_CMD), cmd)
+            .map_err(|e| e.into())
+    }
+
+    pub fn wait_on_state(
+        &mut self,
+        _bus: &mut I,
+        expected_state: RadioState,
+    ) -> Result<(), RadioError> {
+        // Can't wait for a transition state
+        if expected_state == RadioState::Transition {
+            return Err(RadioError::IncorrectState);
+        }
 
         Ok(())
     }
 
-    pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
-        match self.state {
-            RadioState::TrxOff => return Err(RadioError::IncorrectState),
-            _ => (),
-        }
+    pub fn wait_interrupt(&mut self, bus: &mut I, timeout: core::time::Duration) -> bool {
+        bus.wait_interrupt(timeout)
+    }
+
+    /// Configures Radio for a specific frequency, spacing and channel
+    pub fn set_frequency(
+        &mut self,
+        bus: &mut I,
+        config: &RadioFrequencyConfig,
+    ) -> Result<(), RadioError> {
+        self.assert_state(RadioState::TrxOff)?;
 
         if config.freq < B::MIN_FREQUENCY
             || config.freq > B::MAX_FREQUENCY
@@ -110,27 +132,47 @@ where
 
         let freq = (config.freq - B::FREQUENCY_OFFSET) / RG_RFXX_FREQ_RESOLUTION_KHZ;
 
-        self.bus.write_reg_u8(Self::abs_reg(RG_RFXX_CS), cs as u8)?;
+        bus.write_reg_u8(Self::abs_reg(RG_RFXX_CS), cs as u8)?;
 
-        self.bus
-            .write_reg_u16(Self::abs_reg(RG_RFXX_CCF0L), freq as u16)?;
+        bus.write_reg_u16(Self::abs_reg(RG_RFXX_CCF0L), freq as u16)?;
 
         let channel = config.channel.to_le_bytes();
 
-        self.bus
-            .write_reg_u8(Self::abs_reg(RG_RFXX_CNL), channel[0])?;
+        bus.write_reg_u8(Self::abs_reg(RG_RFXX_CNL), channel[0])?;
 
         // Using IEEE-compliant Scheme
-        self.bus
-            .write_reg_u8(Self::abs_reg(RG_RFXX_CNM), 0x00 | channel[1])?;
+        bus.write_reg_u8(Self::abs_reg(RG_RFXX_CNM), 0x00 | channel[1])?;
 
         Ok(())
     }
 
-    pub fn reset(&mut self) {
-        self.bus.hardware_reset();
+    /// Set Power Amplifier settings
+    pub fn set_pac(&mut self, bus: &mut I, pacur: Pacur, tx_power: u8) -> Result<(), RadioError> {
+        let mut value = (pacur as u8) << 5;
+
+        value = value | core::cmp::min(31, tx_power);
+
+        bus.write_reg_u8(regs::RG_RFXX_PAC, value)
+            .map_err(|e| e.into())
     }
 
+    pub fn reset(&mut self, bus: &mut I) -> Result<(), RadioError> {
+        bus.hardware_reset().map_err(RadioError::from)?;
+
+        self.set_state(bus, RadioState::TrxOff)?;
+
+        Ok(())
+    }
+
+    pub fn assert_state(&self, expected_state: RadioState) -> Result<(), RadioError> {
+        if self.state != expected_state {
+            Err(RadioError::IncorrectState)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Returns absolute register address for a specified `Band`
     const fn abs_reg(addr: RegisterAddress) -> RegisterAddress {
         B::RADIO_ADDRESS + addr
     }

@@ -1,5 +1,6 @@
 use crate::bus::BusError;
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum RadioError {
     IncorrectConfig,
     IncorrectState,
