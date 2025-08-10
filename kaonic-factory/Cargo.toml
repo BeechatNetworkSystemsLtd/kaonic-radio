@@ -2,6 +2,8 @@
 name = "kaonic-factory"
 version = "0.1.0"
 edition = "2021"
+description = "Factory Service for Kaonic"
+repository = "https://github.com/BeechatNetworkSystemsLtd/kaonic-radio"
 
 [dependencies]
 
