@@ -1,7 +1,7 @@
 [package]
 name = "radio-rf215"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 embedded-hal = "1.0.0"
