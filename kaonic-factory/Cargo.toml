@@ -2,6 +2,7 @@
 name = "kaonic-factory"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 description = "Factory Service for Kaonic"
 repository = "https://github.com/BeechatNetworkSystemsLtd/kaonic-radio"
 
