@@ -1,8 +1,8 @@
 use linux::{LinuxGpioConfig, LinuxSpiConfig};
 use linux_embedded_hal::spidev::SpidevOptions;
 use radio_rf215::{
-    Rf215,
     bus::{BusError, SpiBus},
+    Rf215,
 };
 
 mod linux;
@@ -59,6 +59,8 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
     },
 ];
 
+const RADIO_CONFIG_REV_C: [RadioBusConfig; 2] = RADIO_CONFIG_REV_B;
+
 pub fn create_radios() -> Result<[Option<Rf215<PlatformBus>>; 2], BusError> {
     // Read machine configuration from /etc/kaonic/kaonic_machine
     let machine_config = match std::fs::read_to_string("/etc/kaonic/kaonic_machine") {
@@ -78,6 +80,7 @@ pub fn create_radios() -> Result<[Option<Rf215<PlatformBus>>; 2], BusError> {
     let radio_configs = match machine_config.as_str() {
         "stm32mp1-kaonic-protoa" => &RADIO_CONFIG_REV_A,
         "stm32mp1-kaonic-protob" => &RADIO_CONFIG_REV_B,
+        "stm32mp1-kaonic-protoc" => &RADIO_CONFIG_REV_C,
         _ => {
             log::warn!(
                 "Unknown machine configuration '{}', using rev_a as default",
