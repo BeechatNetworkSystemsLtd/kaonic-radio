@@ -2,9 +2,12 @@ use bus::{Bus, BusError};
 use error::RadioError;
 use transceiver::{Band09, Band24, Transreceiver};
 
+use crate::radio::Band;
+
 pub mod baseband;
 pub mod bus;
 pub mod error;
+pub mod frame;
 pub mod radio;
 pub mod regs;
 pub mod transceiver;
@@ -46,7 +49,18 @@ impl<I: Bus> Rf215<I> {
         })
     }
 
-    pub fn reset(&mut self) -> Result<(), RadioError> {
+    pub fn trx_09(&mut self) -> &mut Transreceiver<Band09, I> {
+        &mut self.trx_09
+    }
+
+    pub fn trx_24(&mut self) -> &mut Transreceiver<Band24, I> {
+        &mut self.trx_24
+    }
+
+    pub fn reset(&mut self, bus: &mut I) -> Result<(), RadioError> {
+        self.trx_09.reset(bus)?;
+        self.trx_24.reset(bus)?;
+
         Ok(())
     }
 

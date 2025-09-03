@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 
+use core::marker::PhantomData;
+
 /// AT86RF215 Datasheet: Register Summary
 
 pub type RegisterAddress = u16;
 pub type RegisterValue = u8;
 
-pub(crate) const RG_RFXX_FREQ_RESOLUTION_KHZ: u32 = 25;
+pub(crate) const RG_RFXX_FREQ_RESOLUTION_HZ: u32 = 25000;
 
 // Operation Modificators
 pub(crate) const RG_OP_WRITE: RegisterAddress = 0x8000;
@@ -160,9 +162,14 @@ pub(crate) const RG_BBCX_FBRXS: RegisterAddress = 0x0000;
 pub(crate) const RG_BBCX_FBRXE: RegisterAddress = 0x07FE;
 pub(crate) const RG_BBCX_FBTXS: RegisterAddress = 0x0800;
 pub(crate) const RG_BBCX_FBTXE: RegisterAddress = 0x0FFE;
+pub(crate) const RG_BBCX_FRAME_SIZE: usize = 2048;
 
 /// 5.3.2.3 RFn_IRQS – Radio IRQ Status
-pub(crate) enum RadioInterruptMask {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum RadioInterrupt {
+    /// This bit is set to 1 if the wake-up procedure from state SLEEP/DEEP_SLEEP or power-up procedure is completed. It
+    /// also indicates the completion of the RESET procedure.
     Wakeup = 0b0000_0001,
 
     /// This bit is set to 1 if the command TXPREP is written to the register RFn_CMD and transceiver reaches the state
@@ -171,7 +178,90 @@ pub(crate) enum RadioInterruptMask {
     /// an IRQ TXFE or RXFE.
     TransceiverReady = 0b0000_0010,
 
+    /// This bit is set to 1 if a single or continuous energy measurement is completed. It is not set if the automatic energy
+    /// measurement mode is used
     EnergyDetectionCompletion = 0b0000_0100,
 
-    BatteryLow,
+    /// This bit is set to 1 if the battery monitor detects a voltage at EVDD that is below the threshold voltage
+    BatteryLow = 0b0000_1000,
+
+    /// This bit is set to 1 if a transceiver error is detected, i.e. a PLL lock error occurs
+    TransceiverError = 0b0001_0000,
+
+    /// This bit is set to 1 if the I/Q data interface synchronization fails.
+    IqIfSyncFail = 0b0010_0000,
 }
+
+impl Into<u8> for RadioInterrupt {
+    fn into(self) -> u8 {
+        self as u8
+    }
+}
+
+/// 5.3.2.4 BBCn_IRQS – Baseband IRQ Status
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum BasebandInterrupt {
+    ReceiverFrameStart = 0b0000_0001,
+    ReceiverFrameEnd = 0b0000_0010,
+    ReceiverAddressMatch = 0b0000_0100,
+    ReceiverExtendedMatch = 0b0000_1000,
+    TransmitterFrameEnd = 0b0001_0000,
+    AgcHold = 0b0010_0000,
+    AgcRelease = 0b0100_0000,
+    FrameBufferLevelIndication = 0b1000_0000,
+}
+
+impl Into<u8> for BasebandInterrupt {
+    fn into(self) -> u8 {
+        self as u8
+    }
+}
+
+#[derive(Debug)]
+pub struct InterruptMask<I: Into<u8>> {
+    mask: u8,
+    _irq: PhantomData<I>,
+}
+
+impl<I: Into<u8>> InterruptMask<I> {
+    pub fn new() -> Self {
+        Self {
+            mask: 0,
+            _irq: PhantomData::default(),
+        }
+    }
+
+    pub fn new_from_mask(mask: u8) -> Self {
+        Self {
+            mask: mask,
+            _irq: PhantomData::default(),
+        }
+    }
+
+    pub fn add_irq(&mut self, irq: I) -> &mut Self {
+        self.mask = self.mask | irq.into();
+        self
+    }
+
+    pub fn has_irq(&self, irq: I) -> bool {
+        (self.mask & irq.into()) != 0
+    }
+
+    pub fn clear_irq(&mut self, irq: I) -> &mut Self {
+        self.mask = self.mask & (!(irq.into()));
+        self
+    }
+
+    pub fn reset(&mut self) -> &mut Self {
+        self.mask = 0;
+        self
+    }
+
+    pub fn get(&self) -> u8 {
+        self.mask
+    }
+}
+
+pub type RadioInterruptMask = InterruptMask<RadioInterrupt>;
+pub type BasebandInterruptMask = InterruptMask<BasebandInterrupt>;
