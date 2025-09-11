@@ -20,20 +20,209 @@ pub struct RadioFrequencyConfig {
 pub trait Band {
     const RADIO_ADDRESS: RegisterAddress;
     const BASEBAND_ADDRESS: RegisterAddress;
+    const RADIO_IRQ_ADDRESS: RegisterAddress;
+    const BASEBAND_IRQ_ADDRESS: RegisterAddress;
     const MIN_FREQUENCY: RadioFrequency;
     const MAX_FREQUENCY: RadioFrequency;
     const FREQUENCY_OFFSET: RadioFrequency;
     const MAX_CHANNEL: RadioChannel;
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum FrontendPinConfig {
+    Mode0 = 0x00, // no Frontend control; FEAnn and FEBnn output is always 0
+    Mode1 = 0x01, // (1 pin is TX switch; 1 pin is RX switch; LNA can be bypassed)
+    Mode2 = 0x02, // (1 pin is enable, 1 pin is TXRX switch; 1 | 0 additional option)
+    Mode3 = 0x03, // (1 pin is TXRX switch, 1 pin is LNA Bypass, 1 pin (MCU) is enable)
+}
+
+pub struct AuxiliarySettings {
+    pub ext_lna_bypass: bool, // External LNA Bypass Availability
+    pub aven: bool,           // Analog Voltage Enable
+    pub avect: bool,          // Analog Voltage External Driven
+    pub pavol: PaVol,         //Power Amplifier Voltage Control
+    pub map: AgcGainMap,
+}
+
+impl Default for AuxiliarySettings {
+    fn default() -> Self {
+        Self {
+            ext_lna_bypass: false,
+            aven: false,
+            avect: false,
+            pavol: PaVol::Voltage2400mV,
+            map: AgcGainMap::Internal,
+        }
+    }
+}
+
+/// AGC Average Time in Number of Samples
+/// The time of averaging RX data samples for the AGC values is defined by number of samples
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum AgcAverageTime {
+    Samples8 = 0x00,
+    Samples16 = 0x01,
+    Samples32 = 0x02,
+    Samples64 = 0x03,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum AgcGainMap {
+    Internal = 0x00,
+    Extranal9dB = 0x01,
+    Extranal12dB = 0x02,
+}
+
+/// AGC Target Level
+/// the AGC target level relative to ADC full scale.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum AgcTargetLevel {
+    TargetN21dB = 0x00,
+    TargetN24dB = 0x01,
+    TargetN27dB = 0x02,
+    TargetN30dB = 0x03,
+    TargetN33dB = 0x04,
+    TargetN36dB = 0x05,
+    TargetN39dB = 0x06,
+    TargetN42dB = 0x07,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum FrequencySampleRate {
+    SampleRate4000kHz = 0x01,
+    SampleRate2000kHz = 0x02,
+    SampleRate1333kHz = 0x03,
+    SampleRate1000kHz = 0x04,
+    SampleRate800kHz = 0x05,
+    SampleRate666kHz = 0x06,
+    SampleRate500kHz = 0x08,
+    SampleRate400kHz = 0x0A,
+}
+
+/// Filter relative cut-off frequency
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum RelativeCutOff {
+    Fcut0_250 = 0x00,
+    Fcut0_375 = 0x01,
+    Fcut0_500 = 0x02,
+    Fcut0_750 = 0x03,
+    Fcut1_000 = 0x04,
+}
+
+/// Transmitter low pass filter cut-off frequency
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum TransmitterCutOff {
+    Flc80kHz = 0x00,
+    Flc100kHz = 0x01,
+    Flc125kHz = 0x02,
+    Flc160kHz = 0x03,
+    Flc200kHz = 0x04,
+    Flc250kHz = 0x05,
+    Flc315kHz = 0x06,
+    Flc400kHz = 0x07,
+    Flc500kHz = 0x08,
+    Flc625kHz = 0x09,
+    Flc800kHz = 0x0A,
+    Flc1000kHz = 0x0B,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum ReceiverBandwidth {
+    Bw160kHzIf250kHz = 0x0,   // fBW=160kHz; fIF=250kHz
+    Bw200kHzIf250kHz = 0x1,   // fBW=200kHz; fIF=250kHz
+    Bw250kHzIf250kHz = 0x2,   // fBW=250kHz; fIF=250kHz
+    Bw320kHzIf500kHz = 0x3,   // fBW=320kHz; fIF=500kHz
+    Bw400kHzIf500kHz = 0x4,   // fBW=400kHz; fIF=500kHz
+    Bw500kHzIf500kHz = 0x5,   // fBW=500kHz; fIF=500kHz
+    Bw630kHzIf1000kHz = 0x6,  //  fBW=630kHz; fIF=1000kHz
+    Bw800kHzIf1000kHz = 0x7,  // fBW=800kHz; fIF=1000kHz
+    Bw1000kHzIf1000kHz = 0x8, // fBW=1000kHz; fIF=1000kHz
+    Bw1250kHzIf2000kHz = 0x9, //fBW=1250kHz; fIF=2000kHz
+    Bw1600kHzIf2000kHz = 0xA, //fBW=1600kHz; fIF=2000kHz
+    Bw2000kHzIf2000kHz = 0xB, // fBW=2000kHz; fIF=2000kHz
+}
+
+/// Transmitter Frontend Configuration
+pub struct RadioTransmitterConfig {
+    pub sr: FrequencySampleRate,
+    pub rcut: RelativeCutOff,
+    pub lpfcut: TransmitterCutOff,
+    pub pacur: PaCur,
+    pub power: u8,
+}
+
+impl Default for RadioTransmitterConfig {
+    fn default() -> Self {
+        Self {
+            sr: FrequencySampleRate::SampleRate4000kHz,
+            rcut: RelativeCutOff::Fcut0_250,
+            lpfcut: TransmitterCutOff::Flc500kHz,
+            pacur: PaCur::NoReduction,
+            power: 1,
+        }
+    }
+}
+
+/// Receiver Frontend Configuration
+pub struct RadioReceiverConfig {
+    pub sr: FrequencySampleRate,
+    pub rcut: RelativeCutOff,
+    pub bw: ReceiverBandwidth,
+    pub if_inversion: bool,
+    pub if_shift: bool,
+}
+
+impl Default for RadioReceiverConfig {
+    fn default() -> Self {
+        Self {
+            sr: FrequencySampleRate::SampleRate4000kHz,
+            rcut: RelativeCutOff::Fcut0_250,
+            bw: ReceiverBandwidth::Bw2000kHzIf2000kHz,
+            if_inversion: false,
+            if_shift: false,
+        }
+    }
+}
+
+pub struct RadioTransreceiverConfig {
+    pub tx_config: RadioTransmitterConfig,
+    pub rx_config: RadioReceiverConfig,
+}
+
+impl Default for RadioTransreceiverConfig {
+    fn default() -> Self {
+        Self {
+            tx_config: Default::default(),
+            rx_config: Default::default(),
+        }
+    }
+}
+
+/// Power Amplifier Voltage
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum PaVol {
+    Voltage2000mV = 0x00,
+    Voltage2200mV = 0x01,
+    Voltage2400mV = 0x02,
+}
+
 /// Power amplifier current
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
-pub enum Pacur {
-    Reduction22mA = 0x00 << 5, // 3dB reduction of max. small signal gain
-    Reduction18mA = 0x01 << 5, // 2dB reduction of max. small signal gain
-    Reduction11mA = 0x02 << 5, // 1dB reduction of max. small signal gain
-    NoReduction = 0x03 << 5,   // max. transmit small signal gain
+pub enum PaCur {
+    Reduction22mA = 0x00, // 3dB reduction of max. small signal gain
+    Reduction18mA = 0x01, // 2dB reduction of max. small signal gain
+    Reduction11mA = 0x02, // 1dB reduction of max. small signal gain
+    NoReduction = 0x03,   // max. transmit small signal gain
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -113,7 +302,7 @@ where
         self.send_command(bus, command)
     }
 
-    pub fn set_irq_mask(
+    pub fn setup_irq(
         &mut self,
         bus: &mut I,
         irq_mask: RadioInterruptMask,
@@ -151,12 +340,10 @@ where
         timeout: core::time::Duration,
         state: RadioState,
     ) -> Result<RadioState, RadioError> {
-
         self.set_state(bus, state)?;
 
         self.wait_on_state(bus, timeout, |s| s == state)
     }
-
 
     pub fn read_state(&mut self, bus: &mut I) -> Result<RadioState, RadioError> {
         let state_value = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_STATE))?;
@@ -198,7 +385,6 @@ where
             } else {
                 break;
             }
-
         }
 
         self.set_state(bus, RadioState::Rx)?;
@@ -250,15 +436,6 @@ where
         Ok(())
     }
 
-    /// Set Power Amplifier settings
-    pub fn set_pac(&mut self, bus: &mut I, pacur: Pacur, tx_power: u8) -> Result<(), RadioError> {
-        let mut value = pacur as u8;
-        value = value | core::cmp::min(31, tx_power);
-
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_PAC), value)
-            .map_err(|e| e.into())
-    }
-
     pub fn read_rssi(&self, bus: &mut I) -> Result<i8, RadioError> {
         let value = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RSSI))?;
         let rssi = value as i8;
@@ -270,14 +447,164 @@ where
         Ok(rssi)
     }
 
-    pub fn read_irq(&mut self, bus: &mut I) -> Result<RadioInterruptMask, RadioError> {
-        let irq_status = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_IRQM))?;
+    pub fn wait_irq(
+        &mut self,
+        bus: &mut I,
+        irq_mask: RadioInterruptMask,
+        timeout: core::time::Duration,
+    ) -> bool {
+        let deadline = bus.deadline(timeout);
 
+        loop {
+            if bus.deadline_reached(deadline) {
+                break;
+            }
+
+            if bus.wait_interrupt(core::time::Duration::from_micros(100)) {
+                if let Ok(irqs) = self.read_irqs(bus) {
+                    if irqs.has_irqs(irq_mask) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    pub fn read_irqs(&mut self, bus: &mut I) -> Result<RadioInterruptMask, RadioError> {
+        let irq_status = bus.read_reg_u8(B::RADIO_IRQ_ADDRESS)?;
         Ok(RadioInterruptMask::new_from_mask(irq_status))
     }
 
     pub fn clear_irq(&mut self, bus: &mut I) -> Result<(), RadioError> {
-        let _ = self.read_irq(bus)?;
+        let _ = self.read_irqs(bus)?;
+        Ok(())
+    }
+
+    pub fn configure_transmitter(
+        &mut self,
+        bus: &mut I,
+        config: &RadioTransmitterConfig,
+    ) -> Result<(), RadioError> {
+        // Transmitter TX Digital Frontend
+        {
+            let mut txdfe = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_TXDFE))?;
+
+            // Clear SR and RCUT bits
+            txdfe = txdfe & 0b0001_0000;
+            txdfe = txdfe | (config.sr as u8) | ((config.rcut as u8) << 5);
+
+            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_TXDFE), txdfe)?;
+        }
+
+        // Transmitter Filter Cutoff Control and PA Ramp Time
+        {
+            let mut txcutc = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_TXCUTC))?;
+
+            // Clear SR and RCUT bits
+            txcutc = txcutc & 0b1111_0000;
+            txcutc = txcutc | (config.lpfcut as u8);
+
+            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_TXCUTC), txcutc)?;
+        }
+
+        // Transmitter Power Amplifier Control
+        {
+            let mut pac = 0u8;
+
+            pac = pac | core::cmp::min(31, config.power);
+            pac = pac | ((config.pacur as u8) << 5);
+
+            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_PAC), pac)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn configure_receiver(
+        &mut self,
+        bus: &mut I,
+        config: &RadioReceiverConfig,
+    ) -> Result<(), RadioError> {
+        // Receiver Digital Frontend
+        {
+            let mut rxdfe = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RXDFE))?;
+
+            // Clear SR and RCUT bits
+            rxdfe = rxdfe & 0b0001_0000;
+            rxdfe = rxdfe | (config.sr as u8) | ((config.rcut as u8) << 5);
+
+            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXDFE), rxdfe)?;
+        }
+
+        // Receiver Filter Bandwidth Control
+        {
+            let mut rxbwc = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC))?;
+
+            rxbwc = rxbwc & 0b1100_0000;
+            rxbwc = rxbwc | (config.bw as u8);
+
+            if config.if_inversion {
+                rxbwc = rxbwc | 0b0010_0000;
+            }
+
+            if config.if_shift {
+                rxbwc = rxbwc | 0b0001_0000;
+            }
+
+            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC), rxbwc)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn configure_transreceiver(
+        &mut self,
+        bus: &mut I,
+        config: &RadioTransreceiverConfig,
+    ) -> Result<(), RadioError> {
+        self.configure_transmitter(bus, &config.tx_config)?;
+        self.configure_receiver(bus, &config.rx_config)?;
+
+        Ok(())
+    }
+
+    pub fn set_control_pad(
+        &mut self,
+        bus: &mut I,
+        config: FrontendPinConfig,
+    ) -> Result<(), RadioError> {
+        let padfe = (config as u8) << 6;
+
+        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC), padfe)?;
+
+        Ok(())
+    }
+
+    pub fn set_aux_settings(
+        &mut self,
+        bus: &mut I,
+        settings: AuxiliarySettings,
+    ) -> Result<(), RadioError> {
+        let mut auxs = 0u8;
+
+        auxs = auxs | (settings.map as u8) << 5;
+        auxs = auxs | (settings.pavol as u8);
+
+        if settings.ext_lna_bypass {
+            auxs = auxs | 0b1000_0000;
+        }
+
+        if settings.aven {
+            auxs = auxs | 0b0000_1000;
+        }
+
+        if settings.avect {
+            auxs = auxs | 0b0001_0000;
+        }
+
+        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_AUXS), auxs)?;
 
         Ok(())
     }

@@ -2,9 +2,7 @@ use core::time::Duration;
 
 use embedded_hal::spi::{self, SpiDevice};
 
-use crate::regs::{RG_OP_READ, RG_OP_WRITE, RegisterAddress, RegisterValue};
-
-
+use crate::regs::{RegisterAddress, RegisterValue, RG_OP_READ, RG_OP_WRITE};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum BusError {
@@ -73,6 +71,14 @@ pub trait Bus {
 
     /// Helper method to get current time in milliseconds
     fn current_time(&mut self) -> u64;
+
+    fn deadline(&mut self, after: core::time::Duration) -> u128 {
+        (self.current_time() as u128) + after.as_millis()
+    }
+
+    fn deadline_reached(&mut self, deadline: u128) -> bool {
+        (self.current_time() as u128) > deadline
+    }
 
     /// Executes hardware reset of RF215 module
     fn hardware_reset(&mut self) -> Result<(), BusError>;

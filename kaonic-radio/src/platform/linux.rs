@@ -17,6 +17,11 @@ pub struct LinuxGpioConfig {
     pub line_name: &'static str,
 }
 
+pub struct LinuxGpioLineConfig {
+    pub chip: &'static str,
+    pub offset: u32,
+}
+
 pub struct LinuxSpiConfig {
     pub path: &'static str,
     pub max_speed: u32,
@@ -82,6 +87,53 @@ impl LinuxGpioReset {
     }
 }
 
+pub struct LinuxOutputPin {
+    line: Offset,
+    request: libgpiod::request::Request,
+}
+
+impl LinuxOutputPin {
+    pub fn new(line_name: &str, name: &str) -> Result<Self, libgpiod::Error> {
+        let gpio = create_gpio_by_name(name, line_name, {
+            let mut settings = libgpiod::line::Settings::new()?;
+            settings.set_direction(libgpiod::line::Direction::Output)?;
+            settings.set_output_value(Value::InActive)?;
+            settings.set_active_low(false);
+            settings
+        })?;
+
+        Ok(Self {
+            line: gpio.0,
+            request: gpio.1,
+        })
+    }
+
+    pub fn new_from_line(chip: &'static str, offset: u32, name: &str) -> Result<Self, libgpiod::Error> {
+        let gpio = create_gpio_by_line(name, LinuxGpioLineConfig { chip, offset }, {
+            let mut settings = libgpiod::line::Settings::new()?;
+            settings.set_direction(libgpiod::line::Direction::Output)?;
+            settings.set_output_value(Value::InActive)?;
+            settings.set_active_low(false);
+            settings
+        })?;
+
+        Ok(Self {
+            line: gpio.0,
+            request: gpio.1,
+        })
+    }
+
+    pub fn set_high(&mut self) -> Result<(), libgpiod::Error> {
+        self.request.set_value(self.line, Value::Active).map(|_| {})
+    }
+
+    pub fn set_low(&mut self) -> Result<(), libgpiod::Error> {
+        self.request
+            .set_value(self.line, Value::InActive)
+            .map(|_| {})
+    }
+}
+
 impl BusReset for LinuxGpioReset {
     fn hardware_reset(&mut self) -> Result<(), BusError> {
         self.request
@@ -118,6 +170,23 @@ impl BusClock for LinuxClock {
     fn current_time(&mut self) -> u64 {
         self.start_time.elapsed().as_millis() as u64
     }
+}
+
+fn create_gpio_by_line(
+    name: &str,
+    line: LinuxGpioLineConfig,
+    line_settings: libgpiod::line::Settings,
+) -> Result<(Offset, libgpiod::request::Request), libgpiod::Error> {
+    let chip = libgpiod::chip::Chip::open(&line.chip)?;
+
+    let mut line_config = libgpiod::line::Config::new()?;
+    line_config.add_line_settings(&[line.offset], line_settings)?;
+
+    let mut req_config = libgpiod::request::Config::new()?;
+
+    let request = chip.request_lines(Some(req_config.set_consumer(name)?), &line_config)?;
+
+    return Ok((line.offset, request));
 }
 
 fn create_gpio_by_name(

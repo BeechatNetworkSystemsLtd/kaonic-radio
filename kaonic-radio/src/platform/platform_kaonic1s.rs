@@ -5,7 +5,10 @@ use radio_rf215::{
     Rf215,
 };
 
-use crate::RadioModule;
+use crate::{
+    platform::platform_impl::linux::{LinuxGpioLineConfig, LinuxOutputPin},
+    RadioFem, RadioModule,
+};
 
 mod linux;
 
@@ -17,6 +20,9 @@ struct RadioBusConfig {
     rst_gpio: LinuxGpioConfig,
     irq_gpio: LinuxGpioConfig,
     spi: LinuxSpiConfig,
+    flt_v1_gpio: LinuxGpioLineConfig,
+    flt_v2_gpio: LinuxGpioLineConfig,
+    flt_24_gpio: LinuxGpioLineConfig,
 }
 
 const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
@@ -28,6 +34,18 @@ const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
             path: "/dev/spidev6.0",
             max_speed: 5_000_000,
         },
+        flt_v1_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip8",
+            offset: 10,
+        },
+        flt_v2_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip8",
+            offset: 11,
+        },
+        flt_24_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip8",
+            offset: 12,
+        },
     },
     RadioBusConfig {
         name: "rfb",
@@ -36,6 +54,18 @@ const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
         spi: LinuxSpiConfig {
             path: "/dev/spidev3.0",
             max_speed: 5_000_000,
+        },
+        flt_v1_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip8",
+            offset: 0,
+        },
+        flt_v2_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip8",
+            offset: 1,
+        },
+        flt_24_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip8",
+            offset: 2,
         },
     },
 ];
@@ -49,6 +79,18 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
             path: "/dev/spidev6.0",
             max_speed: 5_000_000,
         },
+        flt_v1_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 10,
+        },
+        flt_v2_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 11,
+        },
+        flt_24_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 12,
+        },
     },
     RadioBusConfig {
         name: "rfb",
@@ -58,12 +100,24 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
             path: "/dev/spidev3.0",
             max_speed: 5_000_000,
         },
+        flt_v1_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 0,
+        },
+        flt_v2_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 1,
+        },
+        flt_24_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 2,
+        },
     },
 ];
 
 const RADIO_CONFIG_REV_C: [RadioBusConfig; 2] = RADIO_CONFIG_REV_B;
 
-pub fn create_radios() -> Result<[Option<RadioModule<PlatformBus>>; 2], BusError> {
+pub fn create_radios() -> Result<[Option<RadioModule<PlatformBus, KaonicRadioFem>>; 2], BusError> {
     // Read machine configuration from /etc/kaonic/kaonic_machine
     let machine_config = match std::fs::read_to_string("/etc/kaonic/kaonic_machine") {
         Ok(content) => content.trim().to_string(),
@@ -92,7 +146,7 @@ pub fn create_radios() -> Result<[Option<RadioModule<PlatformBus>>; 2], BusError
         }
     };
 
-    let mut radios: [Option<RadioModule<PlatformBus>>; 2] = [None, None];
+    let mut radios: [Option<RadioModule<PlatformBus, KaonicRadioFem>>; 2] = [None, None];
 
     // Create radios based on selected configuration
     for (index, config) in radio_configs.iter().enumerate() {
@@ -110,7 +164,44 @@ pub fn create_radios() -> Result<[Option<RadioModule<PlatformBus>>; 2], BusError
     Ok(radios)
 }
 
-fn create_radio(config: &RadioBusConfig) -> Result<RadioModule<PlatformBus>, BusError> {
+pub struct KaonicRadioFem {
+    flt_v1: LinuxOutputPin,
+    flt_v2: LinuxOutputPin,
+    flt_24: LinuxOutputPin,
+}
+
+impl KaonicRadioFem {
+    pub fn new(flt_v1: LinuxOutputPin, flt_v2: LinuxOutputPin, flt_24: LinuxOutputPin) -> Self {
+        Self {
+            flt_v1,
+            flt_v2,
+            flt_24,
+        }
+    }
+}
+
+impl RadioFem for KaonicRadioFem {
+    fn configure(&mut self, freq: u32) {
+        if (902_000_000 <= freq) && (freq <= 928_000_000) {
+            self.flt_v1.set_high();
+            self.flt_v2.set_high();
+            return;
+        }
+
+        if (862_000_000 <= freq) && (freq <= 876_000_000) {
+            self.flt_v1.set_low();
+            self.flt_v2.set_high();
+            return;
+        }
+
+        self.flt_v1.set_high();
+        self.flt_v2.set_low();
+    }
+}
+
+fn create_radio(
+    config: &RadioBusConfig,
+) -> Result<RadioModule<PlatformBus, KaonicRadioFem>, BusError> {
     // Create SPI interface
     let mut spi = linux::LinuxSpi::open(&config.spi.path).map_err(|_| BusError::ControlFailure)?;
 
@@ -136,5 +227,28 @@ fn create_radio(config: &RadioBusConfig) -> Result<RadioModule<PlatformBus>, Bus
     // Probe and initialize the RF215
     let radio = Rf215::probe(&mut bus, config.name)?;
 
-    Ok(RadioModule::new(bus, radio))
+    Ok(RadioModule::new(
+        bus,
+        radio,
+        KaonicRadioFem::new(
+            linux::LinuxOutputPin::new_from_line(
+                config.flt_v1_gpio.chip,
+                config.flt_v1_gpio.offset,
+                &format!("{}-flt-sel-v1", config.name),
+            )
+            .map_err(|_| BusError::ControlFailure)?,
+            linux::LinuxOutputPin::new_from_line(
+                config.flt_v2_gpio.chip,
+                config.flt_v2_gpio.offset,
+                &format!("{}-flt-sel-v2", config.name),
+            )
+            .map_err(|_| BusError::ControlFailure)?,
+            linux::LinuxOutputPin::new_from_line(
+                config.flt_24_gpio.chip,
+                config.flt_24_gpio.offset,
+                &format!("{}-flt-sel-24", config.name),
+            )
+            .map_err(|_| BusError::ControlFailure)?,
+        ),
+    ))
 }

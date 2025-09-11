@@ -218,7 +218,7 @@ impl Into<u8> for BasebandInterrupt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct InterruptMask<I: Into<u8>> {
     mask: u8,
     _irq: PhantomData<I>,
@@ -239,6 +239,11 @@ impl<I: Into<u8>> InterruptMask<I> {
         }
     }
 
+    pub fn fill(&mut self) -> &mut Self {
+        self.mask = 0b1111_1111;
+        self
+    }
+
     pub fn add_irq(&mut self, irq: I) -> &mut Self {
         self.mask = self.mask | irq.into();
         self
@@ -248,6 +253,10 @@ impl<I: Into<u8>> InterruptMask<I> {
         (self.mask & irq.into()) != 0
     }
 
+    pub fn has_irqs(&self, irqs: InterruptMask<I>) -> bool {
+        (self.mask & irqs.mask) == irqs.mask
+    }
+
     pub fn clear_irq(&mut self, irq: I) -> &mut Self {
         self.mask = self.mask & (!(irq.into()));
         self
@@ -255,6 +264,10 @@ impl<I: Into<u8>> InterruptMask<I> {
 
     pub fn reset(&mut self) -> &mut Self {
         self.mask = 0;
+        self
+    }
+
+    pub fn build(self) -> Self {
         self
     }
 

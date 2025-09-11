@@ -10,6 +10,7 @@ pub mod baseband;
 pub mod bus;
 pub mod error;
 pub mod frame;
+pub mod modulation;
 pub mod radio;
 pub mod regs;
 pub mod transceiver;

@@ -6,14 +6,18 @@ pub enum Machine {
     Kaonic1S,
 }
 
-pub struct RadioModule<I: Bus> {
-    pub bus: I,
-    pub rf: Rf215<I>,
+pub trait RadioFem {
+    fn configure(&mut self, freq: u32);
 }
 
-impl<I: Bus> RadioModule<I> {
-    pub fn new(bus: I, rf: Rf215<I>) -> Self {
-        Self { bus, rf }
-    }
+pub struct RadioModule<I: Bus, F: RadioFem> {
+    pub bus: I,
+    pub rf: Rf215<I>,
+    pub fem: F,
+}
 
+impl<I: Bus, F: RadioFem> RadioModule<I, F> {
+    pub fn new(bus: I, rf: Rf215<I>, fem: F) -> Self {
+        Self { bus, rf, fem }
+    }
 }
