@@ -1,22 +1,19 @@
 pub mod platform;
 
-use radio_rf215::{Rf215, bus::Bus};
+use radio_rf215::{bus::Bus, Rf215};
 
 pub enum Machine {
     Kaonic1S,
 }
 
-pub type Revision = u32;
-
 pub struct RadioModule<I: Bus> {
-    bus: I,
-    rf: Rf215<I>,
+    pub bus: I,
+    pub rf: Rf215<I>,
 }
 
-pub struct KaonicRadio {}
-
-impl KaonicRadio {
-    pub fn new() -> Self {
-        Self {}
+impl<I: Bus> RadioModule<I> {
+    pub fn new(bus: I, rf: Rf215<I>) -> Self {
+        Self { bus, rf }
     }
+
 }

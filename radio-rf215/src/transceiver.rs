@@ -44,7 +44,14 @@ impl<B: Band, I: Bus> Transreceiver<B, I> {
         bus: &mut I,
         config: &RadioFrequencyConfig,
     ) -> Result<(), RadioError> {
-        self.radio.set_frequency(bus, config)
+        self.radio.change_state(
+            bus,
+            core::time::Duration::from_millis(100),
+            RadioState::TrxOff,
+        )?;
+        self.radio.set_frequency(bus, config)?;
+
+        Ok(())
     }
 
     pub fn baseband_transmit(
@@ -52,15 +59,27 @@ impl<B: Band, I: Bus> Transreceiver<B, I> {
         bus: &mut I,
         frame: &BasebandFrame,
     ) -> Result<(), RadioError> {
-        self.radio.set_state(bus, RadioState::TrxPrep)?;
-
-        self.radio
-            .wait_on_state(bus, RadioState::TrxPrep, core::time::Duration::from_secs(1))?;
+        self.radio.change_state(
+            bus,
+            core::time::Duration::from_millis(500),
+            RadioState::TrxPrep,
+        )?;
 
         self.baseband.load_tx(bus, frame)?;
 
         self.radio
             .send_command(bus, crate::radio::RadioCommand::Tx)?;
+
+        Ok(())
+    }
+
+    pub fn baseband_receive(
+        &mut self,
+        bus: &mut I,
+        frame: &mut BasebandFrame,
+    ) -> Result<(), RadioError> {
+
+        self.baseband.load_rx(bus, frame)?;
 
         Ok(())
     }

@@ -5,6 +5,8 @@ use radio_rf215::{
     Rf215,
 };
 
+use crate::RadioModule;
+
 mod linux;
 
 pub type PlatformBus =
@@ -61,7 +63,7 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
 
 const RADIO_CONFIG_REV_C: [RadioBusConfig; 2] = RADIO_CONFIG_REV_B;
 
-pub fn create_radios() -> Result<[Option<Rf215<PlatformBus>>; 2], BusError> {
+pub fn create_radios() -> Result<[Option<RadioModule<PlatformBus>>; 2], BusError> {
     // Read machine configuration from /etc/kaonic/kaonic_machine
     let machine_config = match std::fs::read_to_string("/etc/kaonic/kaonic_machine") {
         Ok(content) => content.trim().to_string(),
@@ -90,7 +92,7 @@ pub fn create_radios() -> Result<[Option<Rf215<PlatformBus>>; 2], BusError> {
         }
     };
 
-    let mut radios: [Option<Rf215<PlatformBus>>; 2] = [None, None];
+    let mut radios: [Option<RadioModule<PlatformBus>>; 2] = [None, None];
 
     // Create radios based on selected configuration
     for (index, config) in radio_configs.iter().enumerate() {
@@ -108,7 +110,7 @@ pub fn create_radios() -> Result<[Option<Rf215<PlatformBus>>; 2], BusError> {
     Ok(radios)
 }
 
-fn create_radio(config: &RadioBusConfig) -> Result<Rf215<PlatformBus>, BusError> {
+fn create_radio(config: &RadioBusConfig) -> Result<RadioModule<PlatformBus>, BusError> {
     // Create SPI interface
     let mut spi = linux::LinuxSpi::open(&config.spi.path).map_err(|_| BusError::ControlFailure)?;
 
@@ -134,5 +136,5 @@ fn create_radio(config: &RadioBusConfig) -> Result<Rf215<PlatformBus>, BusError>
     // Probe and initialize the RF215
     let radio = Rf215::probe(&mut bus, config.name)?;
 
-    Ok(radio)
+    Ok(RadioModule::new(bus, radio))
 }

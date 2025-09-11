@@ -602,6 +602,7 @@ dependencies = [
  "linux-embedded-hal",
  "log",
  "radio-rf215",
+ "simple_logger",
 ]
 
 [[package]]

@@ -100,7 +100,7 @@ impl Rf215Test {
 
         for (index, radio_option) in radios.iter().enumerate() {
             match radio_option {
-                Some(radio) => match self.test_rf215_instance(radio, radio_names[index]) {
+                Some(radio) => match self.test_rf215_instance(&radio.rf, radio_names[index]) {
                     Ok(device_info) => {
                         results.push(format!("{}: {}", radio_names[index], device_info));
                     }

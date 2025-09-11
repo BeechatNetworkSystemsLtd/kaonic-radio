@@ -11,10 +11,10 @@ pub type RadioFrequency = u32;
 pub type RadioChannel = u16;
 
 pub struct RadioFrequencyConfig {
-    freq: RadioFrequency,
-    channel_spacing: RadioFrequency,
-    channel: RadioChannel,
-    pll_lbw: PllLoopBandwidth,
+    pub freq: RadioFrequency,
+    pub channel_spacing: RadioFrequency,
+    pub channel: RadioChannel,
+    pub pll_lbw: PllLoopBandwidth,
 }
 
 pub trait Band {
@@ -110,8 +110,6 @@ where
             RadioState::Transition => return Err(RadioError::IncorrectState),
         };
 
-        self.state = RadioState::Transition;
-
         self.send_command(bus, command)
     }
 
@@ -124,37 +122,41 @@ where
         Ok(())
     }
 
-    pub fn wait_on_state(
+    pub fn wait_on_state<F: Fn(RadioState) -> bool>(
         &mut self,
         bus: &mut I,
-        expected_state: RadioState,
         timeout: core::time::Duration,
-    ) -> Result<(), RadioError> {
-        // Can't wait for a transition state
-        if expected_state == RadioState::Transition {
-            return Err(RadioError::IncorrectState);
-        }
-
+        check_state: F,
+    ) -> Result<RadioState, RadioError> {
         let deadline = (bus.current_time() as u128) + timeout.as_millis();
 
         loop {
             let state = self.read_state(bus)?;
 
-            if state == expected_state {
-                break;
+            if check_state(state) {
+                return Ok(state);
             }
 
             if (bus.current_time() as u128) > deadline {
                 return Err(RadioError::CommunicationFailure);
             }
 
-            self.set_state(bus, expected_state)?;
-
             bus.delay(core::time::Duration::from_micros(100));
         }
-
-        Ok(())
     }
+
+    pub fn change_state(
+        &mut self,
+        bus: &mut I,
+        timeout: core::time::Duration,
+        state: RadioState,
+    ) -> Result<RadioState, RadioError> {
+
+        self.set_state(bus, state)?;
+
+        self.wait_on_state(bus, timeout, |s| s == state)
+    }
+
 
     pub fn read_state(&mut self, bus: &mut I) -> Result<RadioState, RadioError> {
         let state_value = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_STATE))?;
@@ -178,14 +180,42 @@ where
         bus.wait_interrupt(timeout)
     }
 
+    pub fn receive(&mut self, bus: &mut I) -> Result<(), RadioError> {
+        loop {
+            let state = self.wait_on_state(bus, core::time::Duration::from_millis(100), |s| {
+                (s == RadioState::TrxOff) || (s == RadioState::TrxPrep)
+            });
+
+            let mut should_change_state = false;
+            if let Err(_) = state {
+                should_change_state = true;
+            } else if let Ok(state) = state {
+                should_change_state = state != RadioState::TrxPrep;
+            }
+
+            if should_change_state {
+                self.set_state(bus, RadioState::TrxPrep)?;
+            } else {
+                break;
+            }
+
+        }
+
+        self.set_state(bus, RadioState::Rx)?;
+
+        self.wait_on_state(bus, core::time::Duration::from_millis(100), |s| {
+            s == RadioState::Rx
+        })?;
+
+        Ok(())
+    }
+
     /// Configures Radio for a specific frequency, spacing and channel
     pub fn set_frequency(
         &mut self,
         bus: &mut I,
         config: &RadioFrequencyConfig,
     ) -> Result<(), RadioError> {
-        self.assert_state(RadioState::TrxOff)?;
-
         if config.freq < B::MIN_FREQUENCY
             || config.freq > B::MAX_FREQUENCY
             || config.freq < B::FREQUENCY_OFFSET
@@ -258,14 +288,6 @@ where
         self.set_state(bus, RadioState::TrxOff)?;
 
         Ok(())
-    }
-
-    pub fn assert_state(&self, expected_state: RadioState) -> Result<(), RadioError> {
-        if self.state != expected_state {
-            Err(RadioError::IncorrectState)
-        } else {
-            Ok(())
-        }
     }
 
     /// Returns absolute register address for a specified `Band`

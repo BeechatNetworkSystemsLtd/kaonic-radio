@@ -5,10 +5,12 @@ edition = "2021"
 
 [dependencies]
 radio-rf215 = { path="../radio-rf215/" }
+
+# Logging
+simple_logger = "5.0.0"
 log = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libgpiod = "0.2.2"
 linux-embedded-hal = { version = "0.4.0", default-features = false, features = [ "spi" ] }
-
 

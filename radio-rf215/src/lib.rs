@@ -1,3 +1,5 @@
+use core::fmt;
+
 use bus::{Bus, BusError};
 use error::RadioError;
 use transceiver::{Band09, Band24, Transreceiver};
@@ -12,12 +14,22 @@ pub mod radio;
 pub mod regs;
 pub mod transceiver;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
 pub enum PartNumber {
     At86Rf215 = 0x34,
     At86Rf215Iq = 0x35,
     At86Rf215M = 0x36,
+}
+
+impl fmt::Display for PartNumber {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PartNumber::At86Rf215 => write!(f, "AT86RF215"),
+            PartNumber::At86Rf215Iq => write!(f, "AT86RF215IQ"),
+            PartNumber::At86Rf215M => write!(f, "AT86RF215M"),
+        }
+    }
 }
 
 pub struct Rf215<I: Bus> {
