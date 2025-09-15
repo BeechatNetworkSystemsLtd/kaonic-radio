@@ -5,6 +5,7 @@ pub enum RadioError {
     IncorrectConfig,
     IncorrectState,
     CommunicationFailure,
+    Timeout,
 }
 
 impl From<BusError> for RadioError {
@@ -13,4 +14,13 @@ impl From<BusError> for RadioError {
     }
 }
 
-enum BasebandError {}
+#[derive(Debug, PartialEq, Eq)]
+pub enum BasebandError {
+    CommunicationFailure,
+}
+
+impl From<BusError> for BasebandError {
+    fn from(_value: BusError) -> Self {
+        Self::CommunicationFailure
+    }
+}

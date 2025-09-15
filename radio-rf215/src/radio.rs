@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use crate::{
-    bus::{self, Bus},
+    bus::Bus,
     error::RadioError,
     regs::{self, RadioInterruptMask, RegisterAddress},
 };
@@ -20,6 +20,7 @@ pub struct RadioFrequencyConfig {
 pub trait Band {
     const RADIO_ADDRESS: RegisterAddress;
     const BASEBAND_ADDRESS: RegisterAddress;
+    const BASEBAND_FRAME_BUFFER_ADDRESS: RegisterAddress;
     const RADIO_IRQ_ADDRESS: RegisterAddress;
     const BASEBAND_IRQ_ADDRESS: RegisterAddress;
     const MIN_FREQUENCY: RadioFrequency;

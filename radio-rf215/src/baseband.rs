@@ -4,7 +4,7 @@ use crate::{
     bus::Bus,
     error::RadioError,
     frame::Frame,
-    modulation::{self, Modulation, OfdmModulation},
+    modulation::{Modulation, OfdmModulation},
     radio::Band,
     regs::{self, BasebandInterrupt, BasebandInterruptMask, RegisterAddress, RG_BBCX_FRAME_SIZE},
 };
@@ -52,7 +52,6 @@ where
         bus: &mut I,
         frame: &'a mut BasebandFrame,
     ) -> Result<&'a mut BasebandFrame, RadioError> {
-
         let len = bus.read_reg_u16(Self::abs_reg(regs::RG_BBCX_RXFLL))?;
 
         if len as usize > regs::RG_BBCX_FRAME_SIZE {
@@ -60,7 +59,7 @@ where
         }
 
         bus.read_regs(
-            Self::abs_reg(regs::RG_BBCX_FBRXS),
+            B::BASEBAND_FRAME_BUFFER_ADDRESS + regs::RG_BBCX_FBRXS,
             frame.as_buffer_mut(len as usize),
         )?;
 
@@ -77,7 +76,7 @@ where
         }
 
         bus.write_reg_u16(Self::abs_reg(regs::RG_BBCX_TXFLL), data.len() as u16)?;
-        bus.write_regs(Self::abs_reg(regs::RG_BBCX_FBTXS), data)?;
+        bus.write_regs(B::BASEBAND_FRAME_BUFFER_ADDRESS + regs::RG_BBCX_FBTXS, data)?;
 
         Ok(())
     }

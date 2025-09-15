@@ -43,6 +43,9 @@ impl<const S: usize> Frame<S> {
 impl<const S: usize> fmt::Display for Frame<S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut offset = 0;
+
+        write!(f, "FRAME[{} Bytes]:\n\r", self.len)?;
+
         for i in 0..self.len {
             write!(f, " {:0>2x}", self.data[i])?;
 

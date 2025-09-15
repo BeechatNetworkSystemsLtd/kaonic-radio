@@ -72,9 +72,6 @@ impl Default for FactoryService {
 }
 
 impl FactoryService {
-    pub fn new() -> Self {
-        Self::default()
-    }
 
     fn read_device_info() -> Result<(String, String), String> {
         let serial = fs::read_to_string("/etc/kaonic/kaonic_serial")

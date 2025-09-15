@@ -15,6 +15,7 @@ pub struct Band24;
 impl Band for Band09 {
     const RADIO_ADDRESS: RegisterAddress = regs::RG_RF09_BASE_ADDRESS;
     const BASEBAND_ADDRESS: RegisterAddress = regs::RG_BBC0_BASE_ADDRESS;
+    const BASEBAND_FRAME_BUFFER_ADDRESS: RegisterAddress = regs::RG_BBC0_FRAME_BUFFER_ADDRESS;
     const RADIO_IRQ_ADDRESS: RegisterAddress = regs::RG_RF09_IRQS;
     const BASEBAND_IRQ_ADDRESS: RegisterAddress = regs::RG_BBC0_IRQS;
     const MIN_FREQUENCY: RadioFrequency = 389_500_000;
@@ -26,6 +27,7 @@ impl Band for Band09 {
 impl Band for Band24 {
     const RADIO_ADDRESS: RegisterAddress = regs::RG_RF24_BASE_ADDRESS;
     const BASEBAND_ADDRESS: RegisterAddress = regs::RG_BBC1_BASE_ADDRESS;
+    const BASEBAND_FRAME_BUFFER_ADDRESS: RegisterAddress = regs::RG_BBC1_FRAME_BUFFER_ADDRESS;
     const RADIO_IRQ_ADDRESS: RegisterAddress = regs::RG_RF24_IRQS;
     const BASEBAND_IRQ_ADDRESS: RegisterAddress = regs::RG_BBC1_IRQS;
     const MIN_FREQUENCY: RadioFrequency = 2_400_000_000;

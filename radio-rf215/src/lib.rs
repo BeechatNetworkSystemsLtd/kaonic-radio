@@ -4,8 +4,6 @@ use bus::{Bus, BusError};
 use error::RadioError;
 use transceiver::{Band09, Band24, Transreceiver};
 
-use crate::radio::Band;
-
 pub mod baseband;
 pub mod bus;
 pub mod error;

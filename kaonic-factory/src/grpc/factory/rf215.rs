@@ -93,7 +93,7 @@ impl Rf215Test {
         // Use the platform's create_radios function to initialize radios properly
         use kaonic_radio::platform::create_radios;
 
-        let radios = create_radios().map_err(|e| format!("Failed to create radios"))?;
+        let radios = create_radios().map_err(|_| format!("Failed to create radios"))?;
 
         let mut results = Vec::new();
         let radio_names = ["RF215-A", "RF215-B"];
@@ -104,7 +104,7 @@ impl Rf215Test {
                     Ok(device_info) => {
                         results.push(format!("{}: {}", radio_names[index], device_info));
                     }
-                    Err(e) => {
+                    Err(_) => {
                         return Err(format!("Error {}", radio_names[index]));
                     }
                 },
@@ -127,7 +127,7 @@ impl Rf215Test {
     fn test_rf215_instance(
         &self,
         radio: &radio_rf215::Rf215<kaonic_radio::platform::PlatformBus>,
-        radio_name: &str,
+        _radio_name: &str,
     ) -> Result<String, String> {
         // Get radio information using the existing driver methods
         let part_number = radio.part_number();

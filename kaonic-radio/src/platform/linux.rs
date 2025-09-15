@@ -11,7 +11,6 @@ use radio_rf215::bus::BusClock;
 use radio_rf215::bus::BusError;
 use radio_rf215::bus::BusInterrupt;
 use radio_rf215::bus::BusReset;
-use radio_rf215::bus::SpiBus;
 
 pub struct LinuxGpioConfig {
     pub line_name: &'static str,

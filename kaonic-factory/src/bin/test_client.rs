@@ -1,4 +1,3 @@
-use tonic::transport::Channel;
 use tokio_stream::StreamExt;
 
 pub mod kaonic {

@@ -130,7 +130,7 @@ pub fn create_radios() -> Result<[Option<RadioModule<PlatformBus, KaonicRadioFem
         }
     };
 
-    log::info!("Machine configuration: {}", machine_config);
+    log::info!("Kaonic machine configuration: {}", machine_config);
 
     // Select radio configuration based on machine type
     let radio_configs = match machine_config.as_str() {
@@ -183,19 +183,28 @@ impl KaonicRadioFem {
 impl RadioFem for KaonicRadioFem {
     fn configure(&mut self, freq: u32) {
         if (902_000_000 <= freq) && (freq <= 928_000_000) {
-            self.flt_v1.set_high();
-            self.flt_v2.set_high();
+            let _ = self.flt_v1.set_high();
+            let _ = self.flt_v2.set_high();
             return;
         }
 
         if (862_000_000 <= freq) && (freq <= 876_000_000) {
-            self.flt_v1.set_low();
-            self.flt_v2.set_high();
+            let _ = self.flt_v1.set_low();
+            let _ = self.flt_v2.set_high();
             return;
         }
 
-        self.flt_v1.set_high();
-        self.flt_v2.set_low();
+        if 2_000_000_000 >= freq {
+            let _ = self.flt_v1.set_high();
+            let _ = self.flt_v2.set_low();
+            return;
+        }
+
+        if 2_000_000_000 <= freq {
+            let _ = self.flt_24.set_high();
+            let _ = self.flt_24.set_low();
+            return;
+        }
     }
 }
 
