@@ -1,3 +1,5 @@
+use kaonic_radio::platform::KaonicRadio;
+
 use super::FactoryTest;
 use std::process::Command;
 
@@ -100,7 +102,7 @@ impl Rf215Test {
 
         for (index, radio_option) in radios.iter().enumerate() {
             match radio_option {
-                Some(radio) => match self.test_rf215_instance(&radio.rf, radio_names[index]) {
+                Some(radio) => match self.test_rf215_instance(&radio.radio, radio_names[index]) {
                     Ok(device_info) => {
                         results.push(format!("{}: {}", radio_names[index], device_info));
                     }
@@ -126,7 +128,7 @@ impl Rf215Test {
 
     fn test_rf215_instance(
         &self,
-        radio: &radio_rf215::Rf215<kaonic_radio::platform::PlatformBus>,
+        radio: &KaonicRadio,
         _radio_name: &str,
     ) -> Result<String, String> {
         // Get radio information using the existing driver methods

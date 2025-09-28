@@ -1,7 +1,7 @@
 use linux::{LinuxGpioConfig, LinuxSpiConfig};
 use linux_embedded_hal::spidev::SpidevOptions;
 use radio_rf215::{
-    bus::{BusError, SpiBus},
+    bus::{Bus, BusError, SpiBus},
     Rf215,
 };
 
@@ -14,6 +14,72 @@ mod linux;
 
 pub type PlatformBus =
     SpiBus<linux::LinuxSpi, linux::LinuxGpioInterrupt, linux::LinuxClock, linux::LinuxGpioReset>;
+
+pub struct SharedBus<T> {
+    bus: std::sync::Arc<std::sync::Mutex<T>>,
+}
+
+impl<T> SharedBus<T> {
+    /// Create a new `SharedDevice`.
+    #[inline]
+    pub fn new(bus: std::sync::Arc<std::sync::Mutex<T>>) -> Self {
+        Self { bus }
+    }
+}
+
+impl<T> Clone for SharedBus<T> {
+    fn clone(&self) -> Self {
+        Self {
+            bus: self.bus.clone(),
+        }
+    }
+}
+
+impl<T: Bus> Bus for SharedBus<T> {
+    #[inline]
+    fn write_regs(
+        &mut self,
+        addr: radio_rf215::regs::RegisterAddress,
+        values: &[radio_rf215::regs::RegisterValue],
+    ) -> Result<(), BusError> {
+        let mut bus = self.bus.lock().unwrap();
+        bus.write_regs(addr, values)
+    }
+
+    #[inline]
+    fn read_regs(
+        &mut self,
+        addr: radio_rf215::regs::RegisterAddress,
+        values: &mut [radio_rf215::regs::RegisterValue],
+    ) -> Result<(), BusError> {
+        let mut bus = self.bus.lock().unwrap();
+        bus.read_regs(addr, values)
+    }
+
+    #[inline]
+    fn wait_interrupt(&mut self, timeout: std::time::Duration) -> bool {
+        let mut bus = self.bus.lock().unwrap();
+        bus.wait_interrupt(timeout)
+    }
+
+    #[inline]
+    fn delay(&mut self, timeout: std::time::Duration) {
+        let mut bus = self.bus.lock().unwrap();
+        bus.delay(timeout)
+    }
+
+    #[inline]
+    fn current_time(&mut self) -> u64 {
+        let mut bus = self.bus.lock().unwrap();
+        bus.current_time()
+    }
+
+    #[inline]
+    fn hardware_reset(&mut self) -> Result<(), BusError> {
+        let mut bus = self.bus.lock().unwrap();
+        bus.hardware_reset()
+    }
+}
 
 struct RadioBusConfig {
     name: &'static str,
@@ -117,7 +183,9 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
 
 const RADIO_CONFIG_REV_C: [RadioBusConfig; 2] = RADIO_CONFIG_REV_B;
 
-pub fn create_radios() -> Result<[Option<RadioModule<PlatformBus, KaonicRadioFem>>; 2], BusError> {
+pub type KaonicRadio = Rf215<SharedBus<PlatformBus>>;
+
+pub fn create_radios() -> Result<[Option<RadioModule<KaonicRadio, KaonicRadioFem>>; 2], BusError> {
     // Read machine configuration from /etc/kaonic/kaonic_machine
     let machine_config = match std::fs::read_to_string("/etc/kaonic/kaonic_machine") {
         Ok(content) => content.trim().to_string(),
@@ -146,7 +214,7 @@ pub fn create_radios() -> Result<[Option<RadioModule<PlatformBus, KaonicRadioFem
         }
     };
 
-    let mut radios: [Option<RadioModule<PlatformBus, KaonicRadioFem>>; 2] = [None, None];
+    let mut radios: [Option<RadioModule<KaonicRadio, KaonicRadioFem>>; 2] = [None, None];
 
     // Create radios based on selected configuration
     for (index, config) in radio_configs.iter().enumerate() {
@@ -208,9 +276,9 @@ impl RadioFem for KaonicRadioFem {
     }
 }
 
-fn create_radio(
+fn create_radio<'a>(
     config: &RadioBusConfig,
-) -> Result<RadioModule<PlatformBus, KaonicRadioFem>, BusError> {
+) -> Result<RadioModule<KaonicRadio, KaonicRadioFem>, BusError> {
     // Create SPI interface
     let mut spi = linux::LinuxSpi::open(&config.spi.path).map_err(|_| BusError::ControlFailure)?;
 
@@ -231,13 +299,14 @@ fn create_radio(
     let clock = linux::LinuxClock::new();
 
     // Create the bus with all interfaces
-    let mut bus = SpiBus::new(spi, interrupt_gpio, clock, reset_gpio);
+    let bus = SpiBus::new(spi, interrupt_gpio, clock, reset_gpio);
+
+    let bus = std::sync::Arc::new(std::sync::Mutex::new(bus));
 
     // Probe and initialize the RF215
-    let radio = Rf215::probe(&mut bus, config.name)?;
+    let radio = Rf215::probe(SharedBus::new(bus), config.name)?;
 
     Ok(RadioModule::new(
-        bus,
         radio,
         KaonicRadioFem::new(
             linux::LinuxOutputPin::new_from_line(

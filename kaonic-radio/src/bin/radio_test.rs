@@ -18,55 +18,44 @@ fn main() {
 
     let mut radio = radios[0].take().unwrap();
 
-    let mut rf = radio.rf;
-    let bus = &mut radio.bus;
+    radio.fem.configure(869_535_000);
+
+    let rf = radio.inner();
 
     log::info!("Radio: {} {} {}", rf.part_number(), rf.version(), rf.name());
 
-    rf.trx_09().disable_irqs(bus).unwrap();
-    rf.trx_24().disable_irqs(bus).unwrap();
-
-    radio.fem.configure(869_535_000);
-
     rf.trx_09()
         .radio()
-        .set_frequency(
-            bus,
-            &RadioFrequencyConfig {
-                freq: 869_535_000,
-                channel_spacing: 200_000,
-                channel: 10,
-                pll_lbw: PllLoopBandwidth::Default,
-            },
-        )
+        .set_frequency(&RadioFrequencyConfig {
+            freq: 869_535_000,
+            channel_spacing: 200_000,
+            channel: 10,
+            pll_lbw: PllLoopBandwidth::Default,
+        })
         .unwrap();
 
     rf.trx_09()
         .radio()
-        .set_control_pad(bus, FrontendPinConfig::Mode2)
+        .set_control_pad(FrontendPinConfig::Mode2)
         .unwrap();
 
     rf.trx_09()
         .radio()
-        .set_aux_settings(
-            bus,
-            AuxiliarySettings {
-                ext_lna_bypass: false,
-                aven: false,
-                avect: false,
-                pavol: PaVol::Voltage2400mV,
-                map: AgcGainMap::Extranal12dB,
-            },
-        )
+        .set_aux_settings(AuxiliarySettings {
+            ext_lna_bypass: false,
+            aven: false,
+            avect: false,
+            pavol: PaVol::Voltage2400mV,
+            map: AgcGainMap::Extranal12dB,
+        })
         .unwrap();
 
     rf.trx_09()
-        .configure(bus, &Modulation::Ofdm(OfdmModulation::default()))
+        .configure(&Modulation::Ofdm(OfdmModulation::default()))
         .unwrap();
 
     rf.trx_09()
         .setup_irq(
-            bus,
             RadioInterruptMask::new()
                 .add_irq(RadioInterrupt::TransceiverError)
                 // .add_irq(RadioInterrupt::TransceiverReady)
@@ -97,20 +86,19 @@ fn main() {
     // }
 
     log::trace!("Receive");
-    rf.trx_09().radio().receive(bus).unwrap();
+    rf.trx_09().radio().receive().unwrap();
 
     loop {
         if rf.trx_09().baseband().wait_irq(
-            bus,
             BasebandInterrupt::ReceiverFrameEnd,
             core::time::Duration::from_secs(1),
         ) {
-            rf.trx_09().baseband().load_rx(bus, &mut frame).unwrap();
-            rf.trx_09().radio().receive(bus).unwrap();
+            rf.trx_09().baseband().load_rx(&mut frame).unwrap();
+            rf.trx_09().radio().receive().unwrap();
             log::trace!("Frame:({} Bytes)\n\r {}", frame.len(), frame);
         }
 
-        let rssi = rf.trx_09().radio().read_rssi(bus);
+        let rssi = rf.trx_09().radio().read_rssi();
         log::trace!("RSSI: {}", rssi.unwrap_or(127));
     }
 }

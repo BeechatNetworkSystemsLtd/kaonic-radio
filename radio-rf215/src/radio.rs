@@ -267,7 +267,7 @@ where
     I: Bus,
 {
     _band: PhantomData<B>,
-    _bus: PhantomData<I>,
+    bus: I,
 }
 
 impl<B, I> Radio<B, I>
@@ -275,20 +275,21 @@ where
     B: Band,
     I: Bus,
 {
-    pub fn new() -> Self {
+    pub fn new(bus: I) -> Self {
         Self {
             _band: PhantomData::default(),
-            _bus: PhantomData::default(),
+            bus,
         }
     }
 
-    pub fn send_command(&mut self, bus: &mut I, command: RadioCommand) -> Result<(), RadioError> {
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_CMD), command as u8)
+    pub fn send_command(&mut self, command: RadioCommand) -> Result<(), RadioError> {
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_CMD), command as u8)
             .map_err(|e| e.into())
     }
 
     /// Requests transition into a 'state'
-    pub fn set_state(&mut self, bus: &mut I, state: RadioState) -> Result<(), RadioError> {
+    pub fn set_state(&mut self, state: RadioState) -> Result<(), RadioError> {
         let command = match state {
             RadioState::PowerOff => RadioCommand::Nop,
             RadioState::Sleep => RadioCommand::Sleep,
@@ -300,54 +301,49 @@ where
             RadioState::Transition => return Err(RadioError::IncorrectState),
         };
 
-        self.send_command(bus, command)
+        self.send_command(command)
     }
 
-    pub fn setup_irq(
-        &mut self,
-        bus: &mut I,
-        irq_mask: RadioInterruptMask,
-    ) -> Result<(), RadioError> {
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_IRQM), irq_mask.get())?;
+    pub fn setup_irq(&mut self, irq_mask: RadioInterruptMask) -> Result<(), RadioError> {
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_IRQM), irq_mask.get())?;
         Ok(())
     }
 
     pub fn wait_on_state<F: Fn(RadioState) -> bool>(
         &mut self,
-        bus: &mut I,
         timeout: core::time::Duration,
         check_state: F,
     ) -> Result<RadioState, RadioError> {
-        let deadline = (bus.current_time() as u128) + timeout.as_millis();
+        let deadline = (self.bus.current_time() as u128) + timeout.as_millis();
 
         loop {
-            let state = self.read_state(bus)?;
+            let state = self.read_state()?;
 
             if check_state(state) {
                 return Ok(state);
             }
 
-            if (bus.current_time() as u128) > deadline {
+            if (self.bus.current_time() as u128) > deadline {
                 return Err(RadioError::CommunicationFailure);
             }
 
-            bus.delay(core::time::Duration::from_micros(100));
+            self.bus.delay(core::time::Duration::from_micros(100));
         }
     }
 
     pub fn change_state(
         &mut self,
-        bus: &mut I,
         timeout: core::time::Duration,
         state: RadioState,
     ) -> Result<RadioState, RadioError> {
-        self.set_state(bus, state)?;
+        self.set_state(state)?;
 
-        self.wait_on_state(bus, timeout, |s| s == state)
+        self.wait_on_state(timeout, |s| s == state)
     }
 
-    pub fn read_state(&mut self, bus: &mut I) -> Result<RadioState, RadioError> {
-        let state_value = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_STATE))?;
+    pub fn read_state(&mut self) -> Result<RadioState, RadioError> {
+        let state_value = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_STATE))?;
 
         let state = match state_value {
             0x00 => RadioState::PowerOff,
@@ -364,13 +360,13 @@ where
         Ok(state)
     }
 
-    pub fn wait_interrupt(&mut self, bus: &mut I, timeout: core::time::Duration) -> bool {
-        bus.wait_interrupt(timeout)
+    pub fn wait_interrupt(&mut self, timeout: core::time::Duration) -> bool {
+        self.bus.wait_interrupt(timeout)
     }
 
-    pub fn receive(&mut self, bus: &mut I) -> Result<(), RadioError> {
+    pub fn receive(&mut self) -> Result<(), RadioError> {
         loop {
-            let state = self.wait_on_state(bus, core::time::Duration::from_millis(100), |s| {
+            let state = self.wait_on_state(core::time::Duration::from_millis(100), |s| {
                 (s == RadioState::TrxOff) || (s == RadioState::TrxPrep)
             });
 
@@ -382,15 +378,15 @@ where
             }
 
             if should_change_state {
-                self.set_state(bus, RadioState::TrxPrep)?;
+                self.set_state(RadioState::TrxPrep)?;
             } else {
                 break;
             }
         }
 
-        self.set_state(bus, RadioState::Rx)?;
+        self.set_state(RadioState::Rx)?;
 
-        self.wait_on_state(bus, core::time::Duration::from_millis(100), |s| {
+        self.wait_on_state(core::time::Duration::from_millis(100), |s| {
             s == RadioState::Rx
         })?;
 
@@ -398,11 +394,7 @@ where
     }
 
     /// Configures Radio for a specific frequency, spacing and channel
-    pub fn set_frequency(
-        &mut self,
-        bus: &mut I,
-        config: &RadioFrequencyConfig,
-    ) -> Result<(), RadioError> {
+    pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
         if config.freq < B::MIN_FREQUENCY
             || config.freq > B::MAX_FREQUENCY
             || config.freq < B::FREQUENCY_OFFSET
@@ -421,24 +413,29 @@ where
 
         let freq = (config.freq - B::FREQUENCY_OFFSET) / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
 
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_CS), cs as u8)?;
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_CS), cs as u8)?;
 
-        bus.write_reg_u16(Self::abs_reg(regs::RG_RFXX_CCF0L), freq as u16)?;
+        self.bus
+            .write_reg_u16(Self::abs_reg(regs::RG_RFXX_CCF0L), freq as u16)?;
 
         let channel = config.channel.to_le_bytes();
 
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_CNL), channel[0])?;
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_CNL), channel[0])?;
 
         // Using IEEE-compliant Scheme
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_CNM), 0x00 | channel[1])?;
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_CNM), 0x00 | channel[1])?;
 
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL), config.pll_lbw as u8)?;
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL), config.pll_lbw as u8)?;
 
         Ok(())
     }
 
-    pub fn read_rssi(&self, bus: &mut I) -> Result<i8, RadioError> {
-        let value = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RSSI))?;
+    pub fn read_rssi(&mut self) -> Result<i8, RadioError> {
+        let value = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RSSI))?;
         let rssi = value as i8;
 
         if rssi == 127 {
@@ -450,19 +447,21 @@ where
 
     pub fn wait_irq(
         &mut self,
-        bus: &mut I,
         irq_mask: RadioInterruptMask,
         timeout: core::time::Duration,
     ) -> bool {
-        let deadline = bus.deadline(timeout);
+        let deadline = self.bus.deadline(timeout);
 
         loop {
-            if bus.deadline_reached(deadline) {
+            if self.bus.deadline_reached(deadline) {
                 break;
             }
 
-            if bus.wait_interrupt(core::time::Duration::from_micros(100)) {
-                if let Ok(irqs) = self.read_irqs(bus) {
+            if self
+                .bus
+                .wait_interrupt(core::time::Duration::from_micros(100))
+            {
+                if let Ok(irqs) = self.read_irqs() {
                     if irqs.has_irqs(irq_mask) {
                         return true;
                     }
@@ -473,41 +472,42 @@ where
         return false;
     }
 
-    pub fn read_irqs(&mut self, bus: &mut I) -> Result<RadioInterruptMask, RadioError> {
-        let irq_status = bus.read_reg_u8(B::RADIO_IRQ_ADDRESS)?;
+    pub fn read_irqs(&mut self) -> Result<RadioInterruptMask, RadioError> {
+        let irq_status = self.bus.read_reg_u8(B::RADIO_IRQ_ADDRESS)?;
         Ok(RadioInterruptMask::new_from_mask(irq_status))
     }
 
-    pub fn clear_irq(&mut self, bus: &mut I) -> Result<(), RadioError> {
-        let _ = self.read_irqs(bus)?;
+    pub fn clear_irq(&mut self) -> Result<(), RadioError> {
+        let _ = self.read_irqs()?;
         Ok(())
     }
 
     pub fn configure_transmitter(
         &mut self,
-        bus: &mut I,
         config: &RadioTransmitterConfig,
     ) -> Result<(), RadioError> {
         // Transmitter TX Digital Frontend
         {
-            let mut txdfe = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_TXDFE))?;
+            let mut txdfe = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_TXDFE))?;
 
             // Clear SR and RCUT bits
             txdfe = txdfe & 0b0001_0000;
             txdfe = txdfe | (config.sr as u8) | ((config.rcut as u8) << 5);
 
-            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_TXDFE), txdfe)?;
+            self.bus
+                .write_reg_u8(Self::abs_reg(regs::RG_RFXX_TXDFE), txdfe)?;
         }
 
         // Transmitter Filter Cutoff Control and PA Ramp Time
         {
-            let mut txcutc = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_TXCUTC))?;
+            let mut txcutc = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_TXCUTC))?;
 
             // Clear SR and RCUT bits
             txcutc = txcutc & 0b1111_0000;
             txcutc = txcutc | (config.lpfcut as u8);
 
-            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_TXCUTC), txcutc)?;
+            self.bus
+                .write_reg_u8(Self::abs_reg(regs::RG_RFXX_TXCUTC), txcutc)?;
         }
 
         // Transmitter Power Amplifier Control
@@ -517,31 +517,29 @@ where
             pac = pac | core::cmp::min(31, config.power);
             pac = pac | ((config.pacur as u8) << 5);
 
-            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_PAC), pac)?;
+            self.bus
+                .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PAC), pac)?;
         }
 
         Ok(())
     }
 
-    pub fn configure_receiver(
-        &mut self,
-        bus: &mut I,
-        config: &RadioReceiverConfig,
-    ) -> Result<(), RadioError> {
+    pub fn configure_receiver(&mut self, config: &RadioReceiverConfig) -> Result<(), RadioError> {
         // Receiver Digital Frontend
         {
-            let mut rxdfe = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RXDFE))?;
+            let mut rxdfe = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RXDFE))?;
 
             // Clear SR and RCUT bits
             rxdfe = rxdfe & 0b0001_0000;
             rxdfe = rxdfe | (config.sr as u8) | ((config.rcut as u8) << 5);
 
-            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXDFE), rxdfe)?;
+            self.bus
+                .write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXDFE), rxdfe)?;
         }
 
         // Receiver Filter Bandwidth Control
         {
-            let mut rxbwc = bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC))?;
+            let mut rxbwc = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC))?;
 
             rxbwc = rxbwc & 0b1100_0000;
             rxbwc = rxbwc | (config.bw as u8);
@@ -554,7 +552,8 @@ where
                 rxbwc = rxbwc | 0b0001_0000;
             }
 
-            bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC), rxbwc)?;
+            self.bus
+                .write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC), rxbwc)?;
         }
 
         Ok(())
@@ -562,32 +561,24 @@ where
 
     pub fn configure_transreceiver(
         &mut self,
-        bus: &mut I,
         config: &RadioTransreceiverConfig,
     ) -> Result<(), RadioError> {
-        self.configure_transmitter(bus, &config.tx_config)?;
-        self.configure_receiver(bus, &config.rx_config)?;
+        self.configure_transmitter(&config.tx_config)?;
+        self.configure_receiver(&config.rx_config)?;
 
         Ok(())
     }
 
-    pub fn set_control_pad(
-        &mut self,
-        bus: &mut I,
-        config: FrontendPinConfig,
-    ) -> Result<(), RadioError> {
+    pub fn set_control_pad(&mut self, config: FrontendPinConfig) -> Result<(), RadioError> {
         let padfe = (config as u8) << 6;
 
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC), padfe)?;
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC), padfe)?;
 
         Ok(())
     }
 
-    pub fn set_aux_settings(
-        &mut self,
-        bus: &mut I,
-        settings: AuxiliarySettings,
-    ) -> Result<(), RadioError> {
+    pub fn set_aux_settings(&mut self, settings: AuxiliarySettings) -> Result<(), RadioError> {
         let mut auxs = 0u8;
 
         auxs = auxs | (settings.map as u8) << 5;
@@ -605,15 +596,16 @@ where
             auxs = auxs | 0b0001_0000;
         }
 
-        bus.write_reg_u8(Self::abs_reg(regs::RG_RFXX_AUXS), auxs)?;
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_AUXS), auxs)?;
 
         Ok(())
     }
 
-    pub fn reset(&mut self, bus: &mut I) -> Result<(), RadioError> {
-        bus.hardware_reset().map_err(RadioError::from)?;
+    pub fn reset(&mut self) -> Result<(), RadioError> {
+        self.bus.hardware_reset().map_err(RadioError::from)?;
 
-        self.set_state(bus, RadioState::TrxOff)?;
+        self.set_state(RadioState::TrxOff)?;
 
         Ok(())
     }

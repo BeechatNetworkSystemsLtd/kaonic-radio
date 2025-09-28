@@ -31,7 +31,7 @@ impl fmt::Display for PartNumber {
     }
 }
 
-pub struct Rf215<I: Bus> {
+pub struct Rf215<I: Bus + Clone> {
     name: &'static str,
     part_number: PartNumber,
     version: u8,
@@ -39,8 +39,8 @@ pub struct Rf215<I: Bus> {
     trx_24: Transreceiver<Band24, I>,
 }
 
-impl<I: Bus> Rf215<I> {
-    pub fn probe(bus: &mut I, name: &'static str) -> Result<Self, BusError> {
+impl<I: Bus + Clone> Rf215<I> {
+    pub fn probe(mut bus: I, name: &'static str) -> Result<Self, BusError> {
         let part_number = bus.read_reg_u8(regs::RG_RF_PN)?;
         let part_number = match part_number {
             0x34 => PartNumber::At86Rf215,
@@ -55,8 +55,8 @@ impl<I: Bus> Rf215<I> {
             name,
             part_number,
             version,
-            trx_09: Transreceiver::<Band09, I>::new(),
-            trx_24: Transreceiver::<Band24, I>::new(),
+            trx_09: Transreceiver::<Band09, I>::new(bus.clone()),
+            trx_24: Transreceiver::<Band24, I>::new(bus.clone()),
         })
     }
 
@@ -68,9 +68,9 @@ impl<I: Bus> Rf215<I> {
         &mut self.trx_24
     }
 
-    pub fn reset(&mut self, bus: &mut I) -> Result<(), RadioError> {
-        self.trx_09.reset(bus)?;
-        self.trx_24.reset(bus)?;
+    pub fn reset(&mut self) -> Result<(), RadioError> {
+        self.trx_09.reset()?;
+        self.trx_24.reset()?;
 
         Ok(())
     }

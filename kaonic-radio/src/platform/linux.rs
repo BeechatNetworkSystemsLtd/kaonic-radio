@@ -12,6 +12,7 @@ use radio_rf215::bus::BusError;
 use radio_rf215::bus::BusInterrupt;
 use radio_rf215::bus::BusReset;
 
+
 pub struct LinuxGpioConfig {
     pub line_name: &'static str,
 }
@@ -107,7 +108,11 @@ impl LinuxOutputPin {
         })
     }
 
-    pub fn new_from_line(chip: &'static str, offset: u32, name: &str) -> Result<Self, libgpiod::Error> {
+    pub fn new_from_line(
+        chip: &'static str,
+        offset: u32,
+        name: &str,
+    ) -> Result<Self, libgpiod::Error> {
         let gpio = create_gpio_by_line(name, LinuxGpioLineConfig { chip, offset }, {
             let mut settings = libgpiod::line::Settings::new()?;
             settings.set_direction(libgpiod::line::Direction::Output)?;

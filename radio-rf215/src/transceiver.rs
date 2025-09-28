@@ -36,118 +36,89 @@ impl Band for Band24 {
     const MAX_CHANNEL: RadioChannel = 511;
 }
 
-pub struct Transreceiver<B: Band, I: Bus> {
+pub struct Transreceiver<B: Band, I: Bus + Clone> {
     radio: Radio<B, I>,
     baseband: Baseband<B, I>,
 }
 
-impl<B: Band, I: Bus> Transreceiver<B, I> {
-    pub(crate) fn new() -> Self {
-        Self {
-            radio: Radio::<B, I>::new(),
-            baseband: Baseband::<B, I>::new(),
-        }
+impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
+    pub(crate) fn new(bus: I) -> Self {
+        let mut trx = Self {
+            radio: Radio::<B, I>::new(bus.clone()),
+            baseband: Baseband::<B, I>::new(bus.clone()),
+        };
+
+        trx.disable_irqs().unwrap();
+
+        trx
     }
 
-    pub fn set_frequency(
-        &mut self,
-        bus: &mut I,
-        config: &RadioFrequencyConfig,
-    ) -> Result<(), RadioError> {
-        self.radio.change_state(
-            bus,
-            core::time::Duration::from_millis(100),
-            RadioState::TrxOff,
-        )?;
-        self.radio.set_frequency(bus, config)?;
+    pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
+        self.radio
+            .change_state(core::time::Duration::from_millis(100), RadioState::TrxOff)?;
+        self.radio.set_frequency(config)?;
 
         Ok(())
     }
 
     pub fn setup_irq(
         &mut self,
-        bus: &mut I,
         radio_irq: RadioInterruptMask,
         baseband_irq: BasebandInterruptMask,
     ) -> Result<(), RadioError> {
-        self.radio.setup_irq(bus, radio_irq)?;
-        self.baseband.setup_irq(bus, baseband_irq)?;
+        self.radio.setup_irq(radio_irq)?;
+        self.baseband.setup_irq(baseband_irq)?;
         Ok(())
     }
 
-    pub fn disable_irqs(&mut self, bus: &mut I) -> Result<(), RadioError> {
-        self.radio
-            .setup_irq(bus, RadioInterruptMask::new().build())?;
+    pub fn disable_irqs(&mut self) -> Result<(), RadioError> {
+        self.radio.setup_irq(RadioInterruptMask::new().build())?;
         self.baseband
-            .setup_irq(bus, BasebandInterruptMask::new().build())?;
+            .setup_irq(BasebandInterruptMask::new().build())?;
 
-        let _ = self.read_irqs(bus)?;
+        let _ = self.read_irqs()?;
 
         Ok(())
     }
 
-    pub fn wait_irq(&mut self, bus: &mut I, timeout: core::time::Duration) -> bool {
-        bus.wait_interrupt(timeout)
-    }
-
-    pub fn read_irqs(
-        &mut self,
-        bus: &mut I,
-    ) -> Result<(RadioInterruptMask, BasebandInterruptMask), RadioError> {
-        let rf_irqs = self.radio.read_irqs(bus)?;
-        let bb_irqs = self.baseband.read_irqs(bus)?;
+    pub fn read_irqs(&mut self) -> Result<(RadioInterruptMask, BasebandInterruptMask), RadioError> {
+        let rf_irqs = self.radio.read_irqs()?;
+        let bb_irqs = self.baseband.read_irqs()?;
 
         Ok((rf_irqs, bb_irqs))
     }
 
-    pub fn baseband_transmit(
-        &mut self,
-        bus: &mut I,
-        frame: &BasebandFrame,
-    ) -> Result<(), RadioError> {
-        self.radio.change_state(
-            bus,
-            core::time::Duration::from_millis(500),
-            RadioState::TrxPrep,
-        )?;
+    pub fn baseband_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
+        self.radio
+            .change_state(core::time::Duration::from_millis(500), RadioState::TrxPrep)?;
 
-        self.baseband.load_tx(bus, frame)?;
+        self.baseband.load_tx(frame)?;
+
+        self.radio.send_command(crate::radio::RadioCommand::Tx)?;
+
+        Ok(())
+    }
+
+    pub fn baseband_receive(&mut self, frame: &mut BasebandFrame) -> Result<(), RadioError> {
+        self.baseband.load_rx(frame)?;
+        Ok(())
+    }
+
+    pub fn configure(&mut self, modulation: &modulation::Modulation) -> Result<(), RadioError> {
+        self.baseband.disable()?;
+
+        self.baseband.configure(modulation)?;
 
         self.radio
-            .send_command(bus, crate::radio::RadioCommand::Tx)?;
+            .configure_transreceiver(&TransreceiverConfigurator::configure(&modulation))?;
+
+        self.baseband.enable()?;
 
         Ok(())
     }
 
-    pub fn baseband_receive(
-        &mut self,
-        bus: &mut I,
-        frame: &mut BasebandFrame,
-    ) -> Result<(), RadioError> {
-        self.baseband.load_rx(bus, frame)?;
-
-        Ok(())
-    }
-
-    pub fn configure(
-        &mut self,
-        bus: &mut I,
-        modulation: &modulation::Modulation,
-    ) -> Result<(), RadioError> {
-        self.baseband.disable(bus)?;
-
-        self.baseband.configure(bus, modulation)?;
-
-        self.radio
-            .configure_transreceiver(bus, &TransreceiverConfigurator::configure(&modulation))?;
-
-        self.baseband.enable(bus)?;
-
-        Ok(())
-    }
-
-    pub fn reset(&mut self, bus: &mut I) -> Result<(), RadioError> {
-        self.radio.reset(bus)
+    pub fn reset(&mut self) -> Result<(), RadioError> {
+        self.radio.reset()
     }
 
     pub fn radio(&mut self) -> &mut Radio<B, I> {
