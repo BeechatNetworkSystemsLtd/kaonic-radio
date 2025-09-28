@@ -580,6 +580,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
+name = "kaonic-commd"
+version = "0.1.0"
+dependencies = [
+ "kaonic-radio",
+ "log",
+ "prost",
+ "radio-rf215",
+ "simple_logger",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+]
+
+[[package]]
 name = "kaonic-factory"
 version = "0.1.0"
 dependencies = [
