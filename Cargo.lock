@@ -209,7 +209,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -610,6 +610,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaonic-fpga"
+version = "0.1.0"
+dependencies = [
+ "kaonic-radio",
+ "log",
+ "memmap2",
+ "radio-rf215",
+ "simple_logger",
+]
+
+[[package]]
 name = "kaonic-radio"
 version = "0.1.0"
 dependencies = [
@@ -724,6 +735,15 @@ name = "memchr"
 version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
+
+[[package]]
+name = "memmap2"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "843a98750cd611cc2965a8213b53b43e715f13c37a9e096c6408e69990961db7"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "memoffset"
@@ -1052,7 +1072,7 @@ dependencies = [
  "errno 0.3.13",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1250,7 +1270,7 @@ dependencies = [
  "getrandom",
  "once_cell",
  "rustix 1.0.8",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -1,0 +1,16 @@
+[package]
+name = "kaonic-fpga"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+memmap2 = "0.9.8"
+
+# Kaonic
+radio-rf215 = { path="../radio-rf215/" }
+kaonic-radio = { path="../kaonic-radio/" }
+
+# Logging
+simple_logger = "5.0.0"
+log = "0.4"
+

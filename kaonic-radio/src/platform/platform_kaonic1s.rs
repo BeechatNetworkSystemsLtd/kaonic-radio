@@ -10,7 +10,7 @@ use crate::{
     RadioFem, RadioModule,
 };
 
-mod linux;
+pub mod linux;
 
 pub type PlatformBus =
     SpiBus<linux::LinuxSpi, linux::LinuxGpioInterrupt, linux::LinuxClock, linux::LinuxGpioReset>;

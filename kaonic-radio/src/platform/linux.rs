@@ -4,7 +4,6 @@ use std::time::Instant;
 use libgpiod::line::Offset;
 use libgpiod::line::Value;
 
-use libgpiod::Error;
 use linux_embedded_hal::SpidevDevice;
 
 use radio_rf215::bus::BusClock;
@@ -12,6 +11,7 @@ use radio_rf215::bus::BusError;
 use radio_rf215::bus::BusInterrupt;
 use radio_rf215::bus::BusReset;
 
+use crate::error::KaonicError;
 
 pub struct LinuxGpioConfig {
     pub line_name: &'static str,
@@ -35,7 +35,7 @@ pub struct LinuxGpioInterrupt {
 pub type LinuxSpi = SpidevDevice;
 
 impl LinuxGpioInterrupt {
-    pub fn new(line_name: &str, name: &str) -> Result<Self, libgpiod::Error> {
+    pub fn new(line_name: &str, name: &str) -> Result<Self, KaonicError> {
         let gpio = create_gpio_by_name(&format!("{}-rf215-irq", name), line_name, {
             let mut settings = libgpiod::line::Settings::new()?;
             settings.set_edge_detection(Some(libgpiod::line::Edge::Falling))?;
@@ -71,7 +71,7 @@ pub struct LinuxGpioReset {
 }
 
 impl LinuxGpioReset {
-    pub fn new(line_name: &str, name: &str) -> Result<Self, libgpiod::Error> {
+    pub fn new(line_name: &str, name: &str) -> Result<Self, KaonicError> {
         let gpio = create_gpio_by_name(&format!("{}-rf215-rst", name), line_name, {
             let mut settings = libgpiod::line::Settings::new()?;
             settings.set_direction(libgpiod::line::Direction::Output)?;
@@ -93,7 +93,7 @@ pub struct LinuxOutputPin {
 }
 
 impl LinuxOutputPin {
-    pub fn new(line_name: &str, name: &str) -> Result<Self, libgpiod::Error> {
+    pub fn new(line_name: &str, name: &str) -> Result<Self, KaonicError> {
         let gpio = create_gpio_by_name(name, line_name, {
             let mut settings = libgpiod::line::Settings::new()?;
             settings.set_direction(libgpiod::line::Direction::Output)?;
@@ -108,11 +108,7 @@ impl LinuxOutputPin {
         })
     }
 
-    pub fn new_from_line(
-        chip: &'static str,
-        offset: u32,
-        name: &str,
-    ) -> Result<Self, libgpiod::Error> {
+    pub fn new_from_line(chip: &'static str, offset: u32, name: &str) -> Result<Self, KaonicError> {
         let gpio = create_gpio_by_line(name, LinuxGpioLineConfig { chip, offset }, {
             let mut settings = libgpiod::line::Settings::new()?;
             settings.set_direction(libgpiod::line::Direction::Output)?;
@@ -127,14 +123,18 @@ impl LinuxOutputPin {
         })
     }
 
-    pub fn set_high(&mut self) -> Result<(), libgpiod::Error> {
-        self.request.set_value(self.line, Value::Active).map(|_| {})
+    pub fn set_high(&mut self) -> Result<(), KaonicError> {
+        self.request
+            .set_value(self.line, Value::Active)
+            .map(|_| {})
+            .map_err(|_| KaonicError::HardwareError)
     }
 
-    pub fn set_low(&mut self) -> Result<(), libgpiod::Error> {
+    pub fn set_low(&mut self) -> Result<(), KaonicError> {
         self.request
             .set_value(self.line, Value::InActive)
             .map(|_| {})
+            .map_err(|_| KaonicError::HardwareError)
     }
 }
 
@@ -180,7 +180,7 @@ fn create_gpio_by_line(
     name: &str,
     line: LinuxGpioLineConfig,
     line_settings: libgpiod::line::Settings,
-) -> Result<(Offset, libgpiod::request::Request), libgpiod::Error> {
+) -> Result<(Offset, libgpiod::request::Request), KaonicError> {
     let chip = libgpiod::chip::Chip::open(&line.chip)?;
 
     let mut line_config = libgpiod::line::Config::new()?;
@@ -197,7 +197,7 @@ fn create_gpio_by_name(
     name: &str,
     line_name: &str,
     line_settings: libgpiod::line::Settings,
-) -> Result<(Offset, libgpiod::request::Request), libgpiod::Error> {
+) -> Result<(Offset, libgpiod::request::Request), KaonicError> {
     for chip in libgpiod::gpiochip_devices(&"/dev")? {
         let offset = chip.line_offset_from_name(line_name);
 
@@ -220,5 +220,11 @@ fn create_gpio_by_name(
         name
     );
 
-    Err(Error::IoError)
+    Err(KaonicError::HardwareError)
+}
+
+impl From<libgpiod::Error> for KaonicError {
+    fn from(_value: libgpiod::Error) -> Self {
+        Self::HardwareError
+    }
 }

@@ -58,7 +58,6 @@ fn main() {
         .setup_irq(
             RadioInterruptMask::new()
                 .add_irq(RadioInterrupt::TransceiverError)
-                // .add_irq(RadioInterrupt::TransceiverReady)
                 .build(),
             BasebandInterruptMask::new()
                 .add_irq(BasebandInterrupt::ReceiverFrameEnd)

@@ -17,6 +17,37 @@ pub struct RadioFrequencyConfig {
     pub pll_lbw: PllLoopBandwidth,
 }
 
+pub struct RadioFrequencyBuilder {
+    config: RadioFrequencyConfig,
+}
+
+impl RadioFrequencyBuilder {
+    pub const fn new() -> Self {
+        Self {
+            config: RadioFrequencyConfig {
+                freq: 869_535_000,
+                channel_spacing: 200_000,
+                channel: 10,
+                pll_lbw: PllLoopBandwidth::Default,
+            },
+        }
+    }
+
+    pub fn freq(mut self, freq: RadioFrequency) -> Self {
+        self.config.freq = freq;
+        self
+    }
+
+    pub fn channel(mut self, channel: RadioChannel) -> Self {
+        self.config.channel = channel;
+        self
+    }
+
+    pub fn build(self) -> RadioFrequencyConfig {
+        self.config
+    }
+}
+
 pub trait Band {
     const RADIO_ADDRESS: RegisterAddress;
     const BASEBAND_ADDRESS: RegisterAddress;

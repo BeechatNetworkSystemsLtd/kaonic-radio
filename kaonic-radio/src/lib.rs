@@ -1,4 +1,5 @@
 pub mod platform;
+pub mod error;
 
 pub trait RadioFem {
     fn configure(&mut self, freq: u32);

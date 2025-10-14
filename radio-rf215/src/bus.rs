@@ -44,6 +44,23 @@ pub trait Bus {
         Ok(values[0])
     }
 
+    /// Modifies single register using mask
+    fn modify_reg_u8(
+        &mut self,
+        addr: RegisterAddress,
+        mask: u8,
+        new_value: u8,
+    ) -> Result<u8, BusError> {
+        let mut value = self.read_reg_u8(addr)?;
+
+        value = value & (!mask);
+        value = value | (new_value & mask);
+
+        self.write_reg_u8(addr, value)?;
+
+        Ok(value)
+    }
+
     /// Read word value from register
     fn read_reg_u16(&mut self, addr: RegisterAddress) -> Result<u16, BusError> {
         let mut values: [RegisterValue; 2] = [0, 0];
