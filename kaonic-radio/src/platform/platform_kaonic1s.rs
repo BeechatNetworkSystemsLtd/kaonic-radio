@@ -6,7 +6,7 @@ use radio_rf215::{
 };
 
 use crate::{
-    platform::platform_impl::linux::{LinuxGpioLineConfig, LinuxOutputPin},
+    platform::{linux::SharedBus, platform_impl::linux::{LinuxGpioLineConfig, LinuxOutputPin}},
     RadioFem, RadioModule,
 };
 
@@ -14,72 +14,6 @@ pub mod linux;
 
 pub type PlatformBus =
     SpiBus<linux::LinuxSpi, linux::LinuxGpioInterrupt, linux::LinuxClock, linux::LinuxGpioReset>;
-
-pub struct SharedBus<T> {
-    bus: std::sync::Arc<std::sync::Mutex<T>>,
-}
-
-impl<T> SharedBus<T> {
-    /// Create a new `SharedDevice`.
-    #[inline]
-    pub fn new(bus: std::sync::Arc<std::sync::Mutex<T>>) -> Self {
-        Self { bus }
-    }
-}
-
-impl<T> Clone for SharedBus<T> {
-    fn clone(&self) -> Self {
-        Self {
-            bus: self.bus.clone(),
-        }
-    }
-}
-
-impl<T: Bus> Bus for SharedBus<T> {
-    #[inline]
-    fn write_regs(
-        &mut self,
-        addr: radio_rf215::regs::RegisterAddress,
-        values: &[radio_rf215::regs::RegisterValue],
-    ) -> Result<(), BusError> {
-        let mut bus = self.bus.lock().unwrap();
-        bus.write_regs(addr, values)
-    }
-
-    #[inline]
-    fn read_regs(
-        &mut self,
-        addr: radio_rf215::regs::RegisterAddress,
-        values: &mut [radio_rf215::regs::RegisterValue],
-    ) -> Result<(), BusError> {
-        let mut bus = self.bus.lock().unwrap();
-        bus.read_regs(addr, values)
-    }
-
-    #[inline]
-    fn wait_interrupt(&mut self, timeout: std::time::Duration) -> bool {
-        let mut bus = self.bus.lock().unwrap();
-        bus.wait_interrupt(timeout)
-    }
-
-    #[inline]
-    fn delay(&mut self, timeout: std::time::Duration) {
-        let mut bus = self.bus.lock().unwrap();
-        bus.delay(timeout)
-    }
-
-    #[inline]
-    fn current_time(&mut self) -> u64 {
-        let mut bus = self.bus.lock().unwrap();
-        bus.current_time()
-    }
-
-    #[inline]
-    fn hardware_reset(&mut self) -> Result<(), BusError> {
-        let mut bus = self.bus.lock().unwrap();
-        bus.hardware_reset()
-    }
-}
 
 struct RadioBusConfig {
     name: &'static str,
