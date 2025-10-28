@@ -10,6 +10,7 @@ use crate::{
 pub type RadioFrequency = u32;
 pub type RadioChannel = u16;
 
+#[derive(PartialEq, Clone, Copy)]
 pub struct RadioFrequencyConfig {
     pub freq: RadioFrequency,
     pub channel_spacing: RadioFrequency,
@@ -43,6 +44,11 @@ impl RadioFrequencyBuilder {
         self
     }
 
+    pub fn channel_spacing(mut self, spacing: RadioFrequency) -> Self {
+        self.config.channel_spacing = spacing;
+        self
+    }
+
     pub fn build(self) -> RadioFrequencyConfig {
         self.config
     }
@@ -67,6 +73,15 @@ pub enum FrontendPinConfig {
     Mode1 = 0x01, // (1 pin is TX switch; 1 pin is RX switch; LNA can be bypassed)
     Mode2 = 0x02, // (1 pin is enable, 1 pin is TXRX switch; 1 | 0 additional option)
     Mode3 = 0x03, // (1 pin is TXRX switch, 1 pin is LNA Bypass, 1 pin (MCU) is enable)
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum EnergyDetectionMode {
+    Auto = 0x00,
+    Single = 0x01,
+    Continuous = 0x02,
+    Off = 0x03,
 }
 
 pub struct AuxiliarySettings {
@@ -469,18 +484,32 @@ where
         let value = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RSSI))?;
         let rssi = value as i8;
 
-        if rssi == 127 {
-            return Err(RadioError::IncorrectState);
-        }
+        // if rssi == 127 {
+        //     return Err(RadioError::IncorrectState);
+        // }
 
         Ok(rssi)
+    }
+
+    pub fn read_edv(&mut self) -> Result<i8, RadioError> {
+        let value = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_EDV))?;
+        let edv = value as i8;
+
+        Ok(edv)
+    }
+
+    pub fn set_energy_detection(&mut self, mode: EnergyDetectionMode) -> Result<(), RadioError> {
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_EDC), mode as u8)?;
+
+        Ok(())
     }
 
     pub fn wait_irq(
         &mut self,
         irq_mask: RadioInterruptMask,
         timeout: core::time::Duration,
-    ) -> bool {
+    ) -> Option<RadioInterruptMask> {
         let deadline = self.bus.deadline(timeout);
 
         loop {
@@ -490,17 +519,44 @@ where
 
             if self
                 .bus
-                .wait_interrupt(core::time::Duration::from_micros(100))
+                .wait_interrupt(core::time::Duration::from_micros(500))
             {
                 if let Ok(irqs) = self.read_irqs() {
                     if irqs.has_irqs(irq_mask) {
-                        return true;
+                        return Some(irqs);
                     }
                 }
             }
         }
 
-        return false;
+        return None;
+    }
+
+    pub fn wait_any_irq(
+        &mut self,
+        irq_mask: RadioInterruptMask,
+        timeout: core::time::Duration,
+    ) -> Option<RadioInterruptMask> {
+        let deadline = self.bus.deadline(timeout);
+
+        loop {
+            if self.bus.deadline_reached(deadline) {
+                break;
+            }
+
+            if self
+                .bus
+                .wait_interrupt(core::time::Duration::from_micros(500))
+            {
+                if let Ok(irqs) = self.read_irqs() {
+                    if irqs.has_any_irqs(irq_mask) {
+                        return Some(irqs);
+                    }
+                }
+            }
+        }
+
+        return None;
     }
 
     pub fn read_irqs(&mut self) -> Result<RadioInterruptMask, RadioError> {
@@ -508,7 +564,7 @@ where
         Ok(RadioInterruptMask::new_from_mask(irq_status))
     }
 
-    pub fn clear_irq(&mut self) -> Result<(), RadioError> {
+    pub fn clear_irqs(&mut self) -> Result<(), RadioError> {
         let _ = self.read_irqs()?;
         Ok(())
     }
@@ -604,7 +660,7 @@ where
         let padfe = (config as u8) << 6;
 
         self.bus
-            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_RXBWC), padfe)?;
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PADFE), padfe)?;
 
         Ok(())
     }
@@ -639,6 +695,10 @@ where
         self.set_state(RadioState::TrxOff)?;
 
         Ok(())
+    }
+
+    pub const fn check_band(freq: RadioFrequency) -> bool {
+        (freq <= B::MAX_FREQUENCY) && (freq >= B::MIN_FREQUENCY)
     }
 
     /// Returns absolute register address for a specified `Band`

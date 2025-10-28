@@ -257,6 +257,10 @@ impl<I: Into<u8>> InterruptMask<I> {
         (self.mask & irqs.mask) == irqs.mask
     }
 
+    pub fn has_any_irqs(&self, irqs: InterruptMask<I>) -> bool {
+        (self.mask & irqs.mask) != 0
+    }
+
     pub fn clear_irq(&mut self, irq: I) -> &mut Self {
         self.mask = self.mask & (!(irq.into()));
         self

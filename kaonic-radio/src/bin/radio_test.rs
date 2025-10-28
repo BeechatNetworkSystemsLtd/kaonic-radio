@@ -1,12 +1,8 @@
-use kaonic_radio::{platform, RadioFem};
-use radio_rf215::{
-    baseband::BasebandFrame,
-    modulation::{Modulation, OfdmModulation},
-    radio::{
-        AgcGainMap, AuxiliarySettings, FrontendPinConfig, PaVol, PllLoopBandwidth,
-        RadioFrequencyConfig,
-    },
-    regs::{BasebandInterrupt, BasebandInterruptMask, RadioInterrupt, RadioInterruptMask},
+use kaonic_radio::{
+    error::KaonicError,
+    frame::Frame,
+    platform,
+    radio::{Radio, RadioConfig},
 };
 
 fn main() {
@@ -14,90 +10,60 @@ fn main() {
 
     log::info!("Start Radio Test");
 
-    let mut radios = platform::create_radios().unwrap();
+    let tx_mode = std::env::args().any(|arg| arg == "--tx");
 
-    let mut radio = radios[0].take().unwrap();
+    let mut machine = platform::create_machine().expect("kaonic machine");
 
-    radio.fem.configure(869_535_000);
+    let mut radio = machine.take_radio(0).expect("valid radio module");
 
-    let rf = radio.inner();
-
-    log::info!("Radio: {} {} {}", rf.part_number(), rf.version(), rf.name());
-
-    rf.trx_09()
-        .radio()
-        .set_frequency(&RadioFrequencyConfig {
+    radio
+        .configure(&RadioConfig {
             freq: 869_535_000,
             channel_spacing: 200_000,
-            channel: 10,
-            pll_lbw: PllLoopBandwidth::Default,
+            channel: 11,
         })
-        .unwrap();
+        .expect("configured radio");
 
-    rf.trx_09()
-        .radio()
-        .set_control_pad(FrontendPinConfig::Mode2)
-        .unwrap();
+    let mut frame = Frame::new();
 
-    rf.trx_09()
-        .radio()
-        .set_aux_settings(AuxiliarySettings {
-            ext_lna_bypass: false,
-            aven: false,
-            avect: false,
-            pavol: PaVol::Voltage2400mV,
-            map: AgcGainMap::Extranal12dB,
-        })
-        .unwrap();
-
-    rf.trx_09()
-        .configure(&Modulation::Ofdm(OfdmModulation::default()))
-        .unwrap();
-
-    rf.trx_09()
-        .setup_irq(
-            RadioInterruptMask::new()
-                .add_irq(RadioInterrupt::TransceiverError)
-                .build(),
-            BasebandInterruptMask::new()
-                .add_irq(BasebandInterrupt::ReceiverFrameEnd)
-                .add_irq(BasebandInterrupt::TransmitterFrameEnd)
-                .build(),
-        )
-        .unwrap();
-
-    let mut frame = BasebandFrame::new();
-
-    // loop {
-    //     let tx_frame = BasebandFrame::new_from_slice("HELLO TEST".as_bytes());
-    //     log::trace!("Transmit:({}) {}", tx_frame.len(), tx_frame);
-    //
-    //     rf.trx_09().baseband_transmit(bus, &tx_frame).unwrap();
-    //
-    //     log::trace!("Wait on transmit finish");
-    //     rf.trx_09().baseband().wait_irq(
-    //         bus,
-    //         BasebandInterrupt::TransmitterFrameEnd,
-    //         Duration::from_secs(1),
-    //     );
-    //
-    //     bus.delay(Duration::from_millis(100));
-    // }
-
-    log::trace!("Receive");
-    rf.trx_09().radio().receive().unwrap();
-
+    let mut counter = 0u64;
     loop {
-        if rf.trx_09().baseband().wait_irq(
-            BasebandInterrupt::ReceiverFrameEnd,
-            core::time::Duration::from_secs(1),
-        ) {
-            rf.trx_09().baseband().load_rx(&mut frame).unwrap();
-            rf.trx_09().radio().receive().unwrap();
-            log::trace!("Frame:({} Bytes)\n\r {}", frame.len(), frame);
-        }
+        if tx_mode {
+            frame.copy_from_slice(format!("// TEST DATA {} //", counter).as_bytes());
+            match radio.transmit(&frame) {
+                Ok(_) => {
+                    counter += 1;
+                    log::trace!("TX[{:8}] {}", counter, frame.len());
+                }
+                Err(KaonicError::Timeout) => {
+                    log::warn!("TX Timeout");
+                }
+                Err(_) => {
+                    log::error!("transmit error");
+                }
+            }
+            counter += 1;
+        } else {
+            match radio.receive(&mut frame, core::time::Duration::from_millis(1000)) {
+                Ok(recv) => {
+                    counter += 1;
+                    log::trace!(
+                        "RX[{:8}] rssi:{} edv:{} {}",
+                        counter,
+                        recv.rssi,
+                        recv.edv,
+                        frame
+                    );
+                }
+                Err(KaonicError::Timeout) => {}
+                Err(_) => {
+                    log::error!("receive error");
+                }
+            }
 
-        let rssi = rf.trx_09().radio().read_rssi();
-        log::trace!("RSSI: {}", rssi.unwrap_or(127));
+            if let Ok(scan) = radio.scan(core::time::Duration::from_millis(100)) {
+                log::trace!("SCAN rssi:{} edv:{}", scan.rssi, scan.edv)
+            }
+        }
     }
 }

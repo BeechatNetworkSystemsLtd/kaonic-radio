@@ -1,6 +1,7 @@
 use kaonic_radio::{error::KaonicError, platform::linux::LinuxOutputPin};
 use memmap2::{MmapMut, MmapOptions};
 use std::fs::OpenOptions;
+
 pub struct Kaonic1SFpga {
     enable_gpio: LinuxOutputPin,
     mmap: MmapMut,

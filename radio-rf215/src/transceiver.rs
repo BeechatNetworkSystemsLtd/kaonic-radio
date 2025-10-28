@@ -1,9 +1,9 @@
-use crate::baseband::{Baseband, BasebandFrame};
+use crate::baseband::{Baseband, BasebandAutoMode, BasebandFrame};
 use crate::bus::Bus;
 use crate::error::RadioError;
 use crate::modulation::{self, Modulation};
 use crate::radio::{
-    Band, FrequencySampleRate, Radio, RadioChannel, RadioFrequency, RadioFrequencyConfig,
+    Band, FrequencySampleRate, PaCur, Radio, RadioChannel, RadioFrequency, RadioFrequencyConfig,
     RadioState, RadioTransreceiverConfig, ReceiverBandwidth, RelativeCutOff, TransmitterCutOff,
 };
 use crate::regs::{self, BasebandInterruptMask, RadioInterruptMask, RegisterAddress};
@@ -56,9 +56,14 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
     pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
         self.radio
             .change_state(core::time::Duration::from_millis(100), RadioState::TrxOff)?;
+
         self.radio.set_frequency(config)?;
 
         Ok(())
+    }
+
+    pub const fn check_band(&self, freq: RadioFrequency) -> bool {
+        Radio::<B, I>::check_band(freq)
     }
 
     pub fn setup_irq(
@@ -88,7 +93,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         Ok((rf_irqs, bb_irqs))
     }
 
-    pub fn baseband_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
+    pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
         self.radio
             .change_state(core::time::Duration::from_millis(500), RadioState::TrxPrep)?;
 
@@ -99,7 +104,52 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         Ok(())
     }
 
-    pub fn baseband_receive(&mut self, frame: &mut BasebandFrame) -> Result<(), RadioError> {
+    pub fn bb_transmit_cca(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
+        // NOTE: 6.15.5 Clear Channel Assessment with Automatic Transmit (CCATX)
+
+        // NOTE: It is recommended disabling the baseband (set PC.BBEN to 0) to avoid that the
+        // baseband decodes/receives any frame during the ED measurement.
+        self.baseband.disable()?;
+
+        self.baseband.load_tx(frame)?;
+
+        self.radio
+            .change_state(core::time::Duration::from_millis(500), RadioState::Rx)?;
+
+        // NOTE: Do not use procedure CCATX together with procedure Transmit and Switch to Receive (TX2RX)
+        self.baseband.set_auto_mode(BasebandAutoMode {
+            cca_tx: true,
+            auto_rx: false,
+            ..Default::default()
+        })?;
+
+        self.baseband.set_auto_edt(-50)?;
+
+        self.radio.clear_irqs()?;
+
+        self.radio
+            .set_energy_detection(crate::radio::EnergyDetectionMode::Single)?;
+
+        if let Some(irqs) = self.radio.wait_any_irq(
+            RadioInterruptMask::new()
+                .add_irq(regs::RadioInterrupt::TransceiverReady)
+                .add_irq(regs::RadioInterrupt::TransceiverError)
+                .build(),
+            core::time::Duration::from_millis(100),
+        ) {
+            if irqs.has_irq(regs::RadioInterrupt::TransceiverError) {
+                // NOTE: If the baseband has been disabled for the measurement period and the
+                // channel has assessed as busy, the baseband needs to be enabled again by setting
+                // PC.BBEN to 1.
+                self.baseband.enable()?;
+                return Err(RadioError::Timeout);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn bb_receive(&mut self, frame: &mut BasebandFrame) -> Result<(), RadioError> {
         self.baseband.load_rx(frame)?;
         Ok(())
     }
@@ -188,7 +238,8 @@ impl TransreceiverConfigurator<Band09> {
             _ => {}
         }
 
-        trx_config.tx_config.power = 10;
+        trx_config.tx_config.power = 14;
+        trx_config.tx_config.pacur = PaCur::NoReduction;
 
         return trx_config;
     }

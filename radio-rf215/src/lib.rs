@@ -4,7 +4,11 @@ use bus::{Bus, BusError};
 use error::RadioError;
 use transceiver::{Band09, Band24, Transreceiver};
 
-use crate::radio::{Band, RadioFrequencyConfig};
+use crate::{
+    baseband::BasebandFrame,
+    radio::{RadioFrequencyBuilder, RadioFrequencyConfig},
+    regs::{BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask},
+};
 
 pub mod baseband;
 pub mod bus;
@@ -49,6 +53,7 @@ pub struct Rf215<I: Bus + Clone> {
     bus: I,
     trx_09: Transreceiver<Band09, I>,
     trx_24: Transreceiver<Band24, I>,
+    freq_config: RadioFrequencyConfig,
 }
 
 impl<I: Bus + Clone> Rf215<I> {
@@ -63,21 +68,30 @@ impl<I: Bus + Clone> Rf215<I> {
 
         let version = bus.read_reg_u8(regs::RG_RF_VN)?;
 
+        let freq_config = RadioFrequencyBuilder::new().build();
+        let mut trx_09 = Transreceiver::<Band09, I>::new(bus.clone());
+        let trx_24 = Transreceiver::<Band24, I>::new(bus.clone());
+
+        if let Err(_) = trx_09.set_frequency(&freq_config) {
+            return Err(BusError::CommunicationFailure);
+        }
+
         Ok(Self {
             name,
             part_number,
             version,
             bus: bus.clone(),
-            trx_09: Transreceiver::<Band09, I>::new(bus.clone()),
-            trx_24: Transreceiver::<Band24, I>::new(bus.clone()),
+            trx_09,
+            trx_24,
+            freq_config,
         })
     }
 
     pub fn set_iq_loopback(&mut self, enabled: bool) -> Result<(), RadioError> {
+        let ext_loopback: u8 = if enabled { 0b1000_0000 } else { 0 };
 
-        let ext_loopback :u8= if enabled { 0b1000_0000 } else { 0 };
-
-        self.bus.modify_reg_u8(regs::RG_RF_IQIFC0, 0b1000_0000,  ext_loopback)?;
+        self.bus
+            .modify_reg_u8(regs::RG_RF_IQIFC0, 0b1000_0000, ext_loopback)?;
 
         Ok(())
     }
@@ -85,16 +99,103 @@ impl<I: Bus + Clone> Rf215<I> {
     pub fn set_mode(&mut self, chip_mode: ChipMode) -> Result<(), RadioError> {
         let chip_mode = (chip_mode as u8) << 4;
 
-        self.bus.modify_reg_u8(regs::RG_RF_IQIFC1, 0b0111_0000, chip_mode)?;
+        self.bus
+            .modify_reg_u8(regs::RG_RF_IQIFC1, 0b0111_0000, chip_mode)?;
 
         Ok(())
     }
 
+    pub fn setup_irq(
+        &mut self,
+        radio_irq: RadioInterruptMask,
+        baseband_irq: BasebandInterruptMask,
+    ) -> Result<(), RadioError> {
+        self.trx_09.setup_irq(radio_irq, baseband_irq)?;
+        self.trx_24.setup_irq(radio_irq, baseband_irq)?;
+        Ok(())
+    }
+
     pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
-        if config.freq <= Band09::MAX_FREQUENCY {
-            self.trx_09.set_frequency(config)
+        let result = if self.freq_config != *config {
+            if self.trx_09.check_band(config.freq) {
+                self.trx_09.set_frequency(config)
+            } else {
+                self.trx_24.set_frequency(config)
+            }
         } else {
-            self.trx_24.set_frequency(config)
+            Ok(())
+        };
+
+        if let Ok(_) = result {
+            self.freq_config = *config;
+        }
+
+        result
+    }
+
+    pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.bb_transmit_cca(frame)?;
+            self.trx_09.radio().receive()?;
+            Ok(())
+        } else {
+            self.trx_24.bb_transmit(frame)
+        }
+    }
+
+    pub fn bb_receive(
+        &mut self,
+        frame: &mut BasebandFrame,
+        timeout: core::time::Duration,
+    ) -> Result<(), RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.radio().receive()?;
+
+            if self
+                .trx_09
+                .baseband()
+                .wait_irq(BasebandInterrupt::ReceiverFrameEnd, timeout)
+            {
+                self.trx_09.bb_receive(frame)
+            } else {
+                Err(RadioError::Timeout)
+            }
+        } else {
+            self.trx_24.radio().receive()?;
+
+            if self
+                .trx_24
+                .baseband()
+                .wait_irq(BasebandInterrupt::ReceiverFrameEnd, timeout)
+            {
+                self.trx_24.bb_receive(frame)
+            } else {
+                Err(RadioError::Timeout)
+            }
+        }
+    }
+
+    pub fn read_rssi(&mut self) -> Result<i8, RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.radio().read_rssi()
+        } else {
+            self.trx_24.radio().read_rssi()
+        }
+    }
+
+    pub fn read_edv(&mut self) -> Result<i8, RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.radio().read_edv()
+        } else {
+            self.trx_24.radio().read_edv()
+        }
+    }
+
+    pub fn start_receive(&mut self) -> Result<(), RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.radio().receive()
+        } else {
+            self.trx_24.radio().receive()
         }
     }
 

@@ -1,4 +1,3 @@
-use std::time::Duration;
 use std::time::Instant;
 
 use libgpiod::line::Offset;
@@ -6,16 +5,10 @@ use libgpiod::line::Value;
 
 use linux_embedded_hal::SpidevDevice;
 
-use radio_rf215::bus::Bus;
-use radio_rf215::bus::BusClock;
-use radio_rf215::bus::BusError;
-use radio_rf215::bus::BusInterrupt;
-use radio_rf215::bus::BusReset;
-
 use crate::error::KaonicError;
 
 pub struct SharedBus<T> {
-    bus: std::sync::Arc<std::sync::Mutex<T>>,
+    pub(super) bus: std::sync::Arc<std::sync::Mutex<T>>,
 }
 
 impl<T> SharedBus<T> {
@@ -34,52 +27,6 @@ impl<T> Clone for SharedBus<T> {
     }
 }
 
-impl<T: Bus> Bus for SharedBus<T> {
-    #[inline]
-    fn write_regs(
-        &mut self,
-        addr: radio_rf215::regs::RegisterAddress,
-        values: &[radio_rf215::regs::RegisterValue],
-    ) -> Result<(), BusError> {
-        let mut bus = self.bus.lock().unwrap();
-        bus.write_regs(addr, values)
-    }
-
-    #[inline]
-    fn read_regs(
-        &mut self,
-        addr: radio_rf215::regs::RegisterAddress,
-        values: &mut [radio_rf215::regs::RegisterValue],
-    ) -> Result<(), BusError> {
-        let mut bus = self.bus.lock().unwrap();
-        bus.read_regs(addr, values)
-    }
-
-    #[inline]
-    fn wait_interrupt(&mut self, timeout: std::time::Duration) -> bool {
-        let mut bus = self.bus.lock().unwrap();
-        bus.wait_interrupt(timeout)
-    }
-
-    #[inline]
-    fn delay(&mut self, timeout: std::time::Duration) {
-        let mut bus = self.bus.lock().unwrap();
-        bus.delay(timeout)
-    }
-
-    #[inline]
-    fn current_time(&mut self) -> u64 {
-        let mut bus = self.bus.lock().unwrap();
-        bus.current_time()
-    }
-
-    #[inline]
-    fn hardware_reset(&mut self) -> Result<(), BusError> {
-        let mut bus = self.bus.lock().unwrap();
-        bus.hardware_reset()
-    }
-}
-
 pub struct LinuxGpioConfig {
     pub line_name: &'static str,
 }
@@ -95,8 +42,8 @@ pub struct LinuxSpiConfig {
 }
 
 pub struct LinuxGpioInterrupt {
-    buffer: libgpiod::request::Buffer,
-    request: libgpiod::request::Request,
+    pub(super) buffer: libgpiod::request::Buffer,
+    pub(super) request: libgpiod::request::Request,
 }
 
 pub type LinuxSpi = SpidevDevice;
@@ -118,23 +65,9 @@ impl LinuxGpioInterrupt {
     }
 }
 
-impl BusInterrupt for LinuxGpioInterrupt {
-    fn wait_on_interrupt(&mut self, timeout: core::time::Duration) -> bool {
-        if let Ok(status) = self.request.wait_edge_events(Some(timeout)) {
-            if status {
-                let _ = self.request.read_edge_events(&mut self.buffer);
-            }
-
-            return true;
-        }
-
-        return false;
-    }
-}
-
 pub struct LinuxGpioReset {
-    line: Offset,
-    request: libgpiod::request::Request,
+    pub(super) line: Offset,
+    pub(super) request: libgpiod::request::Request,
 }
 
 impl LinuxGpioReset {
@@ -205,24 +138,8 @@ impl LinuxOutputPin {
     }
 }
 
-impl BusReset for LinuxGpioReset {
-    fn hardware_reset(&mut self) -> Result<(), BusError> {
-        self.request
-            .set_value(self.line, Value::Active)
-            .map_err(|_| BusError::ControlFailure)?;
-
-        std::thread::sleep(Duration::from_millis(25));
-
-        self.request
-            .set_value(self.line, Value::InActive)
-            .map_err(|_| BusError::ControlFailure)?;
-
-        Ok(())
-    }
-}
-
 pub struct LinuxClock {
-    start_time: Instant,
+    pub(crate) start_time: Instant,
 }
 
 impl LinuxClock {
@@ -230,16 +147,6 @@ impl LinuxClock {
         Self {
             start_time: Instant::now(),
         }
-    }
-}
-
-impl BusClock for LinuxClock {
-    fn delay(&mut self, duration: Duration) {
-        std::thread::sleep(duration);
-    }
-
-    fn current_time(&mut self) -> u64 {
-        self.start_time.elapsed().as_millis() as u64
     }
 }
 
