@@ -127,7 +127,7 @@ impl Radio for Kaonic1SRadio {
         })
     }
 
-    fn scan(&mut self, timeout: core::time::Duration) -> Result<ScanResult, KaonicError> {
+    fn scan(&mut self, _timeout: core::time::Duration) -> Result<ScanResult, KaonicError> {
 
         let rssi = self.radio.read_rssi()?;
         let edv = self.radio.read_edv()?;
