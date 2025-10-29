@@ -1,4 +1,4 @@
-use kaonic_radio::{error::KaonicError, platform::kaonic1s::Kaonic1SFrame};
+use kaonic_radio::{error::KaonicError, modulation, platform::kaonic1s::Kaonic1SFrame};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;
@@ -52,12 +52,14 @@ impl Radio for RadioService {
 
         if let Some(phy) = req.phy_config {
             log::debug!("parse modulation settings");
-            let modulation = phy_to_modulation(&phy);
+            let modulation = phy_to_modulation(&phy, req.tx_power as u8);
             if let Err(e) = modulation {
                 log::error!("{}", e);
                 return Err(e);
             }
+
             let modulation = modulation.unwrap();
+
             log::info!(
                 "Applying modulation for module {}: {:?}",
                 module,
@@ -213,6 +215,7 @@ fn internal_err<E: std::fmt::Display>(e: E) -> Status {
 
 fn phy_to_modulation(
     phy: &super::kaonic::configuration_request::PhyConfig,
+    tx_power: u8,
 ) -> Result<KrModulation, Status> {
     match phy {
         super::kaonic::configuration_request::PhyConfig::Ofdm(ofdm) => {
@@ -238,7 +241,7 @@ fn phy_to_modulation(
                     )))
                 }
             };
-            Ok(KrModulation::Ofdm(OfdmModulation { mcs, opt }))
+            Ok(KrModulation::Ofdm(OfdmModulation { mcs, opt, tx_power }))
         }
         super::kaonic::configuration_request::PhyConfig::Qpsk(qpsk) => {
             let chip_freq = match qpsk.chip_freq {
@@ -265,7 +268,11 @@ fn phy_to_modulation(
                     )))
                 }
             };
-            Ok(KrModulation::Qpsk(QpskModulation { chip_freq, mode }))
+            Ok(KrModulation::Qpsk(QpskModulation {
+                chip_freq,
+                mode,
+                tx_power,
+            }))
         }
         super::kaonic::configuration_request::PhyConfig::Fsk(_) => {
             Err(Status::unimplemented("FSK modulation not supported yet"))

@@ -492,6 +492,14 @@ where
         Ok(())
     }
 
+    pub fn update_frequency(&mut self) -> Result<(), RadioError> {
+
+        self.bus
+            .modify_reg_u8(Self::abs_reg(regs::RG_RFXX_CNM), 0x00, 0x00)?;
+
+        Ok(())
+    }
+
     pub fn read_rssi(&mut self) -> Result<i8, RadioError> {
         let value = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RSSI))?;
         let rssi = value as i8;

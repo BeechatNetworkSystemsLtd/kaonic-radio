@@ -7,6 +7,8 @@ pub(crate) fn map_modulation(
         Modulation::Ofdm(ofdm) => {
             let mut result = radio_rf215::modulation::OfdmModulation::default();
 
+            result.tx_power = ofdm.tx_power;
+
             result.mcs = match ofdm.mcs {
                 crate::modulation::OfdmMcs::Mcs0 => radio_rf215::modulation::OfdmMcs::BpskC1_2_4x,
                 crate::modulation::OfdmMcs::Mcs1 => radio_rf215::modulation::OfdmMcs::BpskC1_2_2x,
@@ -36,6 +38,8 @@ pub(crate) fn map_modulation(
         }
         Modulation::Qpsk(qpsk) => {
             let mut result = radio_rf215::modulation::QpskModulation::default();
+
+            result.tx_power = qpsk.tx_power;
 
             result.fchip = match qpsk.chip_freq {
                 crate::modulation::QpskChipFrequency::Freq100 => {

@@ -9,13 +9,17 @@ impl fmt::Display for Modulation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Modulation::Ofdm(ofdm) => {
-                writeln!(f, "[OFDM mcs:{} opt:{}]", ofdm.mcs as u8, ofdm.opt as u8)?;
+                writeln!(
+                    f,
+                    "[OFDM mcs:{} opt:{} pwr:{}]",
+                    ofdm.mcs as u8, ofdm.opt as u8, ofdm.tx_power
+                )?;
             }
             Modulation::Qpsk(qpsk) => {
                 writeln!(
                     f,
-                    "[QPSK freq:{} mode:{}]",
-                    qpsk.chip_freq as u8, qpsk.mode as u8
+                    "[QPSK freq:{} mode:{} pwr:{}]",
+                    qpsk.chip_freq as u8, qpsk.mode as u8, qpsk.tx_power
                 )?;
             }
         }
@@ -39,15 +43,16 @@ pub enum OfdmMcs {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
 pub enum OfdmOption {
-    Option1 = 0x01,
-    Option2 = 0x02,
-    Option3 = 0x03,
-    Option4 = 0x04,
+    Option1 = 0x00,
+    Option2 = 0x01,
+    Option3 = 0x02,
+    Option4 = 0x03,
 }
 
 pub struct OfdmModulation {
     pub mcs: OfdmMcs,
     pub opt: OfdmOption,
+    pub tx_power: u8,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -71,4 +76,5 @@ pub enum QpskRateMode {
 pub struct QpskModulation {
     pub chip_freq: QpskChipFrequency,
     pub mode: QpskRateMode,
+    pub tx_power: u8,
 }

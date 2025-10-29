@@ -31,6 +31,7 @@ pub struct OfdmModulation {
     pub mcs: OfdmMcs,
     pub opt: OfdmBandwidthOption,
     pub pdt: u8, // Preamble Detection Threshold
+    pub tx_power: u8,
 }
 
 impl Default for OfdmModulation {
@@ -39,6 +40,7 @@ impl Default for OfdmModulation {
             mcs: OfdmMcs::QamC3_4,
             opt: OfdmBandwidthOption::Option1,
             pdt: 0x03,
+            tx_power: 10,
         }
     }
 }
@@ -65,6 +67,7 @@ pub enum QpskRateMode {
 pub struct QpskModulation {
     pub fchip: QpskChipFrequency,
     pub mode: QpskRateMode,
+    pub tx_power: u8,
 }
 
 impl Default for QpskModulation {
@@ -72,6 +75,7 @@ impl Default for QpskModulation {
         Self {
             fchip: QpskChipFrequency::Fchip100,
             mode: QpskRateMode::RateMode0,
+            tx_power: 10,
         }
     }
 }

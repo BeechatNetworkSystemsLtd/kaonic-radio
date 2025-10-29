@@ -1,4 +1,6 @@
-use radio_rf215::{baseband::BasebandFrame, bus::SpiBus, radio::RadioFrequencyBuilder, Rf215};
+use radio_rf215::{
+    baseband::BasebandFrame, bus::SpiBus, modulation, radio::RadioFrequencyBuilder, Rf215,
+};
 
 use crate::{
     error::KaonicError,
@@ -90,9 +92,14 @@ impl Radio for Kaonic1SRadio {
     type RxFrame = Kaonic1SFrame;
 
     fn set_modulation(&mut self, modulation: &Modulation) -> Result<(), KaonicError> {
-        log::debug!("set modulation = {}", modulation);
+        log::debug!("set modulation ({}) = {}", self.radio.name(), modulation);
 
-        self.radio.configure(&map_modulation(modulation)?, 14)?;
+        let modulation = map_modulation(modulation)?;
+
+        log::debug!("apply modulation");
+        self.radio.configure(&modulation)?;
+
+        log::debug!("ok");
 
         Ok(())
     }
@@ -102,7 +109,7 @@ impl Radio for Kaonic1SRadio {
 
         self.fem.adjust(config.freq);
 
-        log::trace!("set radio config = {}", config);
+        log::trace!("set radio config ({}) = {}", self.radio.name(), config);
 
         self.radio.set_frequency(
             &RadioFrequencyBuilder::new()
@@ -118,6 +125,8 @@ impl Radio for Kaonic1SRadio {
     }
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
+        log::trace!("TX ({}): {}", self.radio.name(), frame);
+
         self.radio
             .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
             .map_err(|_| KaonicError::HardwareError)?;
@@ -136,6 +145,8 @@ impl Radio for Kaonic1SRadio {
         let edv = self.radio.read_edv()?;
 
         frame.copy_from_slice(self.bb_frame.as_slice());
+
+        log::trace!("RX ({}): {}", self.radio.name(), frame);
 
         Ok(ReceiveResult {
             rssi,

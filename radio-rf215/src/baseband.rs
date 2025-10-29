@@ -195,9 +195,9 @@ where
     }
 
     pub fn set_enabled(&mut self, enabled: bool) -> Result<(), RadioError> {
-        if self.enabled == enabled {
-            return Ok(());
-        }
+        // if self.enabled == enabled {
+        //     return Ok(());
+        // }
 
         const BBEN_BIT: u8 = 0b0000_0100;
 
@@ -236,7 +236,7 @@ where
         self.bus.modify_reg_u8(
             Self::abs_reg(regs::RG_BBCX_OQPSKPHRTX),
             0b0000_1110,
-            modulation.mode as u8,
+            (modulation.mode as u8) << 1,
         )?;
 
         Ok(())

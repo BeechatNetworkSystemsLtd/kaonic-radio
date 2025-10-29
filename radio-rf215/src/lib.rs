@@ -134,9 +134,9 @@ impl<I: Bus + Clone> Rf215<I> {
         result
     }
 
-    pub fn configure(&mut self, modulation: &Modulation, tx_power: u8) -> Result<(), RadioError> {
-        self.trx_09.configure(modulation, tx_power)?;
-        self.trx_24.configure(modulation, tx_power)?;
+    pub fn configure(&mut self, modulation: &Modulation) -> Result<(), RadioError> {
+        self.trx_09.configure(modulation)?;
+        self.trx_24.configure(modulation)?;
         Ok(())
     }
 
