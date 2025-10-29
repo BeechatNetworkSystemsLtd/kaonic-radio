@@ -80,6 +80,8 @@ impl Radio for RadioService {
         let req = request.into_inner();
         let module = module_index(req.module)?;
 
+        log::debug!("start receive stream for module [{}]", module);
+
         // Subscribe to worker's receive broadcast and forward as gRPC stream
         let mut sub = self.mgr.subscribe(module).map_err(internal_err)?;
         let (tx, rx) = tokio::sync::mpsc::channel(16);

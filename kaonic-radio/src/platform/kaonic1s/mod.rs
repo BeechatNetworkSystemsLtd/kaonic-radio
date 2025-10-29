@@ -84,8 +84,8 @@ impl Kaonic1SRadio {
 }
 
 impl Radio for Kaonic1SRadio {
-    type TxFrame = Frame<FRAME_SIZE>;
-    type RxFrame = Frame<FRAME_SIZE>;
+    type TxFrame = Kaonic1SFrame;
+    type RxFrame = Kaonic1SFrame;
 
     fn configure(&mut self, config: &crate::radio::RadioConfig) -> Result<(), KaonicError> {
         self.fem.adjust(config.freq);
@@ -129,7 +129,6 @@ impl Radio for Kaonic1SRadio {
     }
 
     fn scan(&mut self, _timeout: core::time::Duration) -> Result<ScanResult, KaonicError> {
-
         let rssi = self.radio.read_rssi()?;
         let edv = self.radio.read_edv()?;
 

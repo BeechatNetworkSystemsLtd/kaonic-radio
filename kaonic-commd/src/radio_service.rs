@@ -161,7 +161,7 @@ fn run_worker(
 
         // Idle -> attempt a receive with short timeout
         let start = Instant::now();
-        match radio.receive(&mut rx_frame, Duration::from_millis(50)) {
+        match radio.receive(&mut rx_frame, Duration::from_millis(20)) {
             Ok(rr) => {
                 let evt = ReceiveEvent {
                     module,

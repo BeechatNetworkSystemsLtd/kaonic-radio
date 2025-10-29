@@ -149,6 +149,7 @@ impl<I: Bus + Clone> Rf215<I> {
         timeout: core::time::Duration,
     ) -> Result<(), RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
+
             self.trx_09.radio().receive()?;
 
             if self

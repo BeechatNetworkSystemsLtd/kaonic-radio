@@ -235,6 +235,12 @@ fn create_radio(config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
             .baseband()
             .set_fcs(false)
             .map_err(|_| BusError::ControlFailure)?;
+
+        radio
+            .trx_09()
+            .radio()
+            .receive()
+            .map_err(|_| BusError::ControlFailure)?;
     }
 
     let fem = Kaonic1SRadioFem::new(

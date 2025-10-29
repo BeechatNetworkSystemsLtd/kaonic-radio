@@ -36,7 +36,7 @@ pub struct OfdmModulation {
 impl Default for OfdmModulation {
     fn default() -> Self {
         Self {
-            mcs: OfdmMcs::BpskC1_2_4x,
+            mcs: OfdmMcs::QamC3_4,
             opt: OfdmBandwidthOption::Option1,
             pdt: 0x03,
         }
