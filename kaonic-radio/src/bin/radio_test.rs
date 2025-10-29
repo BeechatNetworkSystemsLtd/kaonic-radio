@@ -16,14 +16,6 @@ fn main() {
 
     let mut radio = machine.take_radio(0).expect("valid radio module");
 
-    radio
-        .configure(&RadioConfig {
-            freq: 869_535_000,
-            channel_spacing: 200_000,
-            channel: 11,
-        })
-        .expect("configured radio");
-
     let mut frame = Frame::new();
 
     let mut counter = 0u64;
