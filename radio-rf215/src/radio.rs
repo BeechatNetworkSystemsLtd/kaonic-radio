@@ -493,7 +493,6 @@ where
     }
 
     pub fn update_frequency(&mut self) -> Result<(), RadioError> {
-
         self.bus
             .modify_reg_u8(Self::abs_reg(regs::RG_RFXX_CNM), 0x00, 0x00)?;
 

@@ -20,9 +20,6 @@ impl<T: Bus> Bus for SharedBus<T> {
         values: &[radio_rf215::regs::RegisterValue],
     ) -> Result<(), BusError> {
         let mut bus = self.bus.lock().unwrap();
-        if addr == 0x301 {
-            log::debug!("write {:x}", values[0]);
-        }
         bus.write_regs(addr, values)
     }
 
@@ -33,12 +30,7 @@ impl<T: Bus> Bus for SharedBus<T> {
         values: &mut [radio_rf215::regs::RegisterValue],
     ) -> Result<(), BusError> {
         let mut bus = self.bus.lock().unwrap();
-        bus.read_regs(addr, values)?;
-        if addr == 0x301 {
-            log::debug!("read {:x}", values[0]);
-        }
-
-        Ok(())
+        bus.read_regs(addr, values)
     }
 
     #[inline]

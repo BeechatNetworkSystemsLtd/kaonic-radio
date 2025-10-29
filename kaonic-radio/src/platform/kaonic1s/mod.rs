@@ -125,7 +125,7 @@ impl Radio for Kaonic1SRadio {
     }
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
-        log::trace!("TX ({}): {}", self.radio.name(), frame);
+        // log::trace!("TX ({}): {}", self.radio.name(), frame);
 
         self.radio
             .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
@@ -146,7 +146,7 @@ impl Radio for Kaonic1SRadio {
 
         frame.copy_from_slice(self.bb_frame.as_slice());
 
-        log::trace!("RX ({}): {}", self.radio.name(), frame);
+        // log::trace!("RX ({}): {}", self.radio.name(), frame);
 
         Ok(ReceiveResult {
             rssi,
