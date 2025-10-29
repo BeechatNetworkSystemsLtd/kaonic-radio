@@ -3,11 +3,13 @@ use radio_rf215::{baseband::BasebandFrame, bus::SpiBus, radio::RadioFrequencyBui
 use crate::{
     error::KaonicError,
     frame::Frame,
+    modulation::Modulation,
     platform::{
         kaonic1s::machine::create_radios,
         linux::{
             LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
         },
+        platform_impl::rf215::map_modulation,
     },
     radio::{self, Radio, ReceiveResult, ScanResult},
 };
@@ -87,18 +89,32 @@ impl Radio for Kaonic1SRadio {
     type TxFrame = Kaonic1SFrame;
     type RxFrame = Kaonic1SFrame;
 
+    fn set_modulation(&mut self, modulation: &Modulation) -> Result<(), KaonicError> {
+        log::debug!("set modulation = {}", modulation);
+
+        self.radio.configure(&map_modulation(modulation)?, 14)?;
+
+        Ok(())
+    }
+
     fn configure(&mut self, config: &crate::radio::RadioConfig) -> Result<(), KaonicError> {
+        log::trace!("adjust fem to {} Hz", config.freq);
+
         self.fem.adjust(config.freq);
 
-        self.radio
-            .set_frequency(
-                &RadioFrequencyBuilder::new()
-                    .freq(config.freq)
-                    .channel(config.channel)
-                    .channel_spacing(config.channel_spacing)
-                    .build(),
-            )
-            .map_err(|_| KaonicError::HardwareError)
+        log::trace!("set radio config = {}", config);
+
+        self.radio.set_frequency(
+            &RadioFrequencyBuilder::new()
+                .freq(config.freq)
+                .channel(config.channel)
+                .channel_spacing(config.channel_spacing)
+                .build(),
+        )?;
+
+        log::trace!("ok");
+
+        Ok(())
     }
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {

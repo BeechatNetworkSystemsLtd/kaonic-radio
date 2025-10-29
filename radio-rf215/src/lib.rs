@@ -6,6 +6,7 @@ use transceiver::{Band09, Band24, Transreceiver};
 
 use crate::{
     baseband::BasebandFrame,
+    modulation::Modulation,
     radio::{RadioFrequencyBuilder, RadioFrequencyConfig},
     regs::{BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask},
 };
@@ -133,6 +134,12 @@ impl<I: Bus + Clone> Rf215<I> {
         result
     }
 
+    pub fn configure(&mut self, modulation: &Modulation, tx_power: u8) -> Result<(), RadioError> {
+        self.trx_09.configure(modulation, tx_power)?;
+        self.trx_24.configure(modulation, tx_power)?;
+        Ok(())
+    }
+
     pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
             self.trx_09.bb_transmit_cca(frame)?;
@@ -149,7 +156,6 @@ impl<I: Bus + Clone> Rf215<I> {
         timeout: core::time::Duration,
     ) -> Result<(), RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
-
             self.trx_09.radio().receive()?;
 
             if self

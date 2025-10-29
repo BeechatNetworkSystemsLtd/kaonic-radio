@@ -4,7 +4,7 @@ use crate::{
     bus::Bus,
     error::RadioError,
     frame::Frame,
-    modulation::{Modulation, OfdmModulation},
+    modulation::{Modulation, OfdmModulation, QpskModulation},
     radio::Band,
     regs::{self, BasebandInterrupt, BasebandInterruptMask, RegisterAddress, RG_BBCX_FRAME_SIZE},
 };
@@ -156,7 +156,7 @@ where
             Modulation::Off => 0x00,
             Modulation::Fsk => 0x01,
             Modulation::Ofdm(_) => 0x02,
-            Modulation::Qpsk => 0x03,
+            Modulation::Qpsk(_) => 0x03,
         };
 
         // Update baseband phy type
@@ -170,6 +170,7 @@ where
         match modulation {
             Modulation::Off => Ok(()),
             Modulation::Ofdm(ofdm) => self.configure_ofdm(ofdm),
+            Modulation::Qpsk(qpsk) => self.configure_qpsk(qpsk),
             _ => Err(RadioError::IncorrectConfig),
         }
     }
@@ -221,6 +222,22 @@ where
         let ofdm_switches: u8 = (modulation.pdt << 5) | 0b10000;
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_BBCX_OFDMSW), ofdm_switches)?;
+
+        Ok(())
+    }
+
+    fn configure_qpsk(&mut self, modulation: &QpskModulation) -> Result<(), RadioError> {
+        self.bus.modify_reg_u8(
+            Self::abs_reg(regs::RG_BBCX_OQPSKC0),
+            0b0000_0011,
+            modulation.fchip as u8,
+        )?;
+
+        self.bus.modify_reg_u8(
+            Self::abs_reg(regs::RG_BBCX_OQPSKPHRTX),
+            0b0000_1110,
+            modulation.mode as u8,
+        )?;
 
         Ok(())
     }

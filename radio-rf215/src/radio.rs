@@ -180,6 +180,16 @@ pub enum TransmitterCutOff {
     Flc1000kHz = 0x0B,
 }
 
+/// Power Amplifier Ramp Time
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum PaRampTime {
+    Paramp4 = 0x00,
+    Paramp8 = 0x01,
+    Paramp16 = 0x02,
+    Paramp32 = 0x03,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
 pub enum ReceiverBandwidth {
@@ -202,6 +212,7 @@ pub struct RadioTransmitterConfig {
     pub sr: FrequencySampleRate,
     pub rcut: RelativeCutOff,
     pub lpfcut: TransmitterCutOff,
+    pub paramp: PaRampTime,
     pub pacur: PaCur,
     pub power: u8,
 }
@@ -212,6 +223,7 @@ impl Default for RadioTransmitterConfig {
             sr: FrequencySampleRate::SampleRate4000kHz,
             rcut: RelativeCutOff::Fcut0_250,
             lpfcut: TransmitterCutOff::Flc500kHz,
+            paramp: PaRampTime::Paramp4,
             pacur: PaCur::NoReduction,
             power: 1,
         }
@@ -590,8 +602,8 @@ where
             let mut txcutc = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_TXCUTC))?;
 
             // Clear SR and RCUT bits
-            txcutc = txcutc & 0b1111_0000;
-            txcutc = txcutc | (config.lpfcut as u8);
+            txcutc = txcutc & 0b0011_0000;
+            txcutc = txcutc | (config.lpfcut as u8) | ((config.paramp as u8) << 6);
 
             self.bus
                 .write_reg_u8(Self::abs_reg(regs::RG_RFXX_TXCUTC), txcutc)?;

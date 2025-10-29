@@ -1,7 +1,7 @@
 pub enum Modulation {
     Off,
     Ofdm(OfdmModulation),
-    Qpsk,
+    Qpsk(QpskModulation),
     Fsk,
 }
 
@@ -39,6 +39,39 @@ impl Default for OfdmModulation {
             mcs: OfdmMcs::QamC3_4,
             opt: OfdmBandwidthOption::Option1,
             pdt: 0x03,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum QpskChipFrequency {
+    Fchip100 = 0x00,
+    Fchip200 = 0x01,
+    Fchip1000 = 0x02,
+    Fchip2000 = 0x03,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum QpskRateMode {
+    RateMode0 = 0x00,
+    RateMode1 = 0x01,
+    RateMode2 = 0x02,
+    RateMode3 = 0x03,
+    RateMode4 = 0x04,
+}
+
+pub struct QpskModulation {
+    pub fchip: QpskChipFrequency,
+    pub mode: QpskRateMode,
+}
+
+impl Default for QpskModulation {
+    fn default() -> Self {
+        Self {
+            fchip: QpskChipFrequency::Fchip100,
+            mode: QpskRateMode::RateMode0,
         }
     }
 }

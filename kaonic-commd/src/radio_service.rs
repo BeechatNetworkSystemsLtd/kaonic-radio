@@ -27,6 +27,10 @@ enum RadioCommand {
         kaonic_radio::radio::RadioConfig,
         oneshot::Sender<Result<(), String>>,
     ),
+    Modulation(
+        kaonic_radio::modulation::Modulation,
+        oneshot::Sender<Result<(), String>>,
+    ),
     Transmit(Kaonic1SFrame, oneshot::Sender<Result<u32, String>>),
     Shutdown,
 }
@@ -103,6 +107,20 @@ impl RadioService {
         rx.await.unwrap_or_else(|_| Err("Worker dropped".into()))
     }
 
+    pub async fn set_modulation(
+        &self,
+        module: usize,
+        modulation: kaonic_radio::modulation::Modulation,
+    ) -> Result<(), String> {
+        let handle = self.get_worker(module)?;
+        let (tx, rx) = oneshot::channel();
+        handle
+            .cmd_tx
+            .send(RadioCommand::Modulation(modulation, tx))
+            .map_err(|_| "Worker thread stopped".to_string())?;
+        rx.await.unwrap_or_else(|_| Err("Worker dropped".into()))
+    }
+
     pub async fn transmit(&self, module: usize, frame: &Kaonic1SFrame) -> Result<u32, String> {
         let handle = self.get_worker(module)?;
         let (tx, rx) = oneshot::channel();
@@ -116,6 +134,16 @@ impl RadioService {
     pub fn subscribe(&self, module: usize) -> Result<broadcast::Receiver<ReceiveEvent>, String> {
         let handle = self.get_worker(module)?;
         Ok(handle.rx_tx.subscribe())
+    }
+
+    // Signal all workers to stop and close receive channels so gRPC streams end.
+    pub fn shutdown(&self) {
+        for w in &self.workers {
+            if let Some(w) = w.as_ref() {
+                let _ = w.cmd_tx.send(RadioCommand::Shutdown);
+                // Subscribers will also observe external shutdown signal from gRPC layer.
+            }
+        }
     }
 }
 
@@ -140,7 +168,12 @@ fn run_worker(
                     .configure(&cfg)
                     .map_err(|e| format!("configure failed: {:?}", e));
                 let _ = ack.send(res);
-                continue;
+            }
+            Ok(RadioCommand::Modulation(modulation, ack)) => {
+                let res = radio
+                    .set_modulation(&modulation)
+                    .map_err(|e| format!("configure failed: {:?}", e));
+                let _ = ack.send(res);
             }
             Ok(RadioCommand::Transmit(frame, ack)) => {
                 let start = Instant::now();
@@ -149,7 +182,6 @@ fn run_worker(
                     .map(|_| start.elapsed().as_millis() as u32)
                     .map_err(|e| format!("transmit failed: {:?}", e));
                 let _ = ack.send(res);
-                continue;
             }
             Ok(RadioCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
                 break;
@@ -159,13 +191,15 @@ fn run_worker(
             }
         }
 
-        // Idle -> attempt a receive with short timeout
         let start = Instant::now();
         match radio.receive(&mut rx_frame, Duration::from_millis(20)) {
             Ok(rr) => {
+                // Copy data into a new frame so we don't move rx_frame out of scope
+                let mut out_frame = Frame::<FRAME_SIZE>::new();
+                out_frame.copy_from_slice(rx_frame.as_slice());
                 let evt = ReceiveEvent {
                     module,
-                    frame: rx_frame,
+                    frame: out_frame,
                     rssi: rr.rssi,
                     latency_ms: start.elapsed().as_millis() as u32,
                 };

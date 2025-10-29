@@ -4,4 +4,5 @@ pub enum KaonicError {
     IncorrectSettings,
     Timeout,
     OutOfMemory,
+    NotSupported,
 }

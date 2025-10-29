@@ -3,8 +3,9 @@ use crate::bus::Bus;
 use crate::error::RadioError;
 use crate::modulation::{self, Modulation};
 use crate::radio::{
-    Band, FrequencySampleRate, PaCur, Radio, RadioChannel, RadioFrequency, RadioFrequencyConfig,
-    RadioState, RadioTransreceiverConfig, ReceiverBandwidth, RelativeCutOff, TransmitterCutOff,
+    Band, FrequencySampleRate, PaCur, PaRampTime, Radio, RadioChannel, RadioFrequency,
+    RadioFrequencyConfig, RadioState, RadioTransreceiverConfig, ReceiverBandwidth, RelativeCutOff,
+    TransmitterCutOff,
 };
 use crate::regs::{self, BasebandInterruptMask, RadioInterruptMask, RegisterAddress};
 
@@ -154,13 +155,20 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         Ok(())
     }
 
-    pub fn configure(&mut self, modulation: &modulation::Modulation) -> Result<(), RadioError> {
+    pub fn configure(
+        &mut self,
+        modulation: &modulation::Modulation,
+        tx_power: u8,
+    ) -> Result<(), RadioError> {
         self.baseband.disable()?;
 
         self.baseband.configure(modulation)?;
 
         self.radio
-            .configure_transreceiver(&TransreceiverConfigurator::configure(&modulation))?;
+            .configure_transreceiver(&TransreceiverConfigurator::configure(
+                &modulation,
+                tx_power,
+            ))?;
 
         self.baseband.enable()?;
 
@@ -185,7 +193,7 @@ struct TransreceiverConfigurator<B: Band> {
 }
 
 impl TransreceiverConfigurator<Band09> {
-    pub fn configure(modulation: &Modulation) -> RadioTransreceiverConfig {
+    pub fn configure(modulation: &Modulation, tx_power: u8) -> RadioTransreceiverConfig {
         let mut trx_config = RadioTransreceiverConfig::default();
         let tx_config = &mut trx_config.tx_config;
         let rx_config = &mut trx_config.rx_config;
@@ -235,10 +243,56 @@ impl TransreceiverConfigurator<Band09> {
 
                 rx_config.sr = tx_config.sr;
             }
+            Modulation::Qpsk(qpsk) => match qpsk.fchip {
+                modulation::QpskChipFrequency::Fchip100 => {
+                    tx_config.sr = FrequencySampleRate::SampleRate400kHz;
+                    tx_config.rcut = RelativeCutOff::Fcut0_750;
+                    tx_config.lpfcut = TransmitterCutOff::Flc400kHz;
+                    tx_config.paramp = PaRampTime::Paramp32;
+
+                    rx_config.rcut = RelativeCutOff::Fcut0_375;
+                    rx_config.bw = ReceiverBandwidth::Bw160kHzIf250kHz;
+                    rx_config.sr = FrequencySampleRate::SampleRate400kHz;
+                    rx_config.if_shift = false;
+                }
+                modulation::QpskChipFrequency::Fchip200 => {
+                    tx_config.paramp = PaRampTime::Paramp16;
+                    tx_config.sr = FrequencySampleRate::SampleRate800kHz;
+                    tx_config.rcut = RelativeCutOff::Fcut0_750;
+                    tx_config.lpfcut = TransmitterCutOff::Flc400kHz;
+
+                    rx_config.rcut = RelativeCutOff::Fcut0_375;
+                    rx_config.bw = ReceiverBandwidth::Bw250kHzIf250kHz;
+                    rx_config.sr = FrequencySampleRate::SampleRate800kHz;
+                    rx_config.if_shift = false;
+                }
+                modulation::QpskChipFrequency::Fchip1000 => {
+                    tx_config.paramp = PaRampTime::Paramp4;
+                    tx_config.sr = FrequencySampleRate::SampleRate4000kHz;
+                    tx_config.rcut = RelativeCutOff::Fcut0_750;
+                    tx_config.lpfcut = TransmitterCutOff::Flc1000kHz;
+
+                    rx_config.rcut = RelativeCutOff::Fcut0_250;
+                    rx_config.bw = ReceiverBandwidth::Bw1000kHzIf1000kHz;
+                    rx_config.sr = FrequencySampleRate::SampleRate4000kHz;
+                    rx_config.if_shift = false;
+                }
+                modulation::QpskChipFrequency::Fchip2000 => {
+                    tx_config.paramp = PaRampTime::Paramp4;
+                    tx_config.sr = FrequencySampleRate::SampleRate4000kHz;
+                    tx_config.rcut = RelativeCutOff::Fcut1_000;
+                    tx_config.lpfcut = TransmitterCutOff::Flc1000kHz;
+
+                    rx_config.rcut = RelativeCutOff::Fcut0_500;
+                    rx_config.bw = ReceiverBandwidth::Bw2000kHzIf2000kHz;
+                    rx_config.sr = FrequencySampleRate::SampleRate4000kHz;
+                    rx_config.if_shift = false;
+                }
+            },
             _ => {}
         }
 
-        trx_config.tx_config.power = 14;
+        trx_config.tx_config.power = tx_power;
         trx_config.tx_config.pacur = PaCur::NoReduction;
 
         return trx_config;

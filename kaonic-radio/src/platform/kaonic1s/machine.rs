@@ -227,7 +227,7 @@ fn create_radio(config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
 
         radio
             .trx_09()
-            .configure(&Modulation::Ofdm(OfdmModulation::default()))
+            .configure(&Modulation::Ofdm(OfdmModulation::default()), 14)
             .map_err(|_| BusError::ControlFailure)?;
 
         radio

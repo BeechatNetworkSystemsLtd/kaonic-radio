@@ -1,5 +1,6 @@
 use kaonic_radio::{error::KaonicError, platform::kaonic1s::Kaonic1SFrame};
 use std::sync::Arc;
+use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
@@ -13,13 +14,19 @@ use crate::{
     radio_service::{RadioService as Manager, ReceiveEvent},
 };
 
+use kaonic_radio::modulation::{
+    Modulation as KrModulation, OfdmMcs, OfdmModulation, OfdmOption, QpskChipFrequency,
+    QpskModulation, QpskRateMode,
+};
+
 pub struct RadioService {
     mgr: Arc<Manager>,
+    shutdown: watch::Receiver<bool>,
 }
 
 impl RadioService {
-    pub fn new(mgr: Arc<Manager>) -> Self {
-        Self { mgr }
+    pub fn new(mgr: Arc<Manager>, shutdown: watch::Receiver<bool>) -> Self {
+        Self { mgr, shutdown }
     }
 }
 
@@ -33,8 +40,8 @@ impl Radio for RadioService {
         let module = module_index(req.module)?;
 
         let cfg = kaonic_radio::radio::RadioConfig {
-            freq: req.freq,
-            channel_spacing: req.channel_spacing,
+            freq: req.freq * 1000,
+            channel_spacing: req.channel_spacing * 1000,
             channel: req.channel as u16,
         };
 
@@ -42,6 +49,27 @@ impl Radio for RadioService {
             .configure(module, cfg)
             .await
             .map_err(internal_err)?;
+
+        if let Some(phy) = req.phy_config {
+            log::debug!("parse modulation settings");
+            let modulation = phy_to_modulation(&phy);
+            if let Err(e) = modulation {
+                log::error!("{}", e);
+                return Err(e);
+            }
+            let modulation = modulation.unwrap();
+            log::info!(
+                "Applying modulation for module {}: {:?}",
+                module,
+                modulation_type_name(&modulation)
+            );
+            self.mgr
+                .set_modulation(module, modulation)
+                .await
+                .map_err(internal_err)?;
+        } else {
+            log::warn!("no modulation settings provided");
+        }
 
         Ok(Response::new(Empty {}))
     }
@@ -86,9 +114,26 @@ impl Radio for RadioService {
         let mut sub = self.mgr.subscribe(module).map_err(internal_err)?;
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
+        // Clone shutdown receiver for this stream
+        let mut shutdown = self.shutdown.clone();
+
         tokio::spawn(async move {
-            while let Ok(evt) = sub.recv().await {
-                let _ = tx.send(Ok(to_receive_response(evt))).await;
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => {
+                        break;
+                    }
+                    evt = sub.recv() => {
+                        match evt {
+                            Ok(e) => {
+                                if tx.send(Ok(to_receive_response(e))).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break, // channel closed/lagged
+                        }
+                    }
+                }
             }
         });
 
@@ -164,4 +209,73 @@ fn to_receive_response(evt: ReceiveEvent) -> ReceiveResponse {
 
 fn internal_err<E: std::fmt::Display>(e: E) -> Status {
     Status::internal(e.to_string())
+}
+
+fn phy_to_modulation(
+    phy: &super::kaonic::configuration_request::PhyConfig,
+) -> Result<KrModulation, Status> {
+    match phy {
+        super::kaonic::configuration_request::PhyConfig::Ofdm(ofdm) => {
+            let mcs = match ofdm.mcs {
+                0 => OfdmMcs::Mcs0,
+                1 => OfdmMcs::Mcs1,
+                2 => OfdmMcs::Mcs2,
+                3 => OfdmMcs::Mcs3,
+                4 => OfdmMcs::Mcs4,
+                5 => OfdmMcs::Mcs5,
+                6 => OfdmMcs::Mcs6,
+                v => return Err(Status::invalid_argument(format!("invalid OFDM mcs: {}", v))),
+            };
+            let opt = match ofdm.opt {
+                0 => OfdmOption::Option1,
+                1 => OfdmOption::Option2,
+                2 => OfdmOption::Option3,
+                3 => OfdmOption::Option4,
+                v => {
+                    return Err(Status::invalid_argument(format!(
+                        "invalid OFDM option: {}",
+                        v
+                    )))
+                }
+            };
+            Ok(KrModulation::Ofdm(OfdmModulation { mcs, opt }))
+        }
+        super::kaonic::configuration_request::PhyConfig::Qpsk(qpsk) => {
+            let chip_freq = match qpsk.chip_freq {
+                100 => QpskChipFrequency::Freq100,
+                200 => QpskChipFrequency::Freq200,
+                1000 => QpskChipFrequency::Freq1000,
+                2000 => QpskChipFrequency::Freq2000,
+                v => {
+                    return Err(Status::invalid_argument(format!(
+                        "invalid QPSK chip_freq: {}",
+                        v
+                    )))
+                }
+            };
+            let mode = match qpsk.rate_mode {
+                0 => QpskRateMode::Mode0,
+                1 => QpskRateMode::Mode1,
+                2 => QpskRateMode::Mode2,
+                3 => QpskRateMode::Mode3,
+                v => {
+                    return Err(Status::invalid_argument(format!(
+                        "invalid QPSK rate_mode: {}",
+                        v
+                    )))
+                }
+            };
+            Ok(KrModulation::Qpsk(QpskModulation { chip_freq, mode }))
+        }
+        super::kaonic::configuration_request::PhyConfig::Fsk(_) => {
+            Err(Status::unimplemented("FSK modulation not supported yet"))
+        }
+    }
+}
+
+fn modulation_type_name(m: &KrModulation) -> &'static str {
+    match m {
+        KrModulation::Ofdm(_) => "OFDM",
+        KrModulation::Qpsk(_) => "QPSK",
+    }
 }
