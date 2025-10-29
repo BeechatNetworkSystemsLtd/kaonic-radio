@@ -1,6 +1,7 @@
 use core::cmp::min;
 use core::fmt;
 
+#[derive(Clone, Copy, Debug)]
 pub struct Frame<const S: usize> {
     data: [u8; S],
     len: usize,
@@ -23,6 +24,21 @@ impl<const S: usize> Frame<S> {
         Self { data, len }
     }
 
+    pub fn capacity(&self) -> usize {
+        S
+    }
+
+    pub fn push_data(&mut self, data: &[u8]) {
+       
+        let data_size = data.len();
+        if self.len + data_size > S {
+            return;
+        }
+
+        self.data[self.len..(self.len + data_size)].copy_from_slice(data);
+        self.len += data_size;
+    }
+
     pub fn copy_from_slice(&mut self, data: &[u8]) {
         self.len = min(data.len(), S);
         self.data[..self.len].copy_from_slice(&data[..self.len]);
@@ -40,9 +56,17 @@ impl<const S: usize> Frame<S> {
         self.len
     }
 
+    pub fn resize(&mut self, len: usize) {
+        self.len = min(len, S);
+    }
+
     pub fn as_buffer_mut(&mut self, len: usize) -> &mut [u8] {
         self.len = if len <= S { len } else { S };
         &mut self.data[..self.len]
+    }
+
+    pub fn as_max_buffer_mut(&mut self) -> &mut [u8] {
+        self.as_buffer_mut(S)
     }
 }
 

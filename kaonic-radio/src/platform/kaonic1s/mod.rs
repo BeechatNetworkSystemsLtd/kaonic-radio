@@ -60,6 +60,7 @@ impl Kaonic1SRadioFem {
     }
 }
 
+pub type Kaonic1SFrame = Frame<FRAME_SIZE>;
 pub type Kaonic1SRf215 = Rf215<SharedBus<Kaonic1SBus>>;
 
 pub struct Kaonic1SRadio {
