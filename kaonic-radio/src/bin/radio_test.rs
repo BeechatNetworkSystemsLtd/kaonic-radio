@@ -1,9 +1,4 @@
-use kaonic_radio::{
-    error::KaonicError,
-    frame::Frame,
-    platform,
-    radio::{Radio, RadioConfig},
-};
+use kaonic_radio::{error::KaonicError, frame::Frame, platform, radio::Radio};
 
 fn main() {
     simple_logger::SimpleLogger::new().env().init().unwrap();

@@ -1,33 +1,36 @@
 use std::time::Duration;
 
 use kaonic_fpga::platform::Kaonic1SFpga;
-use kaonic_radio::RadioFem;
-use radio_rf215::radio::{RadioFrequency, RadioFrequencyBuilder};
+use kaonic_radio::{
+    platform::create_machine,
+    radio::{Frequency, Radio, RadioConfigBuilder},
+};
 
-const MAIN_FREQ: RadioFrequency = 869_535_000;
+const MAIN_FREQ: Frequency = 869_535_000;
 
 fn main() {
     simple_logger::SimpleLogger::new().env().init().unwrap();
 
     log::info!("Kaonic FPGA | Init");
 
-    let mut radios = kaonic_radio::platform::create_radios().unwrap();
+    let mut machine = create_machine().unwrap();
 
-    let mut radio = radios[0].take().unwrap();
+    let mut radio = machine.take_radio(0).unwrap();
 
     log::debug!("Configure FEM");
-    radio.fem.configure(MAIN_FREQ);
 
     log::debug!("Enable IQ external loopback");
-    radio.radio.set_iq_loopback(true).unwrap();
+    radio.radio().set_iq_loopback(true).unwrap();
 
     log::debug!("Change mode to IQ");
-    radio.radio.set_mode(radio_rf215::ChipMode::Radio).unwrap();
+    radio
+        .radio()
+        .set_mode(radio_rf215::ChipMode::Radio)
+        .unwrap();
 
     log::debug!("Set Frequency to {} Hz", MAIN_FREQ);
     radio
-        .radio
-        .set_frequency(&RadioFrequencyBuilder::new().freq(MAIN_FREQ).build())
+        .configure(&RadioConfigBuilder::new().freq(MAIN_FREQ).build())
         .unwrap();
 
     let mut fpga = Kaonic1SFpga::new().unwrap();

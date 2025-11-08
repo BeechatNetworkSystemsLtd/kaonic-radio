@@ -1,4 +1,4 @@
-use kaonic_radio::{error::KaonicError, modulation, platform::kaonic1s::Kaonic1SFrame};
+use kaonic_radio::{error::KaonicError, platform::kaonic1s::Kaonic1SFrame};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;

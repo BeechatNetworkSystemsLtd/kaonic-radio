@@ -1,6 +1,4 @@
-use radio_rf215::{
-    baseband::BasebandFrame, bus::SpiBus, modulation, radio::RadioFrequencyBuilder, Rf215,
-};
+use radio_rf215::{baseband::BasebandFrame, bus::SpiBus, radio::RadioFrequencyBuilder, Rf215};
 
 use crate::{
     error::KaonicError,
@@ -163,8 +161,9 @@ impl Radio for Kaonic1SRadio {
     }
 }
 
+pub const KAONIC1S_RADIO_COUNT: usize = 2;
 pub struct Kaonic1SMachine {
-    radios: [Option<Kaonic1SRadio>; 2],
+    radios: [Option<Kaonic1SRadio>; KAONIC1S_RADIO_COUNT],
 }
 
 impl Kaonic1SMachine {
@@ -180,5 +179,29 @@ impl Kaonic1SMachine {
         } else {
             None
         }
+    }
+
+    pub fn for_each_radio<T, F>(
+        &mut self,
+        mut f: F,
+    ) -> Result<[T; KAONIC1S_RADIO_COUNT], KaonicError>
+    where
+        F: FnMut(usize, &mut Option<Kaonic1SRadio>) -> Result<T, KaonicError>,
+        T: Clone,
+    {
+        let mut results: [Result<T, KaonicError>; KAONIC1S_RADIO_COUNT] =
+            [const { Err(KaonicError::HardwareError) }; KAONIC1S_RADIO_COUNT];
+
+        for (index, radio) in self.radios.iter_mut().enumerate() {
+            results[index] = f(index, radio);
+        }
+
+        for r in results.iter() {
+            if r.is_err() {
+                return Err(KaonicError::IncorrectSettings);
+            }
+        }
+
+        Ok(results.map(|r| r.unwrap()))
     }
 }

@@ -4,10 +4,46 @@ use core::fmt;
 pub type Frequency = u32;
 pub type Channel = u16;
 
+#[derive(PartialEq, Clone, Copy)]
 pub struct RadioConfig {
     pub freq: Frequency,
     pub channel_spacing: Frequency,
     pub channel: Channel,
+}
+
+pub struct RadioConfigBuilder {
+    config: RadioConfig,
+}
+
+impl RadioConfigBuilder {
+    pub const fn new() -> Self {
+        Self {
+            config: RadioConfig {
+                freq: 869_535_000,
+                channel_spacing: 200_000,
+                channel: 10,
+            },
+        }
+    }
+
+    pub fn freq(mut self, freq: Frequency) -> Self {
+        self.config.freq = freq;
+        self
+    }
+
+    pub fn channel(mut self, channel: Channel) -> Self {
+        self.config.channel = channel;
+        self
+    }
+
+    pub fn channel_spacing(mut self, spacing: Frequency) -> Self {
+        self.config.channel_spacing = spacing;
+        self
+    }
+
+    pub fn build(self) -> RadioConfig {
+        self.config
+    }
 }
 
 impl fmt::Display for RadioConfig {

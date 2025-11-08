@@ -1,4 +1,7 @@
-use kaonic_radio::platform::KaonicRadio;
+use kaonic_radio::{
+    error::KaonicError,
+    platform::{create_machine, kaonic1s::Kaonic1SRadio},
+};
 
 use super::FactoryTest;
 use std::process::Command;
@@ -92,32 +95,24 @@ impl Rf215Test {
     }
 
     async fn perform_rf215_tests(&self) -> Result<String, String> {
-        // Use the platform's create_radios function to initialize radios properly
-        use kaonic_radio::platform::create_radios;
+        let mut machine = create_machine().map_err(|_| format!("Failed to create machine"))?;
 
-        let radios = create_radios().map_err(|_| format!("Failed to create radios"))?;
-
-        let mut results = Vec::new();
         let radio_names = ["RF215-A", "RF215-B"];
 
-        for (index, radio_option) in radios.iter().enumerate() {
-            match radio_option {
-                Some(radio) => match self.test_rf215_instance(&radio.radio, radio_names[index]) {
-                    Ok(device_info) => {
-                        results.push(format!("{}: {}", radio_names[index], device_info));
-                    }
-                    Err(_) => {
-                        return Err(format!("Error {}", radio_names[index]));
-                    }
-                },
-                None => {
-                    return Err(format!(
-                        "{}: Radio not initialized (hardware missing or configuration error)",
-                        radio_names[index]
-                    ));
+        let results = machine
+            .for_each_radio(|idx, radio| {
+                match radio {
+                    Some(r) => self
+                        .test_rf215_instance(r, radio_names[idx])
+                        .map(|info| format!("{}: {}", radio_names[idx], info))
+                        .map_err(|_| KaonicError::IncorrectSettings),
+                    None => Ok(format!(
+                        "{}: not connected (hardware missing or configuration error)",
+                        radio_names[idx]
+                    )),
                 }
-            }
-        }
+            })
+            .map_err(|e| format!("RF215 iteration error: {:?}", e))?;
 
         if results.is_empty() {
             return Err("No RF215 radios were successfully initialized".to_string());
@@ -128,9 +123,10 @@ impl Rf215Test {
 
     fn test_rf215_instance(
         &self,
-        radio: &KaonicRadio,
+        radio: &mut Kaonic1SRadio,
         _radio_name: &str,
     ) -> Result<String, String> {
+        let radio = radio.radio();
         // Get radio information using the existing driver methods
         let part_number = radio.part_number();
         let version_number = radio.version();
@@ -143,9 +139,6 @@ impl Rf215Test {
             ));
         }
 
-        Ok(format!(
-            "PN=0x{:02X}, VN=0x{:02X}",
-            part_number as u8, version_number
-        ))
+        Ok(format!("PN=0x{:02X}, VN=0x{:02X}", part_number as u8, version_number))
     }
 }
