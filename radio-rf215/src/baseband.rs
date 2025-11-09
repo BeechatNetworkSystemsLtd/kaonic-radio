@@ -211,6 +211,15 @@ where
         Ok(())
     }
 
+    pub fn read_counter(&mut self) -> Result<u32, RadioError> {
+        let mut bytes = [0u8; 4];
+
+        self.bus
+            .read_regs(Self::abs_reg(regs::RG_BBCX_CNT0), &mut bytes[..])?;
+
+        Ok(u32::from_le_bytes(bytes))
+    }
+
     fn configure_ofdm(&mut self, modulation: &OfdmModulation) -> Result<(), RadioError> {
         let phy_config: u8 = modulation.opt as u8;
         self.bus

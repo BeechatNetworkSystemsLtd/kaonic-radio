@@ -138,6 +138,41 @@ pub enum AgcTargetLevel {
     TargetN42dB = 0x07,
 }
 
+pub struct AgcReceiverGain {
+    pub target_level: AgcTargetLevel,
+    pub rx_gain: u8,
+}
+
+impl Default for AgcReceiverGain {
+    fn default() -> Self {
+        Self {
+            target_level: AgcTargetLevel::TargetN30dB,
+            rx_gain: 23,
+        }
+    }
+}
+
+// 6.2.5.3 RFn_AGCC – Receiver AGC Control 0
+pub struct AgcReceiverControl {
+    pub agc_input: bool,              // This bit controls the input signal of the AGC
+    pub average_time: AgcAverageTime, // The time of averaging RX data samples for the AGC values is defined by number of samples
+    pub reset: bool,                  // AGC Reset
+    pub freeze_control: bool,         // AGC Freeze Control
+    pub enabled: bool,                // AGC Enable
+}
+
+impl Default for AgcReceiverControl {
+    fn default() -> Self {
+        Self {
+            agc_input: false,
+            average_time: AgcAverageTime::Samples8,
+            reset: false,
+            freeze_control: false,
+            enabled: true,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
 pub enum FrequencySampleRate {
@@ -503,9 +538,9 @@ where
         let value = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_RSSI))?;
         let rssi = value as i8;
 
-        // if rssi == 127 {
-        //     return Err(RadioError::IncorrectState);
-        // }
+        if rssi == 127 {
+            return Err(RadioError::IncorrectState);
+        }
 
         Ok(rssi)
     }
@@ -680,6 +715,45 @@ where
 
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PADFE), padfe)?;
+
+        Ok(())
+    }
+
+    pub fn set_agc_control(&mut self, agc_control: &AgcReceiverControl) -> Result<(), RadioError> {
+        let mut agcc = 0u8;
+
+        if agc_control.enabled {
+            agcc = agcc | 0b0000_0001;
+        }
+
+        if agc_control.agc_input {
+            agcc = agcc | 0b0100_0000;
+        }
+
+        if agc_control.freeze_control {
+            agcc = agcc | 0b0000_0010;
+        }
+
+        if agc_control.reset {
+            agcc = agcc | 0b0000_1000;
+        }
+
+        agcc = agcc | ((agc_control.average_time as u8) << 4);
+
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_AGCC), agcc)?;
+
+        Ok(())
+    }
+
+    pub fn set_agc_gain(&mut self, agc_gain: &AgcReceiverGain) -> Result<(), RadioError> {
+        let mut agcs = 0u8;
+
+        agcs = agcs | ((agc_gain.target_level as u8) << 5);
+        agcs = agcs | agc_gain.rx_gain;
+
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_AGCS), agcs)?;
 
         Ok(())
     }

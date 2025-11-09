@@ -139,16 +139,14 @@ impl Radio for Kaonic1SRadio {
     ) -> Result<ReceiveResult, KaonicError> {
         self.radio.bb_receive(&mut self.bb_frame, timeout)?;
 
-        let rssi = self.radio.read_rssi()?;
-        let edv = self.radio.read_edv()?;
+        let edv = self.radio.read_edv().unwrap_or(127);
 
         frame.copy_from_slice(self.bb_frame.as_slice());
 
         // log::trace!("RX ({}): {}", self.radio.name(), frame);
 
         Ok(ReceiveResult {
-            rssi,
-            edv,
+            rssi: edv,
             len: self.bb_frame.len(),
         })
     }

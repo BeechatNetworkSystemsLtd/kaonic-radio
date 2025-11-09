@@ -35,10 +35,9 @@ fn main() {
                 Ok(recv) => {
                     counter += 1;
                     log::trace!(
-                        "RX[{:8}] rssi:{} edv:{} {}",
+                        "RX[{:8}] rssi:{} {}",
                         counter,
                         recv.rssi,
-                        recv.edv,
                         frame
                     );
                 }

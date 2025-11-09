@@ -60,7 +60,6 @@ impl fmt::Display for RadioConfig {
 
 pub struct ReceiveResult {
     pub rssi: i8,
-    pub edv: i8,
     pub len: usize,
 }
 
