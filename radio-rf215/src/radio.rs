@@ -140,14 +140,14 @@ pub enum AgcTargetLevel {
 
 pub struct AgcReceiverGain {
     pub target_level: AgcTargetLevel,
-    pub rx_gain: u8,
+    pub gcw: u8,
 }
 
 impl Default for AgcReceiverGain {
     fn default() -> Self {
         Self {
             target_level: AgcTargetLevel::TargetN30dB,
-            rx_gain: 23,
+            gcw: 23,
         }
     }
 }
@@ -750,7 +750,7 @@ where
         let mut agcs = 0u8;
 
         agcs = agcs | ((agc_gain.target_level as u8) << 5);
-        agcs = agcs | agc_gain.rx_gain;
+        agcs = agcs | core::cmp::min(23, agc_gain.gcw);
 
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_AGCS), agcs)?;
