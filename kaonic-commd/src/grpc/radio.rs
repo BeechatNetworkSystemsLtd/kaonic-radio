@@ -1,4 +1,4 @@
-use kaonic_radio::{error::KaonicError, platform::kaonic1s::Kaonic1SFrame};
+use kaonic_radio::{error::KaonicError, platform::kaonic1s::Kaonic1SFrame, radio::Hertz};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;
@@ -40,8 +40,8 @@ impl Radio for RadioService {
         let module = module_index(req.module)?;
 
         let cfg = kaonic_radio::radio::RadioConfig {
-            freq: req.freq * 1000,
-            channel_spacing: req.channel_spacing * 1000,
+            freq: Hertz::from_khz(req.freq.into()),
+            channel_spacing: Hertz::from_khz(req.channel_spacing.into()),
             channel: req.channel as u16,
         };
 

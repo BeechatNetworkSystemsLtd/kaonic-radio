@@ -8,7 +8,7 @@ use crate::{
     baseband::BasebandFrame,
     modulation::Modulation,
     radio::{RadioFrequencyBuilder, RadioFrequencyConfig},
-    regs::{BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask},
+    regs::{BasebandInterruptMask, RadioInterruptMask},
 };
 
 pub mod baseband;
@@ -142,11 +142,9 @@ impl<I: Bus + Clone> Rf215<I> {
 
     pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
-            self.trx_09.bb_transmit_cca(frame)?;
-            self.trx_09.radio().receive()?;
-            Ok(())
+            self.trx_09.bb_transmit_cca(frame)
         } else {
-            self.trx_24.bb_transmit(frame)
+            self.trx_24.bb_transmit_cca(frame)
         }
     }
 
@@ -156,29 +154,9 @@ impl<I: Bus + Clone> Rf215<I> {
         timeout: core::time::Duration,
     ) -> Result<(), RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
-            self.trx_09.radio().receive()?;
-
-            if self
-                .trx_09
-                .baseband()
-                .wait_irq(BasebandInterrupt::ReceiverFrameEnd, timeout)
-            {
-                self.trx_09.bb_receive(frame)
-            } else {
-                Err(RadioError::Timeout)
-            }
+            self.trx_09.bb_receive(frame, timeout)
         } else {
-            self.trx_24.radio().receive()?;
-
-            if self
-                .trx_24
-                .baseband()
-                .wait_irq(BasebandInterrupt::ReceiverFrameEnd, timeout)
-            {
-                self.trx_24.bb_receive(frame)
-            } else {
-                Err(RadioError::Timeout)
-            }
+            self.trx_24.bb_receive(frame, timeout)
         }
     }
 
@@ -195,14 +173,6 @@ impl<I: Bus + Clone> Rf215<I> {
             self.trx_09.radio().read_edv()
         } else {
             self.trx_24.radio().read_edv()
-        }
-    }
-
-    pub fn start_receive(&mut self) -> Result<(), RadioError> {
-        if self.trx_09.check_band(self.freq_config.freq) {
-            self.trx_09.radio().receive()
-        } else {
-            self.trx_24.radio().receive()
         }
     }
 

@@ -3,10 +3,10 @@ use std::time::Duration;
 use kaonic_fpga::platform::Kaonic1SFpga;
 use kaonic_radio::{
     platform::create_machine,
-    radio::{Frequency, Radio, RadioConfigBuilder},
+    radio::{Hertz, Radio, RadioConfigBuilder},
 };
 
-const MAIN_FREQ: Frequency = 869_535_000;
+const MAIN_FREQ: Hertz = Hertz::new(869_535_000);
 
 fn main() {
     simple_logger::SimpleLogger::new().env().init().unwrap();

@@ -35,7 +35,8 @@ impl Kaonic1SRadioFem {
         }
     }
 
-    pub fn adjust(&mut self, freq: radio::Frequency) {
+    pub fn adjust(&mut self, freq: radio::Hertz) {
+        let freq = freq.as_hz();
         if (902_000_000 <= freq) && (freq <= 928_000_000) {
             let _ = self.flt_v1.set_high();
             let _ = self.flt_v2.set_high();
@@ -94,10 +95,9 @@ impl Radio for Kaonic1SRadio {
 
         let modulation = map_modulation(modulation)?;
 
-        log::debug!("apply modulation");
-        self.radio.configure(&modulation)?;
-
-        log::debug!("ok");
+        self.radio
+            .configure(&modulation)
+            .inspect_err(|_| log::error!("modulation config error"))?;
 
         Ok(())
     }
@@ -109,15 +109,15 @@ impl Radio for Kaonic1SRadio {
 
         log::trace!("set radio config ({}) = {}", self.radio.name(), config);
 
-        self.radio.set_frequency(
-            &RadioFrequencyBuilder::new()
-                .freq(config.freq)
-                .channel(config.channel)
-                .channel_spacing(config.channel_spacing)
-                .build(),
-        )?;
-
-        log::trace!("ok");
+        self.radio
+            .set_frequency(
+                &RadioFrequencyBuilder::new()
+                    .freq(config.freq.as_hz() as u32)
+                    .channel_spacing(config.channel_spacing.as_hz() as u32)
+                    .channel(config.channel)
+                    .build(),
+            )
+            .inspect_err(|_| log::error!("change frequency failed"))?;
 
         Ok(())
     }
@@ -127,6 +127,7 @@ impl Radio for Kaonic1SRadio {
 
         self.radio
             .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
+            .inspect_err(|_| log::error!("transmit error"))
             .map_err(|_| KaonicError::HardwareError)?;
 
         Ok(())

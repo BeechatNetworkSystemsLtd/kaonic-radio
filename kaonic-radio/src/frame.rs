@@ -8,7 +8,7 @@ pub struct Frame<const S: usize> {
 }
 
 impl<const S: usize> Frame<S> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             data: [0u8; S],
             len: 0,
@@ -29,7 +29,6 @@ impl<const S: usize> Frame<S> {
     }
 
     pub fn push_data(&mut self, data: &[u8]) {
-       
         let data_size = data.len();
         if self.len + data_size > S {
             return;

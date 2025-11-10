@@ -84,6 +84,8 @@ impl BusReset for LinuxGpioReset {
             .set_value(self.line, Value::InActive)
             .map_err(|_| BusError::ControlFailure)?;
 
+        std::thread::sleep(std::time::Duration::from_millis(25));
+
         Ok(())
     }
 }

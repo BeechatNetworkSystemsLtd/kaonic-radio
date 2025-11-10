@@ -7,7 +7,9 @@ use crate::radio::{
     RadioFrequencyConfig, RadioState, RadioTransreceiverConfig, ReceiverBandwidth, RelativeCutOff,
     TransmitterCutOff,
 };
-use crate::regs::{self, BasebandInterruptMask, RadioInterruptMask, RegisterAddress};
+use crate::regs::{
+    self, BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask, RegisterAddress,
+};
 
 pub struct Band09;
 pub struct Band24;
@@ -149,12 +151,27 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
             }
         }
 
+        self.radio.receive()?;
+
         Ok(())
     }
 
-    pub fn bb_receive(&mut self, frame: &mut BasebandFrame) -> Result<(), RadioError> {
-        self.baseband.load_rx(frame)?;
-        Ok(())
+    pub fn bb_receive(
+        &mut self,
+        frame: &mut BasebandFrame,
+        timeout: core::time::Duration,
+    ) -> Result<(), RadioError> {
+        self.radio.receive()?;
+
+        if self
+            .baseband
+            .wait_irq(BasebandInterrupt::ReceiverFrameEnd, timeout)
+        {
+            self.baseband.load_rx(frame)?;
+            Ok(())
+        } else {
+            Err(RadioError::Timeout)
+        }
     }
 
     pub fn configure(&mut self, modulation: &modulation::Modulation) -> Result<(), RadioError> {

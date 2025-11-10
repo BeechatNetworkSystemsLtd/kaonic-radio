@@ -1,13 +1,49 @@
 use crate::{error::KaonicError, modulation::Modulation};
 use core::fmt;
 
-pub type Frequency = u32;
 pub type Channel = u16;
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Hertz(pub u64);
+
+impl Hertz {
+    pub const fn new(hz: u64) -> Self {
+        Hertz(hz)
+    }
+
+    pub const fn from_khz(khz: u64) -> Self {
+        Hertz(khz * 1_000)
+    }
+
+    pub const fn from_mhz(mhz: u64) -> Self {
+        Hertz(mhz * 1_000_000)
+    }
+
+    pub const fn as_hz(&self) -> u64 {
+        self.0
+    }
+
+    pub const fn as_khz(&self) -> u64 {
+        self.0 / 1_000
+    }
+
+    pub const fn as_mhz(&self) -> u64 {
+        self.0 / 1_000_000
+    }
+}
+
+impl fmt::Display for Hertz {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "{}Hz", self.0,)?;
+
+        Ok(())
+    }
+}
 
 #[derive(PartialEq, Clone, Copy)]
 pub struct RadioConfig {
-    pub freq: Frequency,
-    pub channel_spacing: Frequency,
+    pub freq: Hertz,
+    pub channel_spacing: Hertz,
     pub channel: Channel,
 }
 
@@ -19,14 +55,14 @@ impl RadioConfigBuilder {
     pub const fn new() -> Self {
         Self {
             config: RadioConfig {
-                freq: 869_535_000,
-                channel_spacing: 200_000,
+                freq: Hertz::new(869_535_000),
+                channel_spacing: Hertz::new(200_000),
                 channel: 10,
             },
         }
     }
 
-    pub fn freq(mut self, freq: Frequency) -> Self {
+    pub fn freq(mut self, freq: Hertz) -> Self {
         self.config.freq = freq;
         self
     }
@@ -36,7 +72,7 @@ impl RadioConfigBuilder {
         self
     }
 
-    pub fn channel_spacing(mut self, spacing: Frequency) -> Self {
+    pub fn channel_spacing(mut self, spacing: Hertz) -> Self {
         self.config.channel_spacing = spacing;
         self
     }
@@ -50,7 +86,7 @@ impl fmt::Display for RadioConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(
             f,
-            "[freq:{}Hz spacing:{}Hz ch:{}]",
+            "[freq:{} spacing:{} ch:{}]",
             self.freq, self.channel_spacing, self.channel,
         )?;
 
