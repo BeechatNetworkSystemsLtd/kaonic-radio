@@ -3,9 +3,9 @@ use crate::bus::Bus;
 use crate::error::RadioError;
 use crate::modulation::{self, Modulation};
 use crate::radio::{
-    Band, FrequencySampleRate, PaCur, PaRampTime, Radio, RadioChannel, RadioFrequency,
-    RadioFrequencyConfig, RadioState, RadioTransreceiverConfig, ReceiverBandwidth, RelativeCutOff,
-    TransmitterCutOff,
+    AgcAverageTime, AgcTargetLevel, Band, FrequencySampleRate, PaCur, PaRampTime, Radio,
+    RadioChannel, RadioFrequency, RadioFrequencyConfig, RadioState, RadioTransreceiverConfig,
+    ReceiverBandwidth, RelativeCutOff, TransmitterCutOff,
 };
 use crate::regs::{
     self, BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask, RegisterAddress,
@@ -44,6 +44,8 @@ pub struct Transreceiver<B: Band, I: Bus + Clone> {
     baseband: Baseband<B, I>,
 }
 
+const CHANGE_STATE_DURATION: core::time::Duration = core::time::Duration::from_millis(500);
+
 impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
     pub(crate) fn new(bus: I) -> Self {
         let mut trx = Self {
@@ -58,7 +60,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
     pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
         self.radio
-            .change_state(core::time::Duration::from_millis(100), RadioState::TrxOff)?;
+            .change_state(CHANGE_STATE_DURATION, RadioState::TrxOff)?;
 
         self.radio.set_frequency(config)?;
 
@@ -100,13 +102,29 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
     pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
         self.radio
-            .change_state(core::time::Duration::from_millis(500), RadioState::TrxPrep)?;
+            .change_state(CHANGE_STATE_DURATION, RadioState::TrxPrep)?;
 
         self.baseband.load_tx(frame)?;
 
         self.radio.send_command(crate::radio::RadioCommand::Tx)?;
 
         Ok(())
+    }
+
+    pub fn measure_ed(&mut self) -> Result<i8, RadioError> {
+        self.radio
+            .set_ed_mode(crate::radio::EnergyDetectionMode::Single)?;
+
+        if let Some(_) = self.radio.wait_irq(
+            RadioInterruptMask::new()
+                .add_irq(regs::RadioInterrupt::EnergyDetectionCompletion)
+                .build(),
+            core::time::Duration::from_millis(100),
+        ) {
+            self.radio.read_edv()
+        } else {
+            Err(RadioError::Timeout)
+        }
     }
 
     pub fn bb_transmit_cca(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
@@ -119,7 +137,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         self.baseband.load_tx(frame)?;
 
         self.radio
-            .change_state(core::time::Duration::from_millis(500), RadioState::Rx)?;
+            .change_state(CHANGE_STATE_DURATION, RadioState::Rx)?;
 
         // NOTE: Do not use procedure CCATX together with procedure Transmit and Switch to Receive (TX2RX)
         self.baseband.set_auto_mode(BasebandAutoMode {
@@ -128,12 +146,13 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
             ..Default::default()
         })?;
 
+        // TODO: provide EDT value in params
         self.baseband.set_auto_edt(-50)?;
 
         self.radio.clear_irqs()?;
 
         self.radio
-            .set_energy_detection(crate::radio::EnergyDetectionMode::Single)?;
+            .set_ed_mode(crate::radio::EnergyDetectionMode::Single)?;
 
         if let Some(irqs) = self.radio.wait_any_irq(
             RadioInterruptMask::new()
@@ -176,14 +195,15 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
     pub fn configure(&mut self, modulation: &modulation::Modulation) -> Result<(), RadioError> {
         self.radio
-            .change_state(core::time::Duration::from_millis(100), RadioState::TrxOff)?;
+            .change_state(CHANGE_STATE_DURATION, RadioState::TrxOff)?;
 
         self.baseband.disable()?;
 
         self.baseband.configure(modulation)?;
 
-        self.radio
-            .configure_transreceiver(&TransreceiverConfigurator::configure(&modulation))?;
+        let trx = TransreceiverConfigurator::configure(&modulation);
+
+        self.radio.configure_transreceiver(&trx)?;
 
         self.baseband.enable()?;
 
@@ -216,11 +236,18 @@ impl TransreceiverConfigurator<Band09> {
         let mut trx_config = RadioTransreceiverConfig::default();
         let tx_config = &mut trx_config.tx_config;
         let rx_config = &mut trx_config.rx_config;
+        let agc_control = &mut trx_config.agc_control;
+        let agc_gain = &mut trx_config.agc_gain;
 
         match modulation {
             Modulation::Ofdm(ofdm) => {
                 // Table 6-90. Recommended Transmitter Frontend Configuration
                 // Table 6-93. Recommended PHY Receiver and Digital Frontend Configuration
+
+                trx_config.edd = core::time::Duration::from_micros(960);
+                agc_control.average_time = crate::radio::AgcAverageTime::Samples8;
+                agc_control.agc_input = false;
+
                 match ofdm.opt {
                     modulation::OfdmBandwidthOption::Option1 => {
                         tx_config.sr = FrequencySampleRate::SampleRate1333kHz;
@@ -264,8 +291,14 @@ impl TransreceiverConfigurator<Band09> {
                 tx_config.power = ofdm.tx_power;
             }
             Modulation::Qpsk(qpsk) => {
+                // Table 6-106. O-QPSK Receiver Frontend Configuration (AGC Settings)
+                agc_control.enabled = true;
+                agc_gain.target_level = AgcTargetLevel::TargetN30dB;
+
                 match qpsk.fchip {
                     modulation::QpskChipFrequency::Fchip100 => {
+                        agc_control.average_time = AgcAverageTime::Samples32;
+
                         tx_config.sr = FrequencySampleRate::SampleRate400kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc400kHz;
@@ -275,8 +308,12 @@ impl TransreceiverConfigurator<Band09> {
                         rx_config.bw = ReceiverBandwidth::Bw160kHzIf250kHz;
                         rx_config.sr = FrequencySampleRate::SampleRate400kHz;
                         rx_config.if_shift = false;
+
+                        trx_config.edd = core::time::Duration::from_micros(10 * 128);
                     }
                     modulation::QpskChipFrequency::Fchip200 => {
+                        agc_control.average_time = AgcAverageTime::Samples32;
+
                         tx_config.paramp = PaRampTime::Paramp16;
                         tx_config.sr = FrequencySampleRate::SampleRate800kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
@@ -286,8 +323,12 @@ impl TransreceiverConfigurator<Band09> {
                         rx_config.bw = ReceiverBandwidth::Bw250kHzIf250kHz;
                         rx_config.sr = FrequencySampleRate::SampleRate800kHz;
                         rx_config.if_shift = false;
+
+                        trx_config.edd = core::time::Duration::from_micros(5 * 128);
                     }
                     modulation::QpskChipFrequency::Fchip1000 => {
+                        agc_control.average_time = AgcAverageTime::Samples8;
+
                         tx_config.paramp = PaRampTime::Paramp4;
                         tx_config.sr = FrequencySampleRate::SampleRate4000kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
@@ -297,8 +338,12 @@ impl TransreceiverConfigurator<Band09> {
                         rx_config.bw = ReceiverBandwidth::Bw1000kHzIf1000kHz;
                         rx_config.sr = FrequencySampleRate::SampleRate4000kHz;
                         rx_config.if_shift = false;
+
+                        trx_config.edd = core::time::Duration::from_micros(4 * 128);
                     }
                     modulation::QpskChipFrequency::Fchip2000 => {
+                        agc_control.average_time = AgcAverageTime::Samples8;
+
                         tx_config.paramp = PaRampTime::Paramp4;
                         tx_config.sr = FrequencySampleRate::SampleRate4000kHz;
                         tx_config.rcut = RelativeCutOff::Fcut1_000;
@@ -308,6 +353,8 @@ impl TransreceiverConfigurator<Band09> {
                         rx_config.bw = ReceiverBandwidth::Bw2000kHzIf2000kHz;
                         rx_config.sr = FrequencySampleRate::SampleRate4000kHz;
                         rx_config.if_shift = false;
+
+                        trx_config.edd = core::time::Duration::from_micros(4 * 128);
                     }
                 }
 

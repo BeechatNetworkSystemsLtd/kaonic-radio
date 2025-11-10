@@ -289,6 +289,9 @@ impl Default for RadioReceiverConfig {
 pub struct RadioTransreceiverConfig {
     pub tx_config: RadioTransmitterConfig,
     pub rx_config: RadioReceiverConfig,
+    pub agc_control: AgcReceiverControl,
+    pub agc_gain: AgcReceiverGain,
+    pub edd: core::time::Duration,
 }
 
 impl Default for RadioTransreceiverConfig {
@@ -296,6 +299,9 @@ impl Default for RadioTransreceiverConfig {
         Self {
             tx_config: Default::default(),
             rx_config: Default::default(),
+            agc_control: Default::default(),
+            agc_gain: Default::default(),
+            edd: core::time::Duration::from_micros(128),
         }
     }
 }
@@ -552,11 +558,30 @@ where
         Ok(edv)
     }
 
-    pub fn set_energy_detection(&mut self, mode: EnergyDetectionMode) -> Result<(), RadioError> {
+    pub fn set_ed_mode(&mut self, mode: EnergyDetectionMode) -> Result<(), RadioError> {
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_EDC), mode as u8)?;
 
         Ok(())
+    }
+
+    pub fn set_ed_duration(&mut self, duration: core::time::Duration) -> Result<(), RadioError> {
+        let dtb_mul: [u32; 4] = [2, 8, 32, 128];
+
+        let expected_duration = duration.as_micros() as u32;
+        for i in 0..dtb_mul.len() {
+            let df = expected_duration / dtb_mul[i];
+            if df < 63 {
+                let edd = ((df as u8) << 2) | (i as u8);
+
+                self.bus
+                    .write_reg_u8(Self::abs_reg(regs::RG_RFXX_EDD), edd)?;
+
+                return Ok(());
+            }
+        }
+
+        Err(RadioError::IncorrectConfig)
     }
 
     pub fn wait_irq(
@@ -706,6 +731,9 @@ where
     ) -> Result<(), RadioError> {
         self.configure_transmitter(&config.tx_config)?;
         self.configure_receiver(&config.rx_config)?;
+        self.set_agc_control(&config.agc_control)?;
+        self.set_agc_gain(&config.agc_gain)?;
+        self.set_ed_duration(config.edd)?;
 
         Ok(())
     }
