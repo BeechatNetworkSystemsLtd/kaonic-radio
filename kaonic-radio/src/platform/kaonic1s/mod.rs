@@ -103,9 +103,7 @@ impl Radio for Kaonic1SRadio {
 
         let rf_modulation = map_modulation(modulation)?;
 
-        self.radio
-            .configure(&rf_modulation)
-            .inspect_err(|_| log::error!("modulation config error"))?;
+        self.radio.configure(&rf_modulation)?;
 
         self.modulation = *modulation;
 
@@ -119,15 +117,13 @@ impl Radio for Kaonic1SRadio {
 
         log::trace!("set radio config ({}) = {}", self.radio.name(), config);
 
-        self.radio
-            .set_frequency(
-                &RadioFrequencyBuilder::new()
-                    .freq(config.freq.as_hz() as u32)
-                    .channel_spacing(config.channel_spacing.as_hz() as u32)
-                    .channel(config.channel)
-                    .build(),
-            )
-            .inspect_err(|_| log::error!("change frequency failed"))?;
+        self.radio.set_frequency(
+            &RadioFrequencyBuilder::new()
+                .freq(config.freq.as_hz() as u32)
+                .channel_spacing(config.channel_spacing.as_hz() as u32)
+                .channel(config.channel)
+                .build(),
+        )?;
 
         Ok(())
     }
@@ -137,7 +133,6 @@ impl Radio for Kaonic1SRadio {
 
         self.radio
             .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
-            .inspect_err(|_| log::error!("transmit error"))
             .map_err(|_| KaonicError::HardwareError)?;
 
         Ok(())
