@@ -638,6 +638,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaonic-net"
+version = "0.1.0"
+dependencies = [
+ "kaonic-qos",
+ "kaonic-radio",
+]
+
+[[package]]
 name = "kaonic-qos"
 version = "0.1.0"
 dependencies = [
