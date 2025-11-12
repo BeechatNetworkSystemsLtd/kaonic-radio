@@ -60,7 +60,7 @@ jobs:
           wget -q "$DOWNLOAD_URL" -O yocto-sdk.sh
           chmod +x yocto-sdk.sh
           echo "Installing Yocto SDK..."
-          ./yocto-sdk.sh -y -d $HOME/yocto-sdk
+          ./yocto-sdk.sh -y -d /opt/yocto-sdk
 
       - name: Build 'kaonic-commd'
         run: |
