@@ -65,7 +65,7 @@ jobs:
       - name: Build 'kaonic-commd'
         run: |
           unset LD_LIBRARY_PATH
-          source $HOME/yocto-sdk/environment-setup-cortexa7t2hf-neon-vfpv4-ostl-linux-gnueabi
+          source /opt/yocto-sdk/environment-setup
           cargo build --release
 
       - name: Create Kaonic OTA package
