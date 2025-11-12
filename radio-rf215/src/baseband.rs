@@ -176,12 +176,12 @@ where
     }
 
     pub fn set_fcs(&mut self, enabled: bool) -> Result<(), RadioError> {
-        const FCSFE_BIT: u8 = 0b0100_0000;
+        const TXAFCS_BIT: u8 = 0b0001_0000;
 
-        let value = if enabled { FCSFE_BIT } else { 0 };
+        let value = if enabled { TXAFCS_BIT } else { 0 };
 
         self.bus
-            .modify_reg_u8(Self::abs_reg(regs::RG_BBCX_PC), FCSFE_BIT, value)?;
+            .modify_reg_u8(Self::abs_reg(regs::RG_BBCX_PC), TXAFCS_BIT, value)?;
 
         Ok(())
     }
