@@ -195,9 +195,9 @@ where
     }
 
     pub fn set_enabled(&mut self, enabled: bool) -> Result<(), RadioError> {
-        // if self.enabled == enabled {
-        //     return Ok(());
-        // }
+        if self.enabled == enabled {
+            return Ok(());
+        }
 
         const BBEN_BIT: u8 = 0b0000_0100;
 

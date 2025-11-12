@@ -74,6 +74,7 @@ pub struct Kaonic1SRadio {
     modulation: Modulation,
 
     snr: i8,
+    noise_dbm: i8,
 }
 
 impl Kaonic1SRadio {
@@ -84,6 +85,7 @@ impl Kaonic1SRadio {
             bb_frame: BasebandFrame::new(),
             modulation: Modulation::Ofdm(OfdmModulation::default()),
             snr: 0,
+            noise_dbm: -127,
         }
     }
 
@@ -131,7 +133,7 @@ impl Radio for Kaonic1SRadio {
     }
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
-        log::trace!("TX ({}): {}", self.radio.name(), frame);
+        log::trace!("TX ({}): {}B", self.radio.name(), frame.len());
 
         self.radio
             .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
@@ -152,7 +154,13 @@ impl Radio for Kaonic1SRadio {
 
         match result {
             Ok(_) => {
-                log::trace!("RX ({}): RSSI:{} {}", self.radio.name(), edv, frame);
+                log::trace!(
+                    "RX ({}): RSSI:{}dBm {}dBm {}B",
+                    self.radio.name(),
+                    edv,
+                    self.noise_dbm,
+                    frame.len()
+                );
 
                 frame.copy_from_slice(self.bb_frame.as_slice());
 
@@ -164,6 +172,8 @@ impl Radio for Kaonic1SRadio {
             Err(err) => match err {
                 radio_rf215::error::RadioError::Timeout => {
                     let rssi = self.radio.read_rssi().unwrap_or(127);
+
+                    self.noise_dbm = rssi;
 
                     // log::trace!("RX ({}): RSSI:{}", self.radio.name(), rssi);
 
