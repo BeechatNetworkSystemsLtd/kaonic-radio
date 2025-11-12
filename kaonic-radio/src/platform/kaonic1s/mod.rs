@@ -214,8 +214,10 @@ impl Kaonic1SMachine {
         F: FnMut(usize, &mut Option<Kaonic1SRadio>) -> Result<T, KaonicError>,
         T: Clone,
     {
-        let mut results: [Result<T, KaonicError>; KAONIC1S_RADIO_COUNT] =
-            [const { Err(KaonicError::HardwareError) }; KAONIC1S_RADIO_COUNT];
+        let mut results: [Result<T, KaonicError>; KAONIC1S_RADIO_COUNT] = [
+            Err(KaonicError::HardwareError),
+            Err(KaonicError::HardwareError),
+        ];
 
         for (index, radio) in self.radios.iter_mut().enumerate() {
             results[index] = f(index, radio);
