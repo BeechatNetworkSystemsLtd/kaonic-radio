@@ -101,7 +101,7 @@ pub struct ReceiveResult {
 
 pub struct ScanResult {
     pub rssi: i8,
-    pub edv: i8,
+    pub snr: i8,
 }
 
 pub trait Radio {

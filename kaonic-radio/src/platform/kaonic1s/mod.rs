@@ -3,7 +3,7 @@ use radio_rf215::{baseband::BasebandFrame, bus::SpiBus, radio::RadioFrequencyBui
 use crate::{
     error::KaonicError,
     frame::Frame,
-    modulation::Modulation,
+    modulation::{Modulation, OfdmModulation},
     platform::{
         kaonic1s::machine::create_radios,
         linux::{
@@ -70,6 +70,10 @@ pub struct Kaonic1SRadio {
     fem: Kaonic1SRadioFem,
     radio: Kaonic1SRf215,
     bb_frame: BasebandFrame,
+
+    modulation: Modulation,
+
+    snr: i8,
 }
 
 impl Kaonic1SRadio {
@@ -78,6 +82,8 @@ impl Kaonic1SRadio {
             radio,
             fem,
             bb_frame: BasebandFrame::new(),
+            modulation: Modulation::Ofdm(OfdmModulation::default()),
+            snr: 0,
         }
     }
 
@@ -93,11 +99,13 @@ impl Radio for Kaonic1SRadio {
     fn set_modulation(&mut self, modulation: &Modulation) -> Result<(), KaonicError> {
         log::debug!("set modulation ({}) = {}", self.radio.name(), modulation);
 
-        let modulation = map_modulation(modulation)?;
+        let rf_modulation = map_modulation(modulation)?;
 
         self.radio
-            .configure(&modulation)
+            .configure(&rf_modulation)
             .inspect_err(|_| log::error!("modulation config error"))?;
+
+        self.modulation = *modulation;
 
         Ok(())
     }
@@ -123,7 +131,7 @@ impl Radio for Kaonic1SRadio {
     }
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
-        // log::trace!("TX ({}): {}", self.radio.name(), frame);
+        log::trace!("TX ({}): {}", self.radio.name(), frame);
 
         self.radio
             .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
@@ -138,25 +146,38 @@ impl Radio for Kaonic1SRadio {
         frame: &'a mut Self::RxFrame,
         timeout: core::time::Duration,
     ) -> Result<ReceiveResult, KaonicError> {
-        self.radio.bb_receive(&mut self.bb_frame, timeout)?;
+        let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
 
         let edv = self.radio.read_edv().unwrap_or(127);
 
-        frame.copy_from_slice(self.bb_frame.as_slice());
+        match result {
+            Ok(_) => {
+                log::trace!("RX ({}): RSSI:{} {}", self.radio.name(), edv, frame);
 
-        // log::trace!("RX ({}): {}", self.radio.name(), frame);
+                frame.copy_from_slice(self.bb_frame.as_slice());
 
-        Ok(ReceiveResult {
-            rssi: edv,
-            len: self.bb_frame.len(),
-        })
+                Ok(ReceiveResult {
+                    rssi: edv,
+                    len: self.bb_frame.len(),
+                })
+            }
+            Err(err) => match err {
+                radio_rf215::error::RadioError::Timeout => {
+                    let rssi = self.radio.read_rssi().unwrap_or(127);
+
+                    // log::trace!("RX ({}): RSSI:{}", self.radio.name(), rssi);
+
+                    return Err(KaonicError::Timeout);
+                }
+                _ => return Err(err.into()),
+            },
+        }
     }
 
     fn scan(&mut self, _timeout: core::time::Duration) -> Result<ScanResult, KaonicError> {
         let rssi = self.radio.read_rssi()?;
-        let edv = self.radio.read_edv()?;
 
-        Ok(ScanResult { rssi, edv })
+        Ok(ScanResult { rssi, snr: 0 })
     }
 }
 

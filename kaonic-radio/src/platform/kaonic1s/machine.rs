@@ -155,7 +155,7 @@ pub fn create_radios() -> Result<[Option<Kaonic1SRadio>; 2], BusError> {
                 radios[index] = Some(radio);
             }
             Err(_e) => {
-                log::error!("Failed to create radio {}", config.name);
+                log::error!("failed to create radio {}", config.name);
                 // Continue with other radios even if one fails
             }
         }
@@ -165,21 +165,26 @@ pub fn create_radios() -> Result<[Option<Kaonic1SRadio>; 2], BusError> {
 }
 
 fn create_radio(config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
-    let mut spi = LinuxSpi::open(&config.spi.path).map_err(|_| BusError::ControlFailure)?;
+    let mut spi = LinuxSpi::open(&config.spi.path)
+        .map_err(|_| BusError::ControlFailure)
+        .inspect_err(|_| log::error!("can't open spi {}", config.spi.path))?;
 
     spi.configure(
         &SpidevOptions::new()
             .max_speed_hz(config.spi.max_speed)
             .build(),
     )
-    .map_err(|_| BusError::ControlFailure)?;
+    .map_err(|_| BusError::ControlFailure)
+    .inspect_err(|_| log::error!("can't configure spi"))?;
 
     // Create GPIO interfaces
     let reset_gpio = LinuxGpioReset::new(&config.rst_gpio.line_name, config.name)
-        .map_err(|_| BusError::ControlFailure)?;
+        .map_err(|_| BusError::ControlFailure)
+        .inspect_err(|_| log::error!("can't create reset gpio"))?;
 
     let interrupt_gpio = LinuxGpioInterrupt::new(&config.irq_gpio.line_name, config.name)
-        .map_err(|_| BusError::ControlFailure)?;
+        .map_err(|_| BusError::ControlFailure)
+        .inspect_err(|_| log::error!("can't create irq gpio"))?;
 
     // Create clock (system clock)
     let clock = LinuxClock::new();
@@ -190,7 +195,8 @@ fn create_radio(config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
     let bus = std::sync::Arc::new(std::sync::Mutex::new(bus));
 
     // Probe and initialize the RF215
-    let mut radio = Rf215::probe(SharedBus::new(bus), config.name)?;
+    let mut radio = Rf215::probe(SharedBus::new(bus), config.name)
+        .inspect_err(|_| log::error!("rf215 prob failed"))?;
 
     // Default configuration for Kaonic1S
     {
@@ -249,19 +255,22 @@ fn create_radio(config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
             config.flt_v1_gpio.offset,
             &format!("{}-flt-sel-v1", config.name),
         )
-        .map_err(|_| BusError::ControlFailure)?,
+        .map_err(|_| BusError::ControlFailure)
+        .inspect_err(|_| log::error!("flt_v1_gpio err"))?,
         LinuxOutputPin::new_from_line(
             config.flt_v2_gpio.chip,
             config.flt_v2_gpio.offset,
             &format!("{}-flt-sel-v2", config.name),
         )
-        .map_err(|_| BusError::ControlFailure)?,
+        .map_err(|_| BusError::ControlFailure)
+        .inspect_err(|_| log::error!("flt_v2_gpio err"))?,
         LinuxOutputPin::new_from_line(
             config.flt_24_gpio.chip,
             config.flt_24_gpio.offset,
             &format!("{}-flt-sel-24", config.name),
         )
-        .map_err(|_| BusError::ControlFailure)?,
+        .map_err(|_| BusError::ControlFailure)
+        .inspect_err(|_| log::error!("flt_24_gpio err"))?,
     );
 
     Ok(Kaonic1SRadio::new(radio, fem))

@@ -1,5 +1,6 @@
 use core::fmt;
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Modulation {
     Ofdm(OfdmModulation),
     Qpsk(QpskModulation),
@@ -49,10 +50,21 @@ pub enum OfdmOption {
     Option4 = 0x03,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct OfdmModulation {
     pub mcs: OfdmMcs,
     pub opt: OfdmOption,
     pub tx_power: u8,
+}
+
+impl Default for OfdmModulation {
+    fn default() -> Self {
+        Self {
+            mcs: OfdmMcs::Mcs0,
+            opt: OfdmOption::Option1,
+            tx_power: 10,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -73,6 +85,7 @@ pub enum QpskRateMode {
     Mode3 = 0x03,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct QpskModulation {
     pub chip_freq: QpskChipFrequency,
     pub mode: QpskRateMode,

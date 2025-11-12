@@ -48,7 +48,7 @@ fn main() {
             }
 
             if let Ok(scan) = radio.scan(core::time::Duration::from_millis(100)) {
-                log::trace!("SCAN rssi:{} edv:{}", scan.rssi, scan.edv)
+                log::trace!("SCAN rssi:{} snr:{}", scan.rssi, scan.snr)
             }
         }
     }
