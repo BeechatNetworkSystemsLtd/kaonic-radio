@@ -12,7 +12,6 @@ use crate::{
 pub type BasebandFrame = Frame<RG_BBCX_FRAME_SIZE>;
 
 pub struct BasebandControl {
-    pub enabled: bool,
     pub continuous_tx: bool,
     pub fcs_filter: bool,
 }
@@ -48,7 +47,6 @@ where
 {
     _band: PhantomData<B>,
     bus: I,
-    enabled: bool,
 }
 
 impl<B, I> Baseband<B, I>
@@ -60,7 +58,6 @@ where
         Self {
             _band: PhantomData::default(),
             bus,
-            enabled: false,
         }
     }
 
@@ -195,18 +192,12 @@ where
     }
 
     pub fn set_enabled(&mut self, enabled: bool) -> Result<(), RadioError> {
-        if self.enabled == enabled {
-            return Ok(());
-        }
-
         const BBEN_BIT: u8 = 0b0000_0100;
 
         let value = if enabled { BBEN_BIT } else { 0 };
 
         self.bus
             .modify_reg_u8(Self::abs_reg(regs::RG_BBCX_PC), BBEN_BIT, value)?;
-
-        self.enabled = enabled;
 
         Ok(())
     }

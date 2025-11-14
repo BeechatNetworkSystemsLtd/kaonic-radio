@@ -48,12 +48,10 @@ const CHANGE_STATE_DURATION: core::time::Duration = core::time::Duration::from_m
 
 impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
     pub(crate) fn new(bus: I) -> Self {
-        let mut trx = Self {
+        let trx = Self {
             radio: Radio::<B, I>::new(bus.clone()),
             baseband: Baseband::<B, I>::new(bus.clone()),
         };
-
-        trx.disable_irqs().unwrap();
 
         trx
     }
@@ -215,7 +213,11 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
     }
 
     pub fn reset(&mut self) -> Result<(), RadioError> {
-        self.radio.reset()
+        self.radio.reset()?;
+
+        self.disable_irqs()?;
+
+        Ok(())
     }
 
     pub fn radio(&mut self) -> &mut Radio<B, I> {

@@ -69,10 +69,13 @@ impl<I: Bus + Clone> Rf215<I> {
 
         let version = bus.read_reg_u8(regs::RG_RF_VN)?;
 
-        let freq_config = RadioFrequencyBuilder::new().build();
         let mut trx_09 = Transreceiver::<Band09, I>::new(bus.clone());
-        let trx_24 = Transreceiver::<Band24, I>::new(bus.clone());
+        let mut trx_24 = Transreceiver::<Band24, I>::new(bus.clone());
 
+        trx_09.reset().map_err(|_| BusError::ControlFailure)?;
+        trx_24.reset().map_err(|_| BusError::ControlFailure)?;
+
+        let freq_config = RadioFrequencyBuilder::new().build();
         if let Err(_) = trx_09.set_frequency(&freq_config) {
             return Err(BusError::CommunicationFailure);
         }
