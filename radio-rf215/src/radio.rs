@@ -436,20 +436,9 @@ where
         timeout: core::time::Duration,
         state: RadioState,
     ) -> Result<RadioState, RadioError> {
-        let deadline = (self.bus.current_time() as u128) + timeout.as_millis();
+        self.set_state(state)?;
 
-        loop {
-            self.set_state(state)?;
-            let res = self.wait_on_state(core::time::Duration::from_micros(100), |s| s == state);
-
-            if (self.bus.current_time() as u128) > deadline {
-                return Err(RadioError::CommunicationFailure);
-            }
-
-            if let Ok(state) = res {
-                return Ok(state);
-            }
-        }
+        self.wait_on_state(timeout, |s| s == state)
     }
 
     pub fn read_state(&mut self) -> Result<RadioState, RadioError> {
@@ -476,7 +465,7 @@ where
 
     pub fn receive(&mut self) -> Result<(), RadioError> {
         loop {
-            let state = self.wait_on_state(core::time::Duration::from_micros(100), |s| {
+            let state = self.wait_on_state(core::time::Duration::from_millis(100), |s| {
                 (s == RadioState::TrxOff) || (s == RadioState::TrxPrep)
             });
 
@@ -496,7 +485,11 @@ where
 
         self.bus.delay(core::time::Duration::from_micros(100));
 
-        self.change_state(core::time::Duration::from_millis(500), RadioState::Rx)?;
+        self.set_state(RadioState::Rx)?;
+
+        self.wait_on_state(core::time::Duration::from_millis(100), |s| {
+            s == RadioState::Rx
+        })?;
 
         Ok(())
     }
