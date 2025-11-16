@@ -50,6 +50,24 @@ impl Radio for RadioService {
             .await
             .map_err(internal_err)?;
 
+        // Configure QoS if provided
+        if let Some(qos_config) = req.qos {
+            log::info!("Configuring QoS for module {}: enabled={}", module, qos_config.enabled);
+            
+            let qos = crate::radio_service::QoSConfig {
+                enabled: qos_config.enabled,
+                adaptive_modulation: qos_config.adaptive_modulation,
+                adaptive_tx_power: qos_config.adaptive_tx_power,
+                adaptive_backoff: qos_config.adaptive_backoff,
+                cca_threshold: qos_config.cca_threshold as i8,
+            };
+
+            self.mgr
+                .configure_qos(module, qos)
+                .await
+                .map_err(internal_err)?;
+        }
+
         if let Some(phy) = req.phy_config {
             log::debug!("parse modulation settings");
             let modulation = phy_to_modulation(&phy, req.tx_power as u8);

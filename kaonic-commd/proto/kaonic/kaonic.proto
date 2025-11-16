@@ -75,6 +75,14 @@ message RadioPhyConfigFSK {
   uint32 fskpe2 = 30;
 }
 
+message QoSConfig {
+  bool enabled = 1;
+  bool adaptive_modulation = 2;
+  bool adaptive_tx_power = 3;
+  bool adaptive_backoff = 4;
+  int32 cca_threshold = 5; // Clear Channel Assessment threshold in dBm
+}
+
 message ConfigurationRequest {
   RadioModule module = 1;
 
@@ -88,6 +96,8 @@ message ConfigurationRequest {
     RadioPhyConfigFSK fsk = 9;
     RadioPhyConfigQPSK qpsk = 10;
   }
+
+  QoSConfig qos = 11;
 }
 
 message TransmitRequest {
