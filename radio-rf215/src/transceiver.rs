@@ -197,11 +197,10 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
         self.baseband.disable()?;
 
-        self.baseband.configure(modulation)?;
-
         let trx = TransreceiverConfigurator::configure(&modulation);
-
         self.radio.configure_transreceiver(&trx)?;
+
+        self.baseband.configure(modulation)?;
 
         self.baseband.enable()?;
 

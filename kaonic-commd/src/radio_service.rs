@@ -35,7 +35,6 @@ enum RadioCommand {
     ),
     Transmit(Kaonic1SFrame, oneshot::Sender<Result<u32, String>>),
     ConfigureQoS(QoSConfig, oneshot::Sender<Result<(), String>>),
-    GetQoSModulation(oneshot::Sender<Option<kaonic_radio::modulation::Modulation>>),
     Shutdown,
 }
 
@@ -218,10 +217,6 @@ fn run_worker(
                     .map(|_| start.elapsed().as_millis() as u32)
                     .map_err(|e| format!("transmit failed: {:?}", e));
                 let _ = ack.send(res);
-            }
-            Ok(RadioCommand::GetQoSModulation(ack)) => {
-                let modulation = qos_manager.as_ref().map(|qos| qos.get_modulation());
-                let _ = ack.send(modulation);
             }
             Ok(RadioCommand::ConfigureQoS(config, ack)) => {
                 if config.enabled {
