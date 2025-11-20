@@ -57,12 +57,17 @@ pub struct AppState {
     // Packet type statistics
     pub reticulum_count: usize,
     pub custom_count: usize,
+    
+    // OTA
+    pub ota_file_path: String,
+    pub ota_status: String,
+    pub ota_version: String,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
-            server_addr: "http://192.168.0.141:8080".to_string(),
+            server_addr: "192.168.0.141".to_string(),
             connected: false,
             status_message: "Not connected".to_string(),
 
@@ -98,10 +103,14 @@ impl AppState {
             rssi_window_secs: 30.0,
             
             waterfall_data: Vec::new(),
-            waterfall_max_entries: 200,
+            waterfall_max_entries: 500,
             
             reticulum_count: 0,
             custom_count: 0,
+            
+            ota_file_path: String::new(),
+            ota_status: String::new(),
+            ota_version: String::new(),
         }
     }
 }
@@ -192,7 +201,6 @@ impl RadioGuiApp {
                 
                 drop(state);
                 
-                let data_len = data.len();
                 match self.client.lock().transmit_frame(module, data) {
                     Ok(latency) => {
                         let mut state = self.state.lock();
@@ -254,6 +262,14 @@ impl RadioGuiApp {
                             self.draw_transmit_panel(ui);
                             ui.unindent();
                         }
+                        ui.separator();
+                        
+                        // OTA Section
+                        if ui.collapsing_header("OTA Update", TreeNodeFlags::empty()) {
+                            ui.indent();
+                            self.draw_ota_panel(ui);
+                            ui.unindent();
+                        }
                     });
 
                 ui.same_line();
@@ -279,11 +295,12 @@ impl RadioGuiApp {
     fn draw_connection_panel(&mut self, ui: &Ui) {
         let mut state = self.state.lock();
         
-        ui.text("Server Address:");
-        ui.set_next_item_width(300.0);
+        ui.text("IP Address:");
+        ui.set_next_item_width(200.0);
         ui.input_text("##server", &mut state.server_addr).build();
         
-        let addr = state.server_addr.clone();
+        let addr = format!("http://{}:8080", state.server_addr);
+        let ip_addr = state.server_addr.clone();
         let connected = state.connected;
         drop(state);
 
@@ -305,6 +322,10 @@ impl RadioGuiApp {
                     Ok(_) => {
                         state.connected = true;
                         state.status_message = "Connected successfully".to_string();
+                        drop(state);
+                        
+                        // Fetch firmware version
+                        self.fetch_ota_version(ip_addr.clone());
                     }
                     Err(e) => {
                         state.connected = false;
@@ -313,17 +334,13 @@ impl RadioGuiApp {
                 }
             }
         }
-
         
         // Auto-start receiving when connected
         let state = self.state.lock();
-        let status_color = if state.connected {
-            [0.0, 1.0, 0.0, 1.0]
-        } else {
-            [1.0, 0.0, 0.0, 1.0]
-        };
-        if state.connected && !state.rx_stream_active {
-            drop(state);
+        let should_start_rx = state.connected && !state.rx_stream_active;
+        drop(state);
+        
+        if should_start_rx {
             self.start_receiving();
         }
     }
@@ -382,7 +399,25 @@ impl RadioGuiApp {
 
         ui.text("TX Power (dBm):");
         ui.set_next_item_width(-1.0);
+        
+        // Color the slider orange if power > 20 dBm
+        let _color_tokens = if state.tx_power > 20 {
+            vec![
+                ui.push_style_color(StyleColor::SliderGrab, [1.0, 0.65, 0.0, 1.0]),
+                ui.push_style_color(StyleColor::SliderGrabActive, [1.0, 0.5, 0.0, 1.0]),
+                ui.push_style_color(StyleColor::FrameBg, [0.3, 0.2, 0.0, 0.5]),
+                ui.push_style_color(StyleColor::FrameBgHovered, [0.4, 0.25, 0.0, 0.6]),
+                ui.push_style_color(StyleColor::FrameBgActive, [0.5, 0.3, 0.0, 0.7]),
+            ]
+        } else {
+            vec![]
+        };
+        
         ui.slider("##txpower", 0, 31, &mut state.tx_power);
+        
+        for token in _color_tokens {
+            token.pop();
+        }
     }
 
     fn draw_modulation_panel(&mut self, ui: &Ui) {
@@ -603,6 +638,122 @@ impl RadioGuiApp {
         }
         drop(_stop_token);
     }
+    
+    fn upload_ota(&self, ip: String, file_path: String) {
+        let state = Arc::clone(&self.state);
+        
+        std::thread::spawn(move || {
+            let mut s = state.lock();
+            s.ota_status = "Uploading...".to_string();
+            drop(s);
+            
+            let result = (|| -> Result<String, Box<dyn std::error::Error>> {
+                let url = format!("http://{}:8682/api/ota/commd/upload", ip);
+                
+                let file_bytes = std::fs::read(&file_path)?;
+                let file_name = std::path::Path::new(&file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("firmware.zip");
+                
+                let part = reqwest::blocking::multipart::Part::bytes(file_bytes)
+                    .file_name(file_name.to_string())
+                    .mime_str("application/x-zip-compressed")?;
+                
+                let form = reqwest::blocking::multipart::Form::new()
+                    .part("file", part);
+                
+                let client = reqwest::blocking::Client::new();
+                let response = client.post(&url)
+                    .multipart(form)
+                    .send()?;
+                
+                let status = response.status();
+                let text = response.text()?;
+                
+                if status.is_success() {
+                    Ok(format!("OTA update successful: {}", text))
+                } else {
+                    Err(format!("OTA update failed ({}): {}", status, text).into())
+                }
+            })();
+            
+            let mut s = state.lock();
+            s.ota_status = match result {
+                Ok(msg) => msg,
+                Err(e) => format!("Error: {}", e),
+            };
+        });
+    }
+    
+    fn draw_ota_panel(&mut self, ui: &Ui) {
+        let mut state = self.state.lock();
+        let ip_addr = state.server_addr.clone();
+        
+        ui.set_next_item_width(250.0);
+        ui.input_text("##ota_file", &mut state.ota_file_path)
+            .hint("Select .zip file...")
+            .build();
+        
+        ui.same_line();
+        if ui.button("Browse...") {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("ZIP files", &["zip"])
+                .pick_file()
+            {
+                state.ota_file_path = path.display().to_string();
+            }
+        }
+        
+        let ota_file = state.ota_file_path.clone();
+        let ota_status = state.ota_status.clone();
+        drop(state);
+        
+        if ui.button("Upload OTA") {
+            if !ota_file.is_empty() {
+                self.upload_ota(ip_addr, ota_file);
+            } else {
+                let mut state = self.state.lock();
+                state.ota_status = "Please select a file first".to_string();
+            }
+        }
+        
+        if !ota_status.is_empty() {
+            ui.text_wrapped(&ota_status);
+        }
+    }
+    
+    fn fetch_ota_version(&self, ip: String) {
+        let state = Arc::clone(&self.state);
+        
+        std::thread::spawn(move || {
+            let result = (|| -> Result<String, Box<dyn std::error::Error>> {
+                let url = format!("http://{}:8682/api/ota/commd/version", ip);
+                
+                let client = reqwest::blocking::Client::new();
+                let response = client.get(&url)
+                    .timeout(std::time::Duration::from_secs(5))
+                    .send()?;
+                
+                if response.status().is_success() {
+                    let json: serde_json::Value = response.json()?;
+                    let version = json["version"].as_str().unwrap_or("unknown");
+                    let hash = json["hash"].as_str().unwrap_or("");
+                    
+                    if version != "unknown" && !hash.is_empty() {
+                        Ok(format!("{} ({})", version, &hash[..8]))
+                    } else {
+                        Ok("unknown".to_string())
+                    }
+                } else {
+                    Ok("unknown".to_string())
+                }
+            })();
+            
+            let mut s = state.lock();
+            s.ota_version = result.unwrap_or_else(|_| "unknown".to_string());
+        });
+    }
 
     fn draw_receive_panel(&mut self, ui: &Ui) {
         let mut state = self.state.lock();
@@ -728,6 +879,16 @@ impl RadioGuiApp {
             };
             
             ui.text_colored(rssi_color, &rssi_text);
+            ui.same_line();
+        }
+        
+        // Show firmware version after RSSI
+        if state.connected && !state.ota_version.is_empty() {
+            let fw_text = format!("FW: {}", state.ota_version);
+            let fw_width = ui.calc_text_size(&fw_text)[0];
+            right_pos -= fw_width + 20.0;
+            ui.set_cursor_pos([right_pos, ui.cursor_pos()[1]]);
+            ui.text(&fw_text);
             ui.same_line();
         }
         

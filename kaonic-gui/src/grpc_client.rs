@@ -151,7 +151,7 @@ impl GrpcClient {
     pub fn new(runtime: Arc<Runtime>) -> Self {
         Self {
             runtime,
-            server_addr: "http://127.0.0.1:50010".to_string(),
+            server_addr: "http://127.0.0.1:8080".to_string(),
         }
     }
 
@@ -201,17 +201,13 @@ impl GrpcClient {
         self.runtime.block_on(async {
             let mut client = self.connect_radio().await?;
 
-            let qos = if qos_enabled {
-                Some(QoSConfig {
-                    enabled: qos_config.enabled,
-                    adaptive_modulation: qos_config.adaptive_modulation,
-                    adaptive_tx_power: qos_config.adaptive_tx_power,
-                    adaptive_backoff: qos_config.adaptive_backoff,
-                    cca_threshold: qos_config.cca_threshold,
-                })
-            } else {
-                None
-            };
+            let qos = Some(QoSConfig {
+                enabled: qos_enabled,
+                adaptive_modulation: qos_config.adaptive_modulation,
+                adaptive_tx_power: qos_config.adaptive_tx_power,
+                adaptive_backoff: qos_config.adaptive_backoff,
+                cca_threshold: qos_config.cca_threshold,
+            });
 
             let request = ConfigurationRequest {
                 module: module as i32,
