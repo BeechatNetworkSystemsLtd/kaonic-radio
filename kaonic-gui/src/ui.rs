@@ -49,6 +49,10 @@ pub struct AppState {
     // RSSI visualization
     pub rssi_history: Vec<(Instant, i32)>, // (timestamp, rssi)
     pub rssi_window_secs: f32,
+    
+    // Waterfall data: (timestamp, rssi, payload_size)
+    pub waterfall_data: Vec<(Instant, i32, usize)>,
+    pub waterfall_max_entries: usize,
 }
 
 impl AppState {
@@ -88,6 +92,9 @@ impl AppState {
 
             rssi_history: Vec::new(),
             rssi_window_secs: 30.0,
+            
+            waterfall_data: Vec::new(),
+            waterfall_max_entries: 200,
         }
     }
 }
@@ -133,6 +140,12 @@ impl RadioGuiApp {
 
                 // Add to RSSI history with current timestamp
                 state.rssi_history.push((now, event.rssi));
+                
+                // Add to waterfall data
+                state.waterfall_data.push((now, event.rssi, event.frame_data.len()));
+                if state.waterfall_data.len() > state.waterfall_max_entries {
+                    state.waterfall_data.remove(0);
+                }
             }
         }
         
@@ -166,6 +179,7 @@ impl RadioGuiApp {
                 
                 drop(state);
                 
+                let data_len = data.len();
                 match self.client.lock().transmit_frame(module, data) {
                     Ok(latency) => {
                         let mut state = self.state.lock();
@@ -190,33 +204,62 @@ impl RadioGuiApp {
             .collapsible(false)
             .title_bar(false)
             .build(|| {
+                let window_height = ui.content_region_avail()[1];
+                let status_bar_height = 30.0;
+                let panel_height = window_height - status_bar_height;
+                
                 // Left column - Configuration
                 ui.child_window("left_panel")
-                    .size([550.0, 0.0])
+                    .size([550.0, panel_height])
                     .border(true)
                     .build(|| {
-                        self.draw_connection_panel(ui);
+                        // Connection Section
+                        if ui.collapsing_header("Connection", TreeNodeFlags::DEFAULT_OPEN) {
+                            ui.indent();
+                            self.draw_connection_panel(ui);
+                            ui.unindent();
+                        }
                         ui.separator();
-                        self.draw_radio_config_panel(ui);
+                        
+                        // Configuration Section
+                        if ui.collapsing_header("Configuration", TreeNodeFlags::DEFAULT_OPEN) {
+                            ui.indent();
+                            self.draw_radio_config_panel(ui);
+                            ui.separator();
+                            self.draw_modulation_panel(ui);
+                            ui.separator();
+                            self.draw_qos_panel(ui);
+                            ui.separator();
+                            self.draw_configure_button(ui);
+                            ui.unindent();
+                        }
                         ui.separator();
-                        self.draw_modulation_panel(ui);
-                        ui.separator();
-                        self.draw_qos_panel(ui);
-                        ui.separator();
-                        self.draw_configure_button(ui);
-                        ui.separator();
-                        self.draw_transmit_panel(ui);
+                        
+                        // Transmission Section
+                        if ui.collapsing_header("Transmission", TreeNodeFlags::DEFAULT_OPEN) {
+                            ui.indent();
+                            self.draw_transmit_panel(ui);
+                            ui.unindent();
+                        }
                     });
 
                 ui.same_line();
 
                 // Right column - Receive
                 ui.child_window("right_panel")
-                    .size([0.0, 0.0])
+                    .size([0.0, panel_height])
                     .border(true)
                     .build(|| {
-                        self.draw_receive_panel(ui);
+                        // Receive Section
+                        if ui.collapsing_header("Receive", TreeNodeFlags::DEFAULT_OPEN) {
+                            ui.indent();
+                            self.draw_receive_panel(ui);
+                            ui.unindent();
+                        }
                     });
+                
+                // Status bar at bottom
+                self.draw_status_bar(ui);
             });
     }
 
@@ -228,34 +271,44 @@ impl RadioGuiApp {
         ui.input_text("##server", &mut state.server_addr).build();
         
         let addr = state.server_addr.clone();
+        let connected = state.connected;
         drop(state);
 
-        if ui.button("Connect") {
-            self.client.lock().set_server_addr(addr);
+        let button_label = if connected { "Disconnect" } else { "Connect" };
+        if ui.button(button_label) {
+            if connected {
+                // Disconnect
+                let mut state = self.state.lock();
+                state.connected = false;
+                state.rx_stream_active = false;
+                state.status_message = "Disconnected".to_string();
+                *self.rx_receiver.lock() = None;
+            } else {
+                // Connect
+                self.client.lock().set_server_addr(addr);
 
-            let mut state = self.state.lock();
-            match self.client.lock().get_device_info() {
-                Ok(_) => {
-                    state.connected = true;
-                    state.status_message = "Connected successfully".to_string();
-                }
-                Err(e) => {
-                    state.connected = false;
-                    state.status_message = format!("Connection failed: {}", e);
+                let mut state = self.state.lock();
+                match self.client.lock().get_device_info() {
+                    Ok(_) => {
+                        state.connected = true;
+                        state.status_message = "Connected successfully".to_string();
+                    }
+                    Err(e) => {
+                        state.connected = false;
+                        state.status_message = format!("Connection failed: {}", e);
+                    }
                 }
             }
         }
 
-        ui.same_line();
+        
+        // Auto-start receiving when connected
         let state = self.state.lock();
         let status_color = if state.connected {
             [0.0, 1.0, 0.0, 1.0]
         } else {
             [1.0, 0.0, 0.0, 1.0]
         };
-        ui.text_colored(status_color, &state.status_message);
-        
-        // Auto-start receiving when connected
         if state.connected && !state.rx_stream_active {
             drop(state);
             self.start_receiving();
@@ -283,7 +336,7 @@ impl RadioGuiApp {
     }
 
     fn draw_radio_config_panel(&mut self, ui: &Ui) {
-        ui.text("Radio Configuration");
+        ui.text("Radio");
         ui.separator();
 
         let mut state = self.state.lock();
@@ -360,7 +413,7 @@ impl RadioGuiApp {
     }
 
     fn draw_qos_panel(&mut self, ui: &Ui) {
-        ui.text("QoS Configuration");
+        ui.text("QoS");
         ui.separator();
 
         let mut state = self.state.lock();
@@ -450,9 +503,6 @@ impl RadioGuiApp {
     }
 
     fn draw_transmit_panel(&mut self, ui: &Ui) {
-        ui.text("Transmit");
-        ui.separator();
-
         let mut state = self.state.lock();
         let enabled = state.connected;
 
@@ -461,6 +511,15 @@ impl RadioGuiApp {
         ui.input_text("##txdata", &mut state.tx_data).build();
 
         ui.checkbox("Hex mode", &mut state.tx_hex_mode);
+        
+        // Calculate and display data length
+        let data_length = if state.tx_hex_mode {
+            let hex_str = state.tx_data.replace(" ", "").replace("0x", "");
+            (hex_str.len() + 1) / 2  // Number of bytes from hex string
+        } else {
+            state.tx_data.len()  // Number of bytes from text
+        };
+        ui.text(format!("Data length: {} bytes", data_length));
 
         ui.text("Pause between transmits (ms):");
         ui.set_next_item_width(-1.0);
@@ -494,11 +553,12 @@ impl RadioGuiApp {
             };
             drop(state);
 
+            let data_len = data.len();
             match self.client.lock().transmit_frame(module, data) {
                 Ok(latency) => {
                     let mut state = self.state.lock();
                     state.last_tx_latency = Some(latency);
-                    state.status_message = format!("Transmitted successfully (latency: {} ms)", latency);
+                    state.status_message = format!("Transmitted {} bytes (latency: {} ms)", data_len, latency);
                 }
                 Err(e) => {
                     let mut state = self.state.lock();
@@ -532,18 +592,17 @@ impl RadioGuiApp {
     }
 
     fn draw_receive_panel(&mut self, ui: &Ui) {
-        ui.text("Receive");
-        ui.separator();
-
         let mut state = self.state.lock();
         let enabled = state.connected;
 
-        // RSSI Timeline Visualization (always visible)
-        ui.text(format!("RSSI Timeline (Last {:.0} seconds)", state.rssi_window_secs));
+        // RSSI Waterfall Visualization
+        ui.text("RSSI Waterfall (Vertical Scroll)");
         
-        let width = ui.content_region_avail()[0];
-        let height = 150.0;
+        let height = 300.0;
+        let max_payload_bytes = 2048.0;
+        let width = max_payload_bytes; // Fixed width: 1 pixel per byte (0-2048 bytes)
         
+        // Use child window with horizontal scroll for wide waterfall
         let draw_list = ui.get_window_draw_list();
         let cursor_pos = ui.cursor_screen_pos();
         
@@ -556,104 +615,92 @@ impl RadioGuiApp {
         draw_list.add_rect(
             cursor_pos,
             [cursor_pos[0] + width, cursor_pos[1] + height],
-            [0.2, 0.2, 0.2, 1.0],
+            [0.05, 0.05, 0.1, 1.0],
         ).filled(true).build();
         
-        // Draw horizontal grid lines
-        let grid_steps = 7;
-        for i in 0..=grid_steps {
-            let y = cursor_pos[1] + (i as f32 * height / grid_steps as f32);
-            
-            draw_list.add_line(
-                [cursor_pos[0], y],
-                [cursor_pos[0] + width, y],
-                [0.3, 0.3, 0.3, 1.0],
-            ).build();
-        }
-        
-        // Get current time for calculating relative positions
-        let now = Instant::now();
-        
-        // Helper function to convert RSSI to color (red to green gradient)
+        // Helper function to convert RSSI to color (blue to red gradient)
         let rssi_to_color = |rssi: i32| -> [f32; 4] {
             let normalized = ((rssi - MIN_RSSI) as f32 / RSSI_RANGE).clamp(0.0, 1.0);
-            let red = 1.0 - normalized;
-            let green = normalized;
-            [red, green, 0.0, 1.0]
+            
+            // Blue -> Cyan -> Green -> Yellow -> Red gradient
+            if normalized < 0.25 {
+                let t = normalized / 0.25;
+                [0.0, 0.0, 1.0 - t * 0.5, 1.0] // Dark blue to blue
+            } else if normalized < 0.5 {
+                let t = (normalized - 0.25) / 0.25;
+                [0.0, t, 0.5 + t * 0.5, 1.0] // Blue to cyan
+            } else if normalized < 0.75 {
+                let t = (normalized - 0.5) / 0.25;
+                [t, 1.0, 1.0 - t, 1.0] // Cyan to yellow
+            } else {
+                let t = (normalized - 0.75) / 0.25;
+                [1.0, 1.0 - t, 0.0, 1.0] // Yellow to red
+            }
         };
         
-        // Fill background with gray for no-data regions, then draw data on top
-        let time_step = 0.1; // Sample every 100ms for gap detection
-        let num_samples = (state.rssi_window_secs / time_step) as usize;
+        // Draw waterfall: each packet as a horizontal line
+        let row_height = 2.0; // Height of each packet line
+        let num_visible_rows = (height / row_height) as usize;
         
-        // Draw gray baseline for gaps (no data)
-        let baseline_y = cursor_pos[1] + height / 2.0; // Middle of the chart
+        // Get current time for filtering
+        let now = Instant::now();
+        let time_window_secs = 30.0;
+        let cutoff_time = now - std::time::Duration::from_secs_f32(time_window_secs);
         
-        for i in 0..num_samples {
-            let time_offset = i as f32 * time_step;
-            let check_time = now - std::time::Duration::from_secs_f32(time_offset);
+        // Filter to only show packets from last 30 seconds
+        let recent_packets: Vec<_> = state.waterfall_data.iter()
+            .filter(|(timestamp, _, _)| *timestamp >= cutoff_time)
+            .collect();
+        
+        // Draw from oldest to newest (bottom to top)
+        let start_idx = if recent_packets.len() > num_visible_rows {
+            recent_packets.len() - num_visible_rows
+        } else {
+            0
+        };
+        
+        for (idx, (_timestamp, rssi, payload_size)) in recent_packets[start_idx..].iter().enumerate() {
+            let y = cursor_pos[1] + height - ((idx + 1) as f32 * row_height);
             
-            // Check if we have data near this time point
-            let has_data = state.rssi_history.iter().any(|(t, _)| {
-                let diff = if *t > check_time {
-                    t.duration_since(check_time).as_secs_f32()
-                } else {
-                    check_time.duration_since(*t).as_secs_f32()
-                };
-                diff < time_step
-            });
+            let color = rssi_to_color(*rssi);
             
-            if !has_data {
-                let x = cursor_pos[0] + width - (time_offset / state.rssi_window_secs) * width;
-                let next_time_offset = (i + 1) as f32 * time_step;
-                let x_next = cursor_pos[0] + width - (next_time_offset / state.rssi_window_secs) * width;
-                
-                // Draw gray line segment for no data
-                draw_list.add_line([x, baseline_y], [x_next, baseline_y], [0.5, 0.5, 0.5, 0.5])
-                    .thickness(2.0)
-                    .build();
-            }
+            // Draw bar with width proportional to payload size (1 pixel per byte, max 2048)
+            let bar_width = (*payload_size as f32).min(max_payload_bytes);
+            
+            draw_list.add_rect_filled_multicolor(
+                [cursor_pos[0], y],
+                [cursor_pos[0] + bar_width, y + row_height],
+                color,
+                color,
+                color,
+                color,
+            );
         }
         
-        // Draw RSSI line with gradient colors over the gray baseline
-        if state.rssi_history.len() > 1 {
-            for i in 0..state.rssi_history.len() - 1 {
-                let (time1, rssi1) = &state.rssi_history[i];
-                let (time2, rssi2) = &state.rssi_history[i + 1];
-                
-                // Calculate x position based on time
-                let elapsed1 = now.duration_since(*time1).as_secs_f32();
-                let elapsed2 = now.duration_since(*time2).as_secs_f32();
-                
-                let x1 = cursor_pos[0] + width - (elapsed1 / state.rssi_window_secs) * width;
-                let x2 = cursor_pos[0] + width - (elapsed2 / state.rssi_window_secs) * width;
-                
-                // Calculate y position based on RSSI
-                let normalized1 = (*rssi1 - MIN_RSSI) as f32 / RSSI_RANGE;
-                let normalized2 = (*rssi2 - MIN_RSSI) as f32 / RSSI_RANGE;
-                let y1 = cursor_pos[1] + height - (normalized1 * height);
-                let y2 = cursor_pos[1] + height - (normalized2 * height);
-                
-                // Use average RSSI for segment color
-                let avg_rssi = (*rssi1 + *rssi2) / 2;
-                let color = rssi_to_color(avg_rssi);
-                
-                draw_list.add_line([x1, y1], [x2, y2], color)
-                    .thickness(2.0)
-                    .build();
-            }
-        }
+        // Draw border
+        draw_list.add_rect(
+            cursor_pos,
+            [cursor_pos[0] + width, cursor_pos[1] + height],
+            [0.4, 0.4, 0.4, 1.0],
+        ).thickness(1.0).build();
         
-        // Draw RSSI range labels on the right
         ui.dummy([0.0, height]);
-        ui.same_line();
-        ui.text(format!("Range: -127 to +10 dBm"));
+        
+        // Legend
+        ui.text("Color: Blue (weak) → Cyan → Green → Yellow → Red (strong)");
+        ui.text(format!("Width: Payload size (0-{} bytes) | Time window: 30 seconds", max_payload_bytes as i32));
+        
+        let recent_count = state.waterfall_data.iter()
+            .filter(|(timestamp, _, _)| *timestamp >= now - std::time::Duration::from_secs(30))
+            .count();
+        ui.text(format!("Showing {} packets from last 30s | Newest at bottom", recent_count.min(num_visible_rows)));
         
         ui.separator();
 
         if ui.button("Clear") {
             state.rx_events.clear();
             state.rssi_history.clear();
+            state.waterfall_data.clear();
         }
 
         ui.same_line();
@@ -687,5 +734,17 @@ impl RadioGuiApp {
                     ui.separator();
                 }
             });
+    }
+
+    fn draw_status_bar(&mut self, ui: &Ui) {
+        let state = self.state.lock();
+        let status_color = if state.connected {
+            [0.0, 1.0, 0.0, 1.0]
+        } else {
+            [1.0, 0.0, 0.0, 1.0]
+        };
+        
+        ui.separator();
+        ui.text_colored(status_color, &state.status_message);
     }
 }
