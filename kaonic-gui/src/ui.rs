@@ -38,11 +38,17 @@ pub struct AppState {
     pub tx_data: String,
     pub tx_hex_mode: bool,
     pub last_tx_latency: Option<u32>,
+    pub continuous_tx: bool,
+    pub tx_pause_ms: i32,
 
     // Receive
     pub rx_events: Vec<ReceiveEvent>,
     pub rx_stream_active: bool,
     pub max_rx_events: usize,
+
+    // RSSI visualization
+    pub rssi_history: Vec<(Instant, i32)>, // (timestamp, rssi)
+    pub rssi_window_secs: f32,
 }
 
 impl AppState {
@@ -73,10 +79,15 @@ impl AppState {
             tx_data: "Hello Kaonic!".to_string(),
             tx_hex_mode: false,
             last_tx_latency: None,
+            continuous_tx: false,
+            tx_pause_ms: 1000,
 
             rx_events: Vec::new(),
             rx_stream_active: false,
             max_rx_events: 100,
+
+            rssi_history: Vec::new(),
+            rssi_window_secs: 30.0,
         }
     }
 }
@@ -84,10 +95,10 @@ impl AppState {
 pub struct RadioGuiApp {
     client: Arc<Mutex<GrpcClient>>,
     state: Arc<Mutex<AppState>>,
-    #[allow(dead_code)]
     runtime: Arc<Runtime>,
     rx_receiver: Arc<Mutex<Option<mpsc::UnboundedReceiver<ReceiveEvent>>>>,
     pub last_frame: Instant,
+    last_tx_time: Instant,
 }
 
 impl RadioGuiApp {
@@ -102,20 +113,73 @@ impl RadioGuiApp {
             runtime,
             rx_receiver: Arc::new(Mutex::new(None)),
             last_frame: Instant::now(),
+            last_tx_time: Instant::now(),
         }
     }
 
     pub fn render(&mut self, ui: &Ui) {
+        let now = Instant::now();
+        
         // Process received events
         if let Some(ref mut rx) = *self.rx_receiver.lock() {
             while let Ok(event) = rx.try_recv() {
                 let mut state = self.state.lock();
-                state.rx_events.push(event);
+                
+                // Add to events list
+                state.rx_events.push(event.clone());
                 if state.rx_events.len() > state.max_rx_events {
                     state.rx_events.remove(0);
                 }
+
+                // Add to RSSI history with current timestamp
+                state.rssi_history.push((now, event.rssi));
             }
         }
+        
+        // Clean up old RSSI history entries (older than window)
+        let mut state = self.state.lock();
+        let cutoff_time = now - std::time::Duration::from_secs_f32(state.rssi_window_secs);
+        state.rssi_history.retain(|(timestamp, _)| *timestamp >= cutoff_time);
+        
+        // Handle continuous transmission
+        if state.continuous_tx && state.connected {
+            let elapsed = now.duration_since(self.last_tx_time).as_millis() as i32;
+            if elapsed >= state.tx_pause_ms {
+                let data = if state.tx_hex_mode {
+                    let hex_str = state.tx_data.replace(" ", "").replace("0x", "");
+                    (0..hex_str.len())
+                        .step_by(2)
+                        .filter_map(|i| {
+                            let end = (i + 2).min(hex_str.len());
+                            u8::from_str_radix(&hex_str[i..end], 16).ok()
+                        })
+                        .collect()
+                } else {
+                    state.tx_data.as_bytes().to_vec()
+                };
+
+                let module = if state.selected_module == 0 {
+                    RadioModule::ModuleA
+                } else {
+                    RadioModule::ModuleB
+                };
+                
+                drop(state);
+                
+                match self.client.lock().transmit_frame(module, data) {
+                    Ok(latency) => {
+                        let mut state = self.state.lock();
+                        state.last_tx_latency = Some(latency);
+                    }
+                    Err(_) => {}
+                }
+                
+                self.last_tx_time = now;
+                state = self.state.lock();
+            }
+        }
+        
+        drop(state);
 
         let display_size = ui.io().display_size;
         ui.window("Kaonic Radio Control")
@@ -190,6 +254,32 @@ impl RadioGuiApp {
             [1.0, 0.0, 0.0, 1.0]
         };
         ui.text_colored(status_color, &state.status_message);
+        
+        // Auto-start receiving when connected
+        if state.connected && !state.rx_stream_active {
+            drop(state);
+            self.start_receiving();
+        }
+    }
+
+    fn start_receiving(&mut self) {
+        let mut state = self.state.lock();
+        if !state.connected || state.rx_stream_active {
+            return;
+        }
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        *self.rx_receiver.lock() = Some(rx);
+
+        let module = if state.selected_module == 0 {
+            RadioModule::ModuleA
+        } else {
+            RadioModule::ModuleB
+        };
+
+        self.client.lock().start_receive_stream(module, tx);
+        state.rx_stream_active = true;
+        state.status_message = "Receive stream started".to_string();
     }
 
     fn draw_radio_config_panel(&mut self, ui: &Ui) {
@@ -252,11 +342,18 @@ impl RadioGuiApp {
             ui.slider("##opt", 0, 3, &mut state.ofdm_opt);
         } else {
             // QPSK
-            ui.text("Chip Freq (0=100k, 3=2M):");
+            let chip_freq_label = match state.qpsk_chip_freq {
+                0 => "100 kHz",
+                1 => "200 kHz",
+                2 => "1000 kHz",
+                3 => "2000 kHz",
+                _ => "Unknown",
+            };
+            ui.text(format!("Chip Frequency: {}", chip_freq_label));
             ui.set_next_item_width(-1.0);
             ui.slider("##chipfreq", 0, 3, &mut state.qpsk_chip_freq);
 
-            ui.text("Rate Mode:");
+            ui.text("Rate Mode (0-3):");
             ui.set_next_item_width(-1.0);
             ui.slider("##ratemode", 0, 3, &mut state.qpsk_rate_mode);
         }
@@ -304,8 +401,17 @@ impl RadioGuiApp {
                         opt: state.ofdm_opt as u32,
                     }))
                 } else {
+                    // Convert chip_freq index to actual frequency value
+                    let chip_freq_value = match state.qpsk_chip_freq {
+                        0 => 100,
+                        1 => 200,
+                        2 => 1000,
+                        3 => 2000,
+                        _ => 1000, // default
+                    };
+                    
                     Some(PhyConfig::Qpsk(RadioPhyConfigQpsk {
-                        chip_freq: state.qpsk_chip_freq as u32,
+                        chip_freq: chip_freq_value,
                         rate_mode: state.qpsk_rate_mode as u32,
                     }))
                 };
@@ -356,50 +462,73 @@ impl RadioGuiApp {
 
         ui.checkbox("Hex mode", &mut state.tx_hex_mode);
 
+        ui.text("Pause between transmits (ms):");
+        ui.set_next_item_width(-1.0);
+        ui.slider("##txpause", 100, 5000, &mut state.tx_pause_ms);
+
+        let continuous_enabled = state.continuous_tx;
         drop(state);
 
-        ui.enabled(enabled, || {
-            if ui.button_with_size("Transmit", [0.0, 0.0]) {
-                let state = self.state.lock();
-                let data = if state.tx_hex_mode {
-                    // Parse hex string
-                    let hex_str = state.tx_data.replace(" ", "").replace("0x", "");
-                    (0..hex_str.len())
-                        .step_by(2)
-                        .filter_map(|i| {
-                            let end = (i + 2).min(hex_str.len());
-                            u8::from_str_radix(&hex_str[i..end], 16).ok()
-                        })
-                        .collect()
-                } else {
-                    state.tx_data.as_bytes().to_vec()
-                };
+        // Single transmit button
+        let _once_token = ui.begin_disabled(!enabled || continuous_enabled);
+        if ui.button("Transmit Once") {
+            let state = self.state.lock();
+            let data = if state.tx_hex_mode {
+                // Parse hex string
+                let hex_str = state.tx_data.replace(" ", "").replace("0x", "");
+                (0..hex_str.len())
+                    .step_by(2)
+                    .filter_map(|i| {
+                        let end = (i + 2).min(hex_str.len());
+                        u8::from_str_radix(&hex_str[i..end], 16).ok()
+                    })
+                    .collect()
+            } else {
+                state.tx_data.as_bytes().to_vec()
+            };
 
-                let module = if state.selected_module == 0 {
-                    RadioModule::ModuleA
-                } else {
-                    RadioModule::ModuleB
-                };
-                drop(state);
+            let module = if state.selected_module == 0 {
+                RadioModule::ModuleA
+            } else {
+                RadioModule::ModuleB
+            };
+            drop(state);
 
-                match self.client.lock().transmit_frame(module, data) {
-                    Ok(latency) => {
-                        let mut state = self.state.lock();
-                        state.last_tx_latency = Some(latency);
-                        state.status_message = format!("Transmitted successfully (latency: {} ms)", latency);
-                    }
-                    Err(e) => {
-                        let mut state = self.state.lock();
-                        state.status_message = format!("Transmit failed: {}", e);
-                    }
+            match self.client.lock().transmit_frame(module, data) {
+                Ok(latency) => {
+                    let mut state = self.state.lock();
+                    state.last_tx_latency = Some(latency);
+                    state.status_message = format!("Transmitted successfully (latency: {} ms)", latency);
+                }
+                Err(e) => {
+                    let mut state = self.state.lock();
+                    state.status_message = format!("Transmit failed: {}", e);
                 }
             }
-        });
-
-        let state = self.state.lock();
-        if let Some(latency) = state.last_tx_latency {
-            ui.text(format!("Last TX latency: {} ms", latency));
         }
+        drop(_once_token);
+
+        ui.same_line();
+
+        // Continuous transmit control
+        let _start_token = ui.begin_disabled(!enabled || continuous_enabled);
+        if ui.button("Start Continuous TX") {
+            let mut state = self.state.lock();
+            state.continuous_tx = true;
+            self.last_tx_time = Instant::now();
+            state.status_message = "Continuous transmission started".to_string();
+        }
+        drop(_start_token);
+        
+        ui.same_line();
+        
+        let _stop_token = ui.begin_disabled(!continuous_enabled);
+        if ui.button("Stop Continuous TX") {
+            let mut state = self.state.lock();
+            state.continuous_tx = false;
+            state.status_message = "Continuous transmission stopped".to_string();
+        }
+        drop(_stop_token);
     }
 
     fn draw_receive_panel(&mut self, ui: &Ui) {
@@ -409,37 +538,122 @@ impl RadioGuiApp {
         let mut state = self.state.lock();
         let enabled = state.connected;
 
-        ui.enabled(enabled && !state.rx_stream_active, || {
-            if ui.button("Start Receiving") {
-                let (tx, rx) = mpsc::unbounded_channel();
-                *self.rx_receiver.lock() = Some(rx);
-
-                let module = if state.selected_module == 0 {
-                    RadioModule::ModuleA
+        // RSSI Timeline Visualization (always visible)
+        ui.text(format!("RSSI Timeline (Last {:.0} seconds)", state.rssi_window_secs));
+        
+        let width = ui.content_region_avail()[0];
+        let height = 150.0;
+        
+        let draw_list = ui.get_window_draw_list();
+        let cursor_pos = ui.cursor_screen_pos();
+        
+        // Constants for RSSI range
+        const MIN_RSSI: i32 = -127;
+        const MAX_RSSI: i32 = 10;
+        const RSSI_RANGE: f32 = (MAX_RSSI - MIN_RSSI) as f32;
+        
+        // Background
+        draw_list.add_rect(
+            cursor_pos,
+            [cursor_pos[0] + width, cursor_pos[1] + height],
+            [0.2, 0.2, 0.2, 1.0],
+        ).filled(true).build();
+        
+        // Draw horizontal grid lines
+        let grid_steps = 7;
+        for i in 0..=grid_steps {
+            let y = cursor_pos[1] + (i as f32 * height / grid_steps as f32);
+            
+            draw_list.add_line(
+                [cursor_pos[0], y],
+                [cursor_pos[0] + width, y],
+                [0.3, 0.3, 0.3, 1.0],
+            ).build();
+        }
+        
+        // Get current time for calculating relative positions
+        let now = Instant::now();
+        
+        // Helper function to convert RSSI to color (red to green gradient)
+        let rssi_to_color = |rssi: i32| -> [f32; 4] {
+            let normalized = ((rssi - MIN_RSSI) as f32 / RSSI_RANGE).clamp(0.0, 1.0);
+            let red = 1.0 - normalized;
+            let green = normalized;
+            [red, green, 0.0, 1.0]
+        };
+        
+        // Fill background with gray for no-data regions, then draw data on top
+        let time_step = 0.1; // Sample every 100ms for gap detection
+        let num_samples = (state.rssi_window_secs / time_step) as usize;
+        
+        // Draw gray baseline for gaps (no data)
+        let baseline_y = cursor_pos[1] + height / 2.0; // Middle of the chart
+        
+        for i in 0..num_samples {
+            let time_offset = i as f32 * time_step;
+            let check_time = now - std::time::Duration::from_secs_f32(time_offset);
+            
+            // Check if we have data near this time point
+            let has_data = state.rssi_history.iter().any(|(t, _)| {
+                let diff = if *t > check_time {
+                    t.duration_since(check_time).as_secs_f32()
                 } else {
-                    RadioModule::ModuleB
+                    check_time.duration_since(*t).as_secs_f32()
                 };
-
-                self.client.lock().start_receive_stream(module, tx);
-                state.rx_stream_active = true;
-                state.status_message = "Receive stream started".to_string();
+                diff < time_step
+            });
+            
+            if !has_data {
+                let x = cursor_pos[0] + width - (time_offset / state.rssi_window_secs) * width;
+                let next_time_offset = (i + 1) as f32 * time_step;
+                let x_next = cursor_pos[0] + width - (next_time_offset / state.rssi_window_secs) * width;
+                
+                // Draw gray line segment for no data
+                draw_list.add_line([x, baseline_y], [x_next, baseline_y], [0.5, 0.5, 0.5, 0.5])
+                    .thickness(2.0)
+                    .build();
             }
-        });
-
-        ui.same_line();
-
-        ui.enabled(state.rx_stream_active, || {
-            if ui.button("Stop Receiving") {
-                *self.rx_receiver.lock() = None;
-                state.rx_stream_active = false;
-                state.status_message = "Receive stream stopped".to_string();
+        }
+        
+        // Draw RSSI line with gradient colors over the gray baseline
+        if state.rssi_history.len() > 1 {
+            for i in 0..state.rssi_history.len() - 1 {
+                let (time1, rssi1) = &state.rssi_history[i];
+                let (time2, rssi2) = &state.rssi_history[i + 1];
+                
+                // Calculate x position based on time
+                let elapsed1 = now.duration_since(*time1).as_secs_f32();
+                let elapsed2 = now.duration_since(*time2).as_secs_f32();
+                
+                let x1 = cursor_pos[0] + width - (elapsed1 / state.rssi_window_secs) * width;
+                let x2 = cursor_pos[0] + width - (elapsed2 / state.rssi_window_secs) * width;
+                
+                // Calculate y position based on RSSI
+                let normalized1 = (*rssi1 - MIN_RSSI) as f32 / RSSI_RANGE;
+                let normalized2 = (*rssi2 - MIN_RSSI) as f32 / RSSI_RANGE;
+                let y1 = cursor_pos[1] + height - (normalized1 * height);
+                let y2 = cursor_pos[1] + height - (normalized2 * height);
+                
+                // Use average RSSI for segment color
+                let avg_rssi = (*rssi1 + *rssi2) / 2;
+                let color = rssi_to_color(avg_rssi);
+                
+                draw_list.add_line([x1, y1], [x2, y2], color)
+                    .thickness(2.0)
+                    .build();
             }
-        });
-
+        }
+        
+        // Draw RSSI range labels on the right
+        ui.dummy([0.0, height]);
         ui.same_line();
+        ui.text(format!("Range: -127 to +10 dBm"));
+        
+        ui.separator();
 
         if ui.button("Clear") {
             state.rx_events.clear();
+            state.rssi_history.clear();
         }
 
         ui.same_line();
