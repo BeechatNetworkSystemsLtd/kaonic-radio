@@ -25,6 +25,11 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 chrono = "0.4"
 parking_lot = "0.12"
 env_logger = "0.11"
+hex = "0.4"
+sha2 = "0.10"
+
+# Reticulum
+reticulum = { git = "https://github.com/BeechatNetworkSystemsLtd/reticulum-rs.git", package = "reticulum" }
 
 [build-dependencies]
 tonic-build = "0.13.0"

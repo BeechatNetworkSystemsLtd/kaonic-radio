@@ -1,4 +1,4 @@
-use crate::grpc_client::{GrpcClient, ReceiveEvent};
+use crate::grpc_client::{GrpcClient, PacketType, ReceiveEvent};
 use crate::kaonic::{configuration_request::PhyConfig, QoSConfig, RadioModule, RadioPhyConfigOfdm, RadioPhyConfigQpsk};
 use imgui::*;
 use parking_lot::Mutex;
@@ -53,6 +53,10 @@ pub struct AppState {
     // Waterfall data: (timestamp, rssi, payload_size)
     pub waterfall_data: Vec<(Instant, i32, usize)>,
     pub waterfall_max_entries: usize,
+    
+    // Packet type statistics
+    pub reticulum_count: usize,
+    pub custom_count: usize,
 }
 
 impl AppState {
@@ -95,6 +99,9 @@ impl AppState {
             
             waterfall_data: Vec::new(),
             waterfall_max_entries: 200,
+            
+            reticulum_count: 0,
+            custom_count: 0,
         }
     }
 }
@@ -131,6 +138,12 @@ impl RadioGuiApp {
         if let Some(ref mut rx) = *self.rx_receiver.lock() {
             while let Ok(event) = rx.try_recv() {
                 let mut state = self.state.lock();
+                
+                // Update packet type statistics
+                match event.packet_type {
+                    PacketType::Reticulum => state.reticulum_count += 1,
+                    PacketType::Custom => state.custom_count += 1,
+                }
                 
                 // Add to events list
                 state.rx_events.push(event.clone());
@@ -593,118 +606,21 @@ impl RadioGuiApp {
 
     fn draw_receive_panel(&mut self, ui: &Ui) {
         let mut state = self.state.lock();
-        let enabled = state.connected;
+        let _enabled = state.connected;
 
-        // RSSI Waterfall Visualization
-        ui.text("RSSI Waterfall (Vertical Scroll)");
-        
-        let height = 300.0;
-        let max_payload_bytes = 2048.0;
-        let width = max_payload_bytes; // Fixed width: 1 pixel per byte (0-2048 bytes)
-        
-        // Use child window with horizontal scroll for wide waterfall
-        let draw_list = ui.get_window_draw_list();
-        let cursor_pos = ui.cursor_screen_pos();
-        
-        // Constants for RSSI range
-        const MIN_RSSI: i32 = -127;
-        const MAX_RSSI: i32 = 10;
-        const RSSI_RANGE: f32 = (MAX_RSSI - MIN_RSSI) as f32;
-        
-        // Background
-        draw_list.add_rect(
-            cursor_pos,
-            [cursor_pos[0] + width, cursor_pos[1] + height],
-            [0.05, 0.05, 0.1, 1.0],
-        ).filled(true).build();
-        
-        // Helper function to convert RSSI to color (blue to red gradient)
-        let rssi_to_color = |rssi: i32| -> [f32; 4] {
-            let normalized = ((rssi - MIN_RSSI) as f32 / RSSI_RANGE).clamp(0.0, 1.0);
-            
-            // Blue -> Cyan -> Green -> Yellow -> Red gradient
-            if normalized < 0.25 {
-                let t = normalized / 0.25;
-                [0.0, 0.0, 1.0 - t * 0.5, 1.0] // Dark blue to blue
-            } else if normalized < 0.5 {
-                let t = (normalized - 0.25) / 0.25;
-                [0.0, t, 0.5 + t * 0.5, 1.0] // Blue to cyan
-            } else if normalized < 0.75 {
-                let t = (normalized - 0.5) / 0.25;
-                [t, 1.0, 1.0 - t, 1.0] // Cyan to yellow
-            } else {
-                let t = (normalized - 0.75) / 0.25;
-                [1.0, 1.0 - t, 0.0, 1.0] // Yellow to red
-            }
-        };
-        
-        // Draw waterfall: each packet as a horizontal line
-        let row_height = 2.0; // Height of each packet line
-        let num_visible_rows = (height / row_height) as usize;
-        
-        // Get current time for filtering
-        let now = Instant::now();
-        let time_window_secs = 30.0;
-        let cutoff_time = now - std::time::Duration::from_secs_f32(time_window_secs);
-        
-        // Filter to only show packets from last 30 seconds
-        let recent_packets: Vec<_> = state.waterfall_data.iter()
-            .filter(|(timestamp, _, _)| *timestamp >= cutoff_time)
-            .collect();
-        
-        // Draw from oldest to newest (bottom to top)
-        let start_idx = if recent_packets.len() > num_visible_rows {
-            recent_packets.len() - num_visible_rows
-        } else {
-            0
-        };
-        
-        for (idx, (_timestamp, rssi, payload_size)) in recent_packets[start_idx..].iter().enumerate() {
-            let y = cursor_pos[1] + height - ((idx + 1) as f32 * row_height);
-            
-            let color = rssi_to_color(*rssi);
-            
-            // Draw bar with width proportional to payload size (1 pixel per byte, max 2048)
-            let bar_width = (*payload_size as f32).min(max_payload_bytes);
-            
-            draw_list.add_rect_filled_multicolor(
-                [cursor_pos[0], y],
-                [cursor_pos[0] + bar_width, y + row_height],
-                color,
-                color,
-                color,
-                color,
-            );
-        }
-        
-        // Draw border
-        draw_list.add_rect(
-            cursor_pos,
-            [cursor_pos[0] + width, cursor_pos[1] + height],
-            [0.4, 0.4, 0.4, 1.0],
-        ).thickness(1.0).build();
-        
-        ui.dummy([0.0, height]);
-        
-        // Legend
-        ui.text("Color: Blue (weak) → Cyan → Green → Yellow → Red (strong)");
-        ui.text(format!("Width: Payload size (0-{} bytes) | Time window: 30 seconds", max_payload_bytes as i32));
-        
-        let recent_count = state.waterfall_data.iter()
-            .filter(|(timestamp, _, _)| *timestamp >= now - std::time::Duration::from_secs(30))
-            .count();
-        ui.text(format!("Showing {} packets from last 30s | Newest at bottom", recent_count.min(num_visible_rows)));
-        
-        ui.separator();
+        // Packet type statistics
+        ui.text(format!("Total: {} packets | Reticulum: {} | Custom: {}", 
+            state.rx_events.len(), 
+            state.reticulum_count, 
+            state.custom_count));
 
         if ui.button("Clear") {
             state.rx_events.clear();
             state.rssi_history.clear();
             state.waterfall_data.clear();
+            state.reticulum_count = 0;
+            state.custom_count = 0;
         }
-
-        ui.same_line();
-        ui.text(format!("Events: {}", state.rx_events.len()));
 
         ui.separator();
 
@@ -712,25 +628,67 @@ impl RadioGuiApp {
         ui.child_window("rx_events")
             .size([0.0, 0.0])
             .build(|| {
-                for (idx, event) in state.rx_events.iter().rev().enumerate() {
-                    ui.text(format!("#{} {}", 
-                        state.rx_events.len() - idx,
-                        event.timestamp.format("%H:%M:%S%.3f")
-                    ));
-                    ui.same_line();
-                    ui.text(format!("Module: {}", if event.module == 0 { "A" } else { "B" }));
-                    ui.same_line();
-                    ui.text(format!("RSSI: {} dBm", event.rssi));
-                    ui.same_line();
-                    ui.text(format!("Latency: {} ms", event.latency));
-
-                    let data_str = if event.frame_data.iter().all(|&b| b >= 0x20 && b <= 0x7E) {
-                        format!("\"{}\"", String::from_utf8_lossy(&event.frame_data))
-                    } else {
-                        format!("Hex: {}", event.frame_data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "))
+                for (_idx, event) in state.rx_events.iter().rev().enumerate() {
+                    // Packet type with color coding
+                    let (type_char, type_color, bg_color) = match event.packet_type {
+                        PacketType::Reticulum => ("R", [0.0, 0.8, 1.0, 1.0], [0.0, 0.2, 0.3, 1.0]), // Cyan text, dark cyan bg
+                        PacketType::Custom => ("C", [1.0, 0.8, 0.0, 1.0], [0.3, 0.2, 0.0, 1.0]),      // Yellow text, dark yellow bg
                     };
+                    
+                    // Create a small colored box with type indicator
+                    let _bg_token = ui.push_style_color(StyleColor::ChildBg, bg_color);
+                    ui.child_window(format!("type_column_{}", _idx))
+                        .size([20.0, ui.text_line_height()])
+                        .build(|| {
+                            ui.text_colored(type_color, type_char);
+                        });
+                    _bg_token.pop();
+                    
+                    ui.same_line();
+                    
+                    // Main content area
+                    ui.group(|| {
+                        // Header: time rssi latency packet_size
+                        ui.text(format!("{} {}dBm {}ms {}B", 
+                            event.timestamp.format("%H:%M:%S%.3f"),
+                            event.rssi,
+                            event.latency,
+                            event.frame_data.len()
+                        ));
 
-                    ui.text(format!("Data ({}): {}", event.frame_data.len(), data_str));
+                        // Content depending on type
+                        if let Some(ref info) = event.reticulum_info {
+                            ui.text(format!("  Type: {} | Hops: {}", info.header_type, info.hops));
+                            if let Some(ref dest) = info.destination {
+                                ui.text("  Destination: ");
+                                ui.same_line();
+                                ui.text_colored([1.0, 0.0, 1.0, 1.0], dest);
+                            }
+                            if let Some(ref transport) = info.transport_id {
+                                ui.text(format!("  Transport ID: {}", transport));
+                            }
+                            ui.text(format!("  Hash: {}", &info.packet_hash));
+                        }
+                        
+                        // Packet data hex (truncated to 64 bytes)
+                        let hex_bytes: Vec<u8> = event.frame_data.iter().take(64).copied().collect();
+                        let hex_str = hex_bytes.iter()
+                            .map(|b| format!("{:02X}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        
+                        // Display hex data with grey color
+                        ui.text_colored([0.6, 0.6, 0.7, 1.0], format!("  {}", hex_str));
+                        
+                        // Packet data ASCII (. for non-printable)
+                        let ascii_str: String = hex_bytes.iter()
+                            .map(|&b| if b >= 0x20 && b <= 0x7E { b as char } else { '.' })
+                            .collect();
+                        
+                        // Display ASCII data with grey color
+                        ui.text_colored([0.6, 0.6, 0.7, 1.0], format!("  {}", ascii_str));
+                    });
+                    
                     ui.separator();
                 }
             });
@@ -746,5 +704,41 @@ impl RadioGuiApp {
         
         ui.separator();
         ui.text_colored(status_color, &state.status_message);
+        
+        ui.same_line();
+        let window_width = ui.window_size()[0];
+        let mut right_pos = window_width - 20.0;
+        
+        // Show latest RSSI on the right with color coding
+        if let Some(last_event) = state.rx_events.last() {
+            let rssi_text = format!("RSSI: {} dBm", last_event.rssi);
+            let rssi_width = ui.calc_text_size(&rssi_text)[0];
+            right_pos -= rssi_width;
+            ui.set_cursor_pos([right_pos, ui.cursor_pos()[1]]);
+            
+            // Color based on signal strength
+            let rssi_color = if last_event.rssi >= -50 {
+                [0.0, 1.0, 0.0, 1.0]  // Green: Excellent (>= -50 dBm)
+            } else if last_event.rssi >= -70 {
+                [0.5, 1.0, 0.0, 1.0]  // Yellow-green: Good (-50 to -70 dBm)
+            } else if last_event.rssi >= -85 {
+                [1.0, 0.65, 0.0, 1.0] // Orange: Fair (-70 to -85 dBm)
+            } else {
+                [1.0, 0.0, 0.0, 1.0]  // Red: Poor (< -85 dBm)
+            };
+            
+            ui.text_colored(rssi_color, &rssi_text);
+            ui.same_line();
+        }
+        
+        // Show TX/RX statistics before RSSI
+        let stats_text = format!("RX: {} | R: {} C: {}", 
+            state.rx_events.len(), 
+            state.reticulum_count, 
+            state.custom_count);
+        let stats_width = ui.calc_text_size(&stats_text)[0];
+        right_pos -= stats_width + 20.0;
+        ui.set_cursor_pos([right_pos, ui.cursor_pos()[1]]);
+        ui.text(&stats_text);
     }
 }
