@@ -66,7 +66,7 @@ jobs:
         run: |
           unset LD_LIBRARY_PATH
           source /opt/yocto-sdk/environment-setup
-          cargo build --release
+          cargo build --release -p kaonic-commd
 
       - name: Create Kaonic OTA package
         run: |
