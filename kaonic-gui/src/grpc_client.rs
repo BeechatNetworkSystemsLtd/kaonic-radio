@@ -197,6 +197,7 @@ impl GrpcClient {
         phy_config: Option<crate::kaonic::configuration_request::PhyConfig>,
         qos_enabled: bool,
         qos_config: QoSConfig,
+        bandwidth_filter: i32,
     ) -> Result<(), String> {
         self.runtime.block_on(async {
             let mut client = self.connect_radio().await?;
@@ -217,6 +218,7 @@ impl GrpcClient {
                 tx_power,
                 phy_config,
                 qos,
+                bandwidth_filter,
             };
 
             client

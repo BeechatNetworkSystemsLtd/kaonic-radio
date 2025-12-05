@@ -34,6 +34,9 @@ pub struct AppState {
     pub qos_adaptive_backoff: bool,
     pub qos_cca_threshold: i32,
 
+    // Bandwidth Filter
+    pub bandwidth_filter: i32, // 0 = Narrow, 1 = Wide
+
     // Transmit
     pub tx_data: String,
     pub tx_hex_mode: bool,
@@ -88,6 +91,8 @@ impl AppState {
             qos_adaptive_tx_power: true,
             qos_adaptive_backoff: true,
             qos_cca_threshold: -75,
+
+            bandwidth_filter: 1, // Default to Wide
 
             tx_data: "Hello Kaonic!".to_string(),
             tx_hex_mode: false,
@@ -418,6 +423,13 @@ impl RadioGuiApp {
         for token in _color_tokens {
             token.pop();
         }
+
+        ui.spacing();
+        ui.text("Bandwidth Filter:");
+        ui.same_line();
+        ui.radio_button("Narrow", &mut state.bandwidth_filter, 0);
+        ui.same_line();
+        ui.radio_button("Wide", &mut state.bandwidth_filter, 1);
     }
 
     fn draw_modulation_panel(&mut self, ui: &Ui) {
@@ -534,6 +546,7 @@ impl RadioGuiApp {
                     phy_config,
                     state.qos_enabled,
                     qos_config,
+                    state.bandwidth_filter,
                 );
 
                 drop(state);
