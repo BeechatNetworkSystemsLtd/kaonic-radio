@@ -1,4 +1,9 @@
-use radio_rf215::{baseband::BasebandFrame, bus::SpiBus, radio::RadioFrequencyBuilder, Rf215};
+use radio_rf215::{
+    baseband::BasebandFrame,
+    bus::SpiBus,
+    radio::{Band, RadioFrequencyBuilder},
+    Rf215,
+};
 
 use crate::{
     error::KaonicError,
@@ -11,7 +16,7 @@ use crate::{
         },
         platform_impl::rf215::map_modulation,
     },
-    radio::{self, Radio, ReceiveResult, ScanResult},
+    radio::{self, BandwidthFilter, Hertz, Radio, RadioConfig, ReceiveResult, ScanResult},
 };
 
 mod machine;
@@ -24,42 +29,77 @@ pub struct Kaonic1SRadioFem {
     flt_v1: LinuxOutputPin,
     flt_v2: LinuxOutputPin,
     flt_24: LinuxOutputPin,
+    ant_24: Option<LinuxOutputPin>,
 }
 
 impl Kaonic1SRadioFem {
-    pub fn new(flt_v1: LinuxOutputPin, flt_v2: LinuxOutputPin, flt_24: LinuxOutputPin) -> Self {
+    pub fn new(
+        flt_v1: LinuxOutputPin,
+        flt_v2: LinuxOutputPin,
+        flt_24: LinuxOutputPin,
+        ant_24: Option<LinuxOutputPin>,
+    ) -> Self {
         Self {
             flt_v1,
             flt_v2,
             flt_24,
+            ant_24,
         }
     }
 
-    pub fn adjust(&mut self, freq: radio::Hertz) {
-        let freq = freq.as_hz();
-        if (902_000_000 <= freq) && (freq <= 928_000_000) {
-            let _ = self.flt_v1.set_high();
-            let _ = self.flt_v2.set_high();
-            return;
+    fn set_bandwidth_filter(
+        &mut self,
+        filter: BandwidthFilter,
+        freq: Hertz,
+    ) -> Result<(), KaonicError> {
+        let freq = freq.as_mhz();
+
+        match filter {
+            BandwidthFilter::Narrow => {
+                log::debug!("set narrowband filter");
+
+                if (902 <= freq) && (freq <= 928) {
+                    self.flt_v1.set_high()?;
+                    self.flt_v2.set_low()?;
+                }
+
+                if (862 <= freq) && (freq <= 876) {
+                    self.flt_v1.set_low()?;
+                    self.flt_v2.set_high()?;
+                }
+
+                // Use Wideband filter
+                if freq < 862 {
+                    log::trace!(
+                        "narrow band is not supported for {}MHz, wideband will be used",
+                        freq
+                    );
+
+                    self.flt_v1.set_high()?;
+                    self.flt_v2.set_low()?;
+                }
+            }
+            BandwidthFilter::Wide => {
+                log::debug!("set wideband filter");
+                self.flt_v1.set_high()?;
+                self.flt_v2.set_low()?;
+            }
         }
 
-        if (862_000_000 <= freq) && (freq <= 876_000_000) {
-            let _ = self.flt_v1.set_low();
-            let _ = self.flt_v2.set_high();
-            return;
+        Ok(())
+    }
+
+    pub fn adjust(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
+        if let Some(ant_24) = &mut self.ant_24 {
+            ant_24.set_high()?;
         }
 
-        if 2_000_000_000 >= freq {
-            let _ = self.flt_v1.set_high();
-            let _ = self.flt_v2.set_low();
-            return;
-        }
+        self.set_bandwidth_filter(config.bandwidth_filter, config.freq)?;
 
-        if 2_000_000_000 <= freq {
-            let _ = self.flt_24.set_high();
-            let _ = self.flt_24.set_low();
-            return;
-        }
+        // NOTE: Should be set to 0
+        let _ = self.flt_24.set_low();
+
+        Ok(())
     }
 }
 
@@ -110,10 +150,8 @@ impl Radio for Kaonic1SRadio {
         Ok(())
     }
 
-    fn configure(&mut self, config: &crate::radio::RadioConfig) -> Result<(), KaonicError> {
-        log::trace!("adjust fem to {} Hz", config.freq);
-
-        self.fem.adjust(config.freq);
+    fn configure(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
+        self.fem.adjust(config)?;
 
         log::trace!("set radio config ({}) = {}", self.radio.name(), config);
 
@@ -129,7 +167,7 @@ impl Radio for Kaonic1SRadio {
     }
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
-        log::trace!("TX ({}): {}B", self.radio.name(), frame.len());
+        log::trace!("TX ({}): {} Bytes", self.radio.name(), frame.len());
 
         self.radio
             .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
@@ -143,6 +181,7 @@ impl Radio for Kaonic1SRadio {
         frame: &'a mut Self::RxFrame,
         timeout: core::time::Duration,
     ) -> Result<ReceiveResult, KaonicError> {
+
         let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
 
         let edv = self.radio.read_edv().unwrap_or(127);
@@ -174,7 +213,11 @@ impl Radio for Kaonic1SRadio {
 
                     return Err(KaonicError::Timeout);
                 }
-                _ => return Err(err.into()),
+                _ => {
+                    log::error!("receive error {}", self.radio.name());
+
+                    return Err(err.into());
+                }
             },
         }
     }

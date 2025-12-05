@@ -39,10 +39,21 @@ impl Radio for RadioService {
         let req = request.into_inner();
         let module = module_index(req.module)?;
 
+        // Convert proto BandwidthFilter enum to kaonic_radio::radio::BandwidthFilter
+        let bandwidth_filter = match req.bandwidth_filter() {
+            crate::grpc::kaonic::BandwidthFilter::Narrow => {
+                kaonic_radio::radio::BandwidthFilter::Narrow
+            }
+            crate::grpc::kaonic::BandwidthFilter::Wide => {
+                kaonic_radio::radio::BandwidthFilter::Wide
+            }
+        };
+
         let cfg = kaonic_radio::radio::RadioConfig {
             freq: Hertz::from_khz(req.freq.into()),
             channel_spacing: Hertz::from_khz(req.channel_spacing.into()),
             channel: req.channel as u16,
+            bandwidth_filter,
         };
 
         self.mgr

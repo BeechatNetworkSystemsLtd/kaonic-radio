@@ -1,17 +1,22 @@
 use linux_embedded_hal::spidev::SpidevOptions;
 use radio_rf215::{
-    bus::{BusError, SpiBus},
+    bus::{Bus, BusError, SpiBus},
+    error::RadioError,
     modulation::{Modulation, OfdmModulation},
     radio::{AgcGainMap, AuxiliarySettings, FrontendPinConfig, PaVol},
     regs::{BasebandInterrupt, BasebandInterruptMask, RadioInterrupt, RadioInterruptMask},
+    transceiver::{Band09, Band24, Transreceiver},
     Rf215,
 };
 
-use crate::platform::{
-    kaonic1s::{Kaonic1SRadio, Kaonic1SRadioFem},
-    linux::{
-        LinuxClock, LinuxGpioConfig, LinuxGpioInterrupt, LinuxGpioLineConfig, LinuxGpioReset,
-        LinuxOutputPin, LinuxSpi, LinuxSpiConfig, SharedBus,
+use crate::{
+    error::KaonicError,
+    platform::{
+        kaonic1s::{Kaonic1SRadio, Kaonic1SRadioFem},
+        linux::{
+            LinuxClock, LinuxGpioConfig, LinuxGpioInterrupt, LinuxGpioLineConfig, LinuxGpioReset,
+            LinuxOutputPin, LinuxSpi, LinuxSpiConfig, SharedBus,
+        },
     },
 };
 
@@ -23,6 +28,7 @@ struct RadioBusConfig {
     flt_v1_gpio: LinuxGpioLineConfig,
     flt_v2_gpio: LinuxGpioLineConfig,
     flt_24_gpio: LinuxGpioLineConfig,
+    ant_24_gpio: Option<LinuxGpioLineConfig>,
 }
 
 const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
@@ -46,6 +52,7 @@ const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip8",
             offset: 12,
         },
+        ant_24_gpio: None,
     },
     RadioBusConfig {
         name: "rfb",
@@ -67,6 +74,7 @@ const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip8",
             offset: 2,
         },
+        ant_24_gpio: None,
     },
 ];
 
@@ -91,6 +99,10 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip9",
             offset: 12,
         },
+        ant_24_gpio: Some(LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 13,
+        }),
     },
     RadioBusConfig {
         name: "rfb",
@@ -112,6 +124,10 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip9",
             offset: 2,
         },
+        ant_24_gpio: Some(LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 14,
+        }),
     },
 ];
 
@@ -164,6 +180,67 @@ pub fn create_radios() -> Result<[Option<Kaonic1SRadio>; 2], BusError> {
     Ok(radios)
 }
 
+fn configure_radio_09<I: Bus + Clone>(
+    trx: &mut Transreceiver<Band09, I>,
+) -> Result<(), RadioError> {
+    trx.radio()
+        .set_control_pad(FrontendPinConfig::Mode2)?
+        .set_aux_settings(AuxiliarySettings {
+            ext_lna_bypass: false,
+            aven: false,
+            avect: false,
+            pavol: PaVol::Voltage2400mV,
+            map: AgcGainMap::Extranal12dB,
+        })
+        .map_err(|_| BusError::ControlFailure)?;
+
+    trx.baseband().set_fcs(false)?;
+
+    trx.radio().receive()?;
+
+    Ok(())
+}
+
+fn configure_radio_24<I: Bus + Clone>(
+    trx: &mut Transreceiver<Band24, I>,
+) -> Result<(), RadioError> {
+    trx.radio()
+        .set_control_pad(FrontendPinConfig::Mode3)?
+        .set_aux_settings(AuxiliarySettings {
+            ext_lna_bypass: true,
+            aven: false,
+            avect: false,
+            pavol: PaVol::Voltage2400mV,
+            map: AgcGainMap::Extranal12dB,
+        })
+        .map_err(|_| BusError::ControlFailure)?;
+
+    trx.baseband().set_fcs(false)?;
+
+    Ok(())
+}
+
+fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>) -> Result<(), RadioError> {
+    rf.setup_irq(
+        RadioInterruptMask::new()
+            .add_irq(RadioInterrupt::TransceiverError)
+            .add_irq(RadioInterrupt::TransceiverReady)
+            .build(),
+        BasebandInterruptMask::new()
+            .add_irq(BasebandInterrupt::ReceiverFrameEnd)
+            .add_irq(BasebandInterrupt::TransmitterFrameEnd)
+            .build(),
+    )?;
+
+    configure_radio_09(rf.trx_09())?;
+    configure_radio_24(rf.trx_24())?;
+
+    rf.configure(&Modulation::Ofdm(OfdmModulation::default()))?
+        .start_receive()?;
+
+    Ok(())
+}
+
 fn create_radio(config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
     let mut spi = LinuxSpi::open(&config.spi.path).map_err(|_| BusError::ControlFailure)?;
 
@@ -193,55 +270,18 @@ fn create_radio(config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
     let mut radio = Rf215::probe(SharedBus::new(bus), config.name)?;
 
     // Default configuration for Kaonic1S
-    {
-        radio
-            .trx_09()
-            .radio()
-            .set_control_pad(FrontendPinConfig::Mode2)
-            .map_err(|_| BusError::ControlFailure)?;
+    configure_radio(&mut radio).map_err(|_| BusError::ControlFailure)?;
 
-        radio
-            .trx_09()
-            .radio()
-            .set_aux_settings(AuxiliarySettings {
-                ext_lna_bypass: false,
-                aven: false,
-                avect: false,
-                pavol: PaVol::Voltage2400mV,
-                map: AgcGainMap::Extranal12dB,
-            })
-            .map_err(|_| BusError::ControlFailure)?;
-
-        radio
-            .setup_irq(
-                RadioInterruptMask::new()
-                    .add_irq(RadioInterrupt::TransceiverError)
-                    .add_irq(RadioInterrupt::TransceiverReady)
-                    .build(),
-                BasebandInterruptMask::new()
-                    .add_irq(BasebandInterrupt::ReceiverFrameEnd)
-                    .add_irq(BasebandInterrupt::TransmitterFrameEnd)
-                    .build(),
-            )
-            .map_err(|_| BusError::ControlFailure)?;
-
-        radio
-            .trx_09()
-            .configure(&Modulation::Ofdm(OfdmModulation::default()))
-            .map_err(|_| BusError::ControlFailure)?;
-
-        radio
-            .trx_09()
-            .baseband()
-            .set_fcs(false)
-            .map_err(|_| BusError::ControlFailure)?;
-
-        radio
-            .trx_09()
-            .radio()
-            .receive()
-            .map_err(|_| BusError::ControlFailure)?;
-    }
+    let ant_24 = if let Some(ant_24) = &config.ant_24_gpio {
+        LinuxOutputPin::new_from_line(
+            ant_24.chip,
+            ant_24.offset,
+            &format!("{}-ant-sel-24", config.name),
+        )
+        .ok()
+    } else {
+        None
+    };
 
     let fem = Kaonic1SRadioFem::new(
         LinuxOutputPin::new_from_line(
@@ -262,6 +302,7 @@ fn create_radio(config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
             &format!("{}-flt-sel-24", config.name),
         )
         .map_err(|_| BusError::ControlFailure)?,
+        ant_24,
     );
 
     Ok(Kaonic1SRadio::new(radio, fem))

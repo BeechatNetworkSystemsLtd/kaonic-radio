@@ -234,11 +234,11 @@ pub enum ReceiverBandwidth {
     Bw320kHzIf500kHz = 0x3,   // fBW=320kHz; fIF=500kHz
     Bw400kHzIf500kHz = 0x4,   // fBW=400kHz; fIF=500kHz
     Bw500kHzIf500kHz = 0x5,   // fBW=500kHz; fIF=500kHz
-    Bw630kHzIf1000kHz = 0x6,  //  fBW=630kHz; fIF=1000kHz
+    Bw630kHzIf1000kHz = 0x6,  // fBW=630kHz; fIF=1000kHz
     Bw800kHzIf1000kHz = 0x7,  // fBW=800kHz; fIF=1000kHz
     Bw1000kHzIf1000kHz = 0x8, // fBW=1000kHz; fIF=1000kHz
-    Bw1250kHzIf2000kHz = 0x9, //fBW=1250kHz; fIF=2000kHz
-    Bw1600kHzIf2000kHz = 0xA, //fBW=1600kHz; fIF=2000kHz
+    Bw1250kHzIf2000kHz = 0x9, // fBW=1250kHz; fIF=2000kHz
+    Bw1600kHzIf2000kHz = 0xA, // fBW=1600kHz; fIF=2000kHz
     Bw2000kHzIf2000kHz = 0xB, // fBW=2000kHz; fIF=2000kHz
 }
 
@@ -740,13 +740,13 @@ where
         Ok(())
     }
 
-    pub fn set_control_pad(&mut self, config: FrontendPinConfig) -> Result<(), RadioError> {
+    pub fn set_control_pad(&mut self, config: FrontendPinConfig) -> Result<&mut Self, RadioError> {
         let padfe = (config as u8) << 6;
 
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PADFE), padfe)?;
 
-        Ok(())
+        Ok(self)
     }
 
     pub fn set_agc_control(&mut self, agc_control: &AgcReceiverControl) -> Result<(), RadioError> {
@@ -776,7 +776,7 @@ where
         Ok(())
     }
 
-    pub fn set_agc_gain(&mut self, agc_gain: &AgcReceiverGain) -> Result<(), RadioError> {
+    pub fn set_agc_gain(&mut self, agc_gain: &AgcReceiverGain) -> Result<&mut Self, RadioError> {
         let mut agcs = 0u8;
 
         agcs = agcs | ((agc_gain.target_level as u8) << 5);
@@ -785,10 +785,13 @@ where
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_AGCS), agcs)?;
 
-        Ok(())
+        Ok(self)
     }
 
-    pub fn set_aux_settings(&mut self, settings: AuxiliarySettings) -> Result<(), RadioError> {
+    pub fn set_aux_settings(
+        &mut self,
+        settings: AuxiliarySettings,
+    ) -> Result<&mut Self, RadioError> {
         let mut auxs = 0u8;
 
         auxs = auxs | (settings.map as u8) << 5;
@@ -809,7 +812,7 @@ where
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_AUXS), auxs)?;
 
-        Ok(())
+        Ok(self)
     }
 
     pub fn reset(&mut self) -> Result<(), RadioError> {

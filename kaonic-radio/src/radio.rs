@@ -1,3 +1,5 @@
+use radio_rf215::radio::Band;
+
 use crate::{error::KaonicError, modulation::Modulation};
 use core::fmt;
 
@@ -40,11 +42,18 @@ impl fmt::Display for Hertz {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BandwidthFilter {
+    Narrow,
+    Wide,
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub struct RadioConfig {
     pub freq: Hertz,
     pub channel_spacing: Hertz,
     pub channel: Channel,
+    pub bandwidth_filter: BandwidthFilter,
 }
 
 pub struct RadioConfigBuilder {
@@ -58,6 +67,7 @@ impl RadioConfigBuilder {
                 freq: Hertz::new(869_535_000),
                 channel_spacing: Hertz::new(200_000),
                 channel: 10,
+                bandwidth_filter: BandwidthFilter::Wide,
             },
         }
     }
@@ -74,6 +84,11 @@ impl RadioConfigBuilder {
 
     pub fn channel_spacing(mut self, spacing: Hertz) -> Self {
         self.config.channel_spacing = spacing;
+        self
+    }
+
+    pub fn bandwidth_filter(mut self, bandwidth_filter: BandwidthFilter) -> Self {
+        self.config.bandwidth_filter = bandwidth_filter;
         self
     }
 

@@ -83,6 +83,11 @@ message QoSConfig {
   int32 cca_threshold = 5; // Clear Channel Assessment threshold in dBm
 }
 
+enum BandwidthFilter {
+  BANDWIDTH_FILTER_NARROW = 0;
+  BANDWIDTH_FILTER_WIDE = 1;
+}
+
 message ConfigurationRequest {
   RadioModule module = 1;
 
@@ -98,6 +103,7 @@ message ConfigurationRequest {
   }
 
   QoSConfig qos = 11;
+  BandwidthFilter bandwidth_filter = 12;
 }
 
 message TransmitRequest {
