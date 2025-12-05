@@ -710,12 +710,15 @@ impl RadioGuiApp {
         
         ui.same_line();
         if ui.button("Browse...") {
+            drop(state); // Release lock before blocking dialog
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("ZIP files", &["zip"])
                 .pick_file()
             {
+                let mut state = self.state.lock();
                 state.ota_file_path = path.display().to_string();
             }
+            state = self.state.lock(); // Re-acquire lock for later use
         }
         
         let ota_file = state.ota_file_path.clone();
