@@ -1919,6 +1919,7 @@ dependencies = [
  "crc",
  "kaonic-qos",
  "kaonic-radio",
+ "log",
  "reed-solomon-32",
 ]
 
