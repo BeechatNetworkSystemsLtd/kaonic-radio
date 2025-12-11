@@ -6,7 +6,6 @@ rust-version = "1.75"
 
 [dependencies]
 
-reed-solomon-32 = "^2.0.0"
 crc = "^3.3.0"
 
 log = "0.4"

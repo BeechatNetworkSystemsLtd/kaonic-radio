@@ -1920,7 +1920,6 @@ dependencies = [
  "kaonic-qos",
  "kaonic-radio",
  "log",
- "reed-solomon-32",
 ]
 
 [[package]]
@@ -2743,12 +2742,6 @@ checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags 2.9.1",
 ]
-
-[[package]]
-name = "reed-solomon-32"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18081c434012839852952031ad707baabb444300079a19fa4e6dc75640f7509e"
 
 [[package]]
 name = "regex"
