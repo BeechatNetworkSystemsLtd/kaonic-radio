@@ -1,9 +1,4 @@
-use radio_rf215::{
-    baseband::BasebandFrame,
-    bus::SpiBus,
-    radio::{Band, RadioFrequencyBuilder},
-    Rf215,
-};
+use radio_rf215::{baseband::BasebandFrame, bus::SpiBus, radio::RadioFrequencyBuilder, Rf215};
 
 use crate::{
     error::KaonicError,
@@ -16,7 +11,7 @@ use crate::{
         },
         platform_impl::rf215::map_modulation,
     },
-    radio::{self, BandwidthFilter, Hertz, Radio, RadioConfig, ReceiveResult, ScanResult},
+    radio::{BandwidthFilter, Hertz, Radio, RadioConfig, ReceiveResult, ScanResult},
 };
 
 mod machine;
@@ -181,7 +176,6 @@ impl Radio for Kaonic1SRadio {
         frame: &'a mut Self::RxFrame,
         timeout: core::time::Duration,
     ) -> Result<ReceiveResult, KaonicError> {
-
         let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
 
         let edv = self.radio.read_edv().unwrap_or(127);

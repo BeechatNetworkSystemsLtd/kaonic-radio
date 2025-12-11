@@ -6,6 +6,9 @@ rust-version = "1.75"
 
 [dependencies]
 
+reed-solomon-32 = "^2.0.0"
+crc = "^3.3.0"
+
 # Kaonic
 kaonic-radio = { path="../kaonic-radio/" }
 kaonic-qos = { path="../kaonic-qos/" }

@@ -1,5 +1,3 @@
-use radio_rf215::radio::Band;
-
 use crate::{error::KaonicError, modulation::Modulation};
 use core::fmt;
 

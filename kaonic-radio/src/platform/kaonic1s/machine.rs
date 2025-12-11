@@ -9,14 +9,11 @@ use radio_rf215::{
     Rf215,
 };
 
-use crate::{
-    error::KaonicError,
-    platform::{
-        kaonic1s::{Kaonic1SRadio, Kaonic1SRadioFem},
-        linux::{
-            LinuxClock, LinuxGpioConfig, LinuxGpioInterrupt, LinuxGpioLineConfig, LinuxGpioReset,
-            LinuxOutputPin, LinuxSpi, LinuxSpiConfig, SharedBus,
-        },
+use crate::platform::{
+    kaonic1s::{Kaonic1SRadio, Kaonic1SRadioFem},
+    linux::{
+        LinuxClock, LinuxGpioConfig, LinuxGpioInterrupt, LinuxGpioLineConfig, LinuxGpioReset,
+        LinuxOutputPin, LinuxSpi, LinuxSpiConfig, SharedBus,
     },
 };
 

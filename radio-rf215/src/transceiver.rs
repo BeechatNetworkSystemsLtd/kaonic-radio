@@ -1,11 +1,10 @@
 use crate::baseband::{Baseband, BasebandAutoMode, BasebandFrame};
 use crate::bus::Bus;
 use crate::error::RadioError;
-use crate::modulation::{self, Modulation};
+use crate::modulation::{self};
 use crate::radio::{
-    AgcAverageTime, AgcTargetLevel, Band, FrequencySampleRate, PaCur, PaRampTime, Radio,
-    RadioChannel, RadioFrequency, RadioFrequencyConfig, RadioState, RadioTransreceiverConfig,
-    ReceiverBandwidth, RelativeCutOff, TransmitterCutOff,
+    Band, Radio, RadioChannel, RadioFrequency, RadioFrequencyConfig, RadioState,
+    RadioTransreceiverConfig,
 };
 use crate::regs::{
     self, BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask, RegisterAddress,

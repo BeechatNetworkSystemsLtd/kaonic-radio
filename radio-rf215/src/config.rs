@@ -2,7 +2,7 @@ use crate::{
     bus::Bus,
     modulation::{self, Modulation},
     radio::{
-        AgcAverageTime, AgcTargetLevel, Band, FrequencySampleRate, PaCur, PaRampTime,
+        AgcAverageTime, AgcTargetLevel, FrequencySampleRate, PaCur, PaRampTime,
         RadioTransreceiverConfig, ReceiverBandwidth, RelativeCutOff, TransmitterCutOff,
     },
     transceiver::{Band09, Band24, Transreceiver},
@@ -12,7 +12,7 @@ pub trait TransreceiverConfigurator {
     fn create_modulation_config(&self, modulation: &Modulation) -> RadioTransreceiverConfig;
 }
 
-// Recommended configuration for sub-GHz band 
+// Recommended configuration for sub-GHz band
 impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
     fn create_modulation_config(&self, modulation: &Modulation) -> RadioTransreceiverConfig {
         let mut trx_config = RadioTransreceiverConfig::default();
@@ -151,8 +151,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
     }
 }
 
-
-// Recommended configuration for 2.4GHz band 
+// Recommended configuration for 2.4GHz band
 impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
     fn create_modulation_config(&self, modulation: &Modulation) -> RadioTransreceiverConfig {
         let mut trx_config = RadioTransreceiverConfig::default();
