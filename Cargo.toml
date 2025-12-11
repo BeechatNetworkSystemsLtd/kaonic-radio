@@ -1,3 +1,4 @@
 [workspace]
 resolver = "2"
-members = [ "kaonic-commd", "kaonic-factory", "kaonic-fpga", "kaonic-gui", "kaonic-net", "kaonic-qos", "kaonic-radio", "radio-rf215"]
+members = [ "kaonic-commd", "kaonic-factory", "kaonic-fpga", "kaonic-net", "kaonic-qos", "kaonic-radio", "radio-rf215"]
+
