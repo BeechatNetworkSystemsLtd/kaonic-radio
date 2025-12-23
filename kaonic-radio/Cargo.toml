@@ -7,7 +7,7 @@ edition = "2021"
 radio-rf215 = { path="../radio-rf215/" }
 
 # Logging
-simple_logger = "5.0.0"
+simple_logger = "=5.0.0"
 log = "0.4"
 
 crc = "3.3.0"

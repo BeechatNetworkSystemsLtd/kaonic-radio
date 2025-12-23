@@ -13,7 +13,7 @@ kaonic-net = { path="../kaonic-net/" }
 kaonic-qos = { path="../kaonic-qos/" }
 
 # Logging
-simple_logger = "5.0.0"
+simple_logger = "=5.0.0"
 log = "0.4"
 
 # Protobuf and gRPC
