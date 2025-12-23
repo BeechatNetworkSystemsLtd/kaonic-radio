@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use kaonic_radio::platform::kaonic1s::Kaonic1SFrame;
+use kaonic_net::packet::{Packet, PacketCoder};
 use kaonic_qos::{ModulationScheme, QoSManager};
+use kaonic_radio::platform::kaonic1s::Kaonic1SFrame;
 use tokio::sync::{broadcast, oneshot};
 
 #[derive(Clone, Debug)]
@@ -186,6 +187,9 @@ fn run_worker(
     let mut last_qos_modulation: Option<kaonic_radio::modulation::Modulation> = None;
     let mut idle_edv_counter = 0u32;
 
+    let mut packet = Packet::<FRAME_SIZE>::new();
+    let mut packet_coder = PacketCoder::<FRAME_SIZE>::new();
+
     loop {
         // Drain any available commands before attempting receive
         match cmd_rx.try_recv() {
@@ -198,25 +202,35 @@ fn run_worker(
             Ok(RadioCommand::Modulation(modulation, ack)) => {
                 // Save manual modulation
                 manual_modulation = Some(modulation.clone());
-                
+
                 // Only apply it if QoS is disabled
                 let res = if qos_manager.is_none() {
                     radio
                         .set_modulation(&modulation)
                         .map_err(|e| format!("set_modulation failed: {:?}", e))
                 } else {
-                    log::debug!("Module {}: Manual modulation saved but not applied (QoS enabled)", module);
+                    log::debug!(
+                        "Module {}: Manual modulation saved but not applied (QoS enabled)",
+                        module
+                    );
                     Ok(())
                 };
                 let _ = ack.send(res);
             }
-            Ok(RadioCommand::Transmit(frame, ack)) => {
-                let start = Instant::now();
-                let res = radio
-                    .transmit(&frame)
-                    .map(|_| start.elapsed().as_millis() as u32)
-                    .map_err(|e| format!("transmit failed: {:?}", e));
-                let _ = ack.send(res);
+            Ok(RadioCommand::Transmit(mut frame, ack)) => {
+
+                packet.reset();
+                packet.get_mut_frame().copy_from_slice(frame.as_slice());
+                packet.build();
+
+                if let Ok(_) = packet_coder.encode(&packet, &mut frame) {
+                    let start = Instant::now();
+                    let res = radio
+                        .transmit(&frame)
+                        .map(|_| start.elapsed().as_millis() as u32)
+                        .map_err(|e| format!("transmit failed: {:?}", e));
+                    let _ = ack.send(res);
+                }
             }
             Ok(RadioCommand::ConfigureQoS(config, ack)) => {
                 if config.enabled {
@@ -247,26 +261,37 @@ fn run_worker(
                     if let Err(e) = radio.set_modulation(&recommended) {
                         log::warn!("Module {}: Failed to set QoS modulation: {:?}", module, e);
                     } else {
-                        log::info!("Module {}: QoS enabled, modulation set to {:?}", module, recommended);
+                        log::info!(
+                            "Module {}: QoS enabled, modulation set to {:?}",
+                            module,
+                            recommended
+                        );
                     }
-                    
+
                     qos_manager = Some(qos);
                     let _ = ack.send(Ok(()));
                 } else {
                     qos_manager = None;
                     last_qos_modulation = None;
-                    
+
                     // Restore manual modulation when QoS is disabled
                     if let Some(ref manual_mod) = manual_modulation {
                         if let Err(e) = radio.set_modulation(manual_mod) {
-                            log::warn!("Module {}: Failed to restore manual modulation: {:?}", module, e);
+                            log::warn!(
+                                "Module {}: Failed to restore manual modulation: {:?}",
+                                module,
+                                e
+                            );
                         } else {
-                            log::info!("Module {}: QoS disabled, manual modulation restored", module);
+                            log::info!(
+                                "Module {}: QoS disabled, manual modulation restored",
+                                module
+                            );
                         }
                     } else {
                         log::info!("Module {}: QoS disabled", module);
                     }
-                    
+
                     let _ = ack.send(Ok(()));
                 }
             }
@@ -285,14 +310,22 @@ fn run_worker(
                 idle_edv_counter = 0;
                 if let Ok(edv) = read_edv(&mut radio) {
                     qos.update_idle_edv(edv);
-                    
+
                     // Check if modulation recommendation changed
                     let recommended = qos.get_modulation();
                     if last_qos_modulation.as_ref() != Some(&recommended) {
                         if let Err(e) = radio.set_modulation(&recommended) {
-                            log::warn!("Module {}: Failed to update QoS modulation: {:?}", module, e);
+                            log::warn!(
+                                "Module {}: Failed to update QoS modulation: {:?}",
+                                module,
+                                e
+                            );
                         } else {
-                            log::debug!("Module {}: QoS modulation updated to {:?}", module, recommended);
+                            log::debug!(
+                                "Module {}: QoS modulation updated to {:?}",
+                                module,
+                                recommended
+                            );
                             last_qos_modulation = Some(recommended);
                         }
                     }
@@ -309,14 +342,22 @@ fn run_worker(
                     if let Ok(edv) = edv_result {
                         if let Some(ref mut qos) = qos_manager {
                             qos.update_rx_edv(edv);
-                            
+
                             // Check if modulation recommendation changed
                             let recommended = qos.get_modulation();
                             if last_qos_modulation.as_ref() != Some(&recommended) {
                                 if let Err(e) = radio.set_modulation(&recommended) {
-                                    log::warn!("Module {}: Failed to update QoS modulation: {:?}", module, e);
+                                    log::warn!(
+                                        "Module {}: Failed to update QoS modulation: {:?}",
+                                        module,
+                                        e
+                                    );
                                 } else {
-                                    log::debug!("Module {}: QoS modulation updated based on RX to {:?}", module, recommended);
+                                    log::debug!(
+                                        "Module {}: QoS modulation updated based on RX to {:?}",
+                                        module,
+                                        recommended
+                                    );
                                     last_qos_modulation = Some(recommended);
                                 }
                             }
@@ -330,16 +371,23 @@ fn run_worker(
                 };
 
                 // Copy data into a new frame so we don't move rx_frame out of scope
-                let mut out_frame = Frame::<FRAME_SIZE>::new();
-                out_frame.copy_from_slice(rx_frame.as_slice());
-                let evt = ReceiveEvent {
-                    module,
-                    frame: out_frame,
-                    rssi: rr.rssi,
-                    latency_ms: start.elapsed().as_millis() as u32,
-                    edv,
-                };
-                let _ = rx_tx.send(evt);
+
+                if let Ok(_) = packet_coder.decode(&rx_frame, &mut packet) {
+                    if packet.validate() {
+                        let mut out_frame = Frame::<FRAME_SIZE>::new();
+
+                        out_frame.copy_from_slice(packet.get_frame().as_slice());
+
+                        let evt = ReceiveEvent {
+                            module,
+                            frame: out_frame,
+                            rssi: rr.rssi,
+                            latency_ms: start.elapsed().as_millis() as u32,
+                            edv,
+                        };
+                        let _ = rx_tx.send(evt);
+                    }
+                }
             }
             Err(_e) => {
                 // Timeout or hw error during idle receive; ignore and continue

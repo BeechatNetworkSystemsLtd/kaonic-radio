@@ -9,6 +9,7 @@ rust-version = "1.75"
 # Kaonic
 radio-rf215 = { path="../radio-rf215/" }
 kaonic-radio = { path="../kaonic-radio/" }
+kaonic-net = { path="../kaonic-net/" }
 kaonic-qos = { path="../kaonic-qos/" }
 
 # Logging

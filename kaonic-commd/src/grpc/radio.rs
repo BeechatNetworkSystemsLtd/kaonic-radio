@@ -212,7 +212,7 @@ fn decode_frame(frame: &RadioFrame, output_frame: &mut Kaonic1SFrame) -> Result<
     let mut index = 0usize;
     for word in &frame.data {
         for i in 0..4 {
-            output_frame.push_data(&[((word >> i * 8) & 0xFF) as u8]);
+            let _ = output_frame.push_data(&[((word >> i * 8) & 0xFF) as u8]);
 
             index += 1;
 

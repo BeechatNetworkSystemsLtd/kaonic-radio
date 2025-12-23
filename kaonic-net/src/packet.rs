@@ -108,11 +108,19 @@ impl<const S: usize> Packet<S> {
             return false;
         }
 
-        if self.frame.len() != self.header.length {
+        if self.frame.len() != self.header.length.into() {
             return false;
         }
 
         return true;
+    }
+
+    pub fn get_frame(&self) -> &Frame<S> {
+        &self.frame
+    }
+
+    pub fn get_mut_frame(&mut self) -> &mut Frame<S> {
+        &mut self.frame
     }
 
     fn calculate_crc(data: &[u8]) -> u32 {
