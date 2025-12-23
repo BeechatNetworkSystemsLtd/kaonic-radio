@@ -70,7 +70,7 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            server_addr: "192.168.0.141".to_string(),
+            server_addr: "192.168.10.1".to_string(),
             connected: false,
             status_message: "Not connected".to_string(),
 

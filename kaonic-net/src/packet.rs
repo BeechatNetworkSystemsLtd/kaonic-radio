@@ -1,7 +1,4 @@
-use kaonic_radio::{
-    error::KaonicError,
-    frame::{self, Frame},
-};
+use kaonic_radio::{error::KaonicError, frame::Frame};
 use labrador_ldpc::LDPCCode;
 
 pub const HEADER_SIZE: usize = 16;
