@@ -1,6 +1,8 @@
 use core::cmp::min;
 use core::fmt;
 
+use crate::error::KaonicError;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Frame<const S: usize> {
     data: [u8; S],
@@ -28,14 +30,16 @@ impl<const S: usize> Frame<S> {
         S
     }
 
-    pub fn push_data(&mut self, data: &[u8]) {
+    pub fn push_data(&mut self, data: &[u8]) -> Result<usize, KaonicError> {
         let data_size = data.len();
         if self.len + data_size > S {
-            return;
+            return Err(KaonicError::OutOfMemory);
         }
 
         self.data[self.len..(self.len + data_size)].copy_from_slice(data);
         self.len += data_size;
+
+        Ok(self.len)
     }
 
     pub fn copy_from_slice(&mut self, data: &[u8]) {
@@ -51,6 +55,16 @@ impl<const S: usize> Frame<S> {
         &mut self.data[..self.len]
     }
 
+    pub fn move_left(&mut self, count: usize) {
+        if self.len > count {
+            self.data.copy_within(count.., 0);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -60,12 +74,20 @@ impl<const S: usize> Frame<S> {
     }
 
     pub fn as_buffer_mut(&mut self, len: usize) -> &mut [u8] {
-        self.len = if len <= S { len } else { S };
-        &mut self.data[..self.len]
+        let alloc_len = if self.len + len <= S {
+            len
+        } else {
+            S - self.len
+        };
+
+        let buffer = &mut self.data[self.len..self.len + alloc_len];
+        self.len += alloc_len;
+
+        buffer
     }
 
     pub fn as_max_buffer_mut(&mut self) -> &mut [u8] {
-        self.as_buffer_mut(S)
+        self.as_buffer_mut(S - self.len)
     }
 }
 

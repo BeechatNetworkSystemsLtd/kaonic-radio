@@ -645,6 +645,7 @@ dependencies = [
  "crc",
  "kaonic-qos",
  "kaonic-radio",
+ "labrador-ldpc",
  "log",
 ]
 
@@ -668,6 +669,12 @@ dependencies = [
  "radio-rf215",
  "simple_logger",
 ]
+
+[[package]]
+name = "labrador-ldpc"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52bbada3351e4ae9078bcd095b83eac3a0bc29ed7d63031f062830f8f22485a4"
 
 [[package]]
 name = "lazy_static"
