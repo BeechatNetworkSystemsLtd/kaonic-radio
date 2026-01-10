@@ -230,6 +230,8 @@ fn run_worker(
                         .map(|_| start.elapsed().as_millis() as u32)
                         .map_err(|e| format!("transmit failed: {:?}", e));
                     let _ = ack.send(res);
+                } else {
+                    log::error!("packet encode error (frame size {}B)", packet.get_frame().len());
                 }
             }
             Ok(RadioCommand::ConfigureQoS(config, ack)) => {
@@ -387,6 +389,8 @@ fn run_worker(
                         };
                         let _ = rx_tx.send(evt);
                     }
+                } else {
+                    log::error!("can't decode packet");
                 }
             }
             Err(_e) => {

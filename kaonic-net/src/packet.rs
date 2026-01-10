@@ -163,6 +163,7 @@ impl<const S: usize> PacketCoder<S> {
             let mut offset = 0;
 
             let block_size = code.k() / 8;
+            let code_block_size = code.n() / 8;
 
             while offset < payload_data.len() {
                 let block_len = if offset + block_size < payload_data.len() {
@@ -178,9 +179,14 @@ impl<const S: usize> PacketCoder<S> {
                     self.output_buffer[block_len..block_len + block_size].fill(0);
                 }
 
+                let buffer = output.as_buffer_mut(code_block_size);
+                if buffer.len() < code_block_size {
+                    return Err(KaonicError::OutOfMemory);
+                }
+
                 code.copy_encode(
                     &self.output_buffer[..block_size],
-                    output.as_buffer_mut(code.n() / 8),
+                    buffer,
                 );
 
                 offset += block_len;
