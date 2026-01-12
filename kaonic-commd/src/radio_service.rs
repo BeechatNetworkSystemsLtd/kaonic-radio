@@ -218,7 +218,6 @@ fn run_worker(
                 let _ = ack.send(res);
             }
             Ok(RadioCommand::Transmit(mut frame, ack)) => {
-
                 packet.reset();
                 packet.get_mut_frame().copy_from_slice(frame.as_slice());
                 packet.build();
@@ -231,7 +230,10 @@ fn run_worker(
                         .map_err(|e| format!("transmit failed: {:?}", e));
                     let _ = ack.send(res);
                 } else {
-                    log::error!("packet encode error (frame size {}B)", packet.get_frame().len());
+                    log::error!(
+                        "packet encode error (frame size {}B)",
+                        packet.get_frame().len()
+                    );
                 }
             }
             Ok(RadioCommand::ConfigureQoS(config, ack)) => {
@@ -388,6 +390,8 @@ fn run_worker(
                             edv,
                         };
                         let _ = rx_tx.send(evt);
+                    } else {
+                        log::error!("packet is not valid");
                     }
                 } else {
                     log::error!("can't decode packet");

@@ -100,6 +100,7 @@ impl<const S: usize> Packet<S> {
     }
 
     pub fn validate(&self) -> bool {
+
         let actualt_crc = Self::calculate_crc(&self.frame.as_slice());
         if actualt_crc != self.header.crc {
             return false;
@@ -156,6 +157,10 @@ impl<const S: usize> PacketCoder<S> {
             let _ = code.copy_encode(&header_data[..], output.as_buffer_mut(codeword_len));
         }
 
+        output.push_data(input.frame.as_slice())?;
+
+        return Ok(());
+
         // Encode payload
         {
             let code = PAYLOAD_LDPC_CODE;
@@ -184,10 +189,7 @@ impl<const S: usize> PacketCoder<S> {
                     return Err(KaonicError::OutOfMemory);
                 }
 
-                code.copy_encode(
-                    &self.output_buffer[..block_size],
-                    buffer,
-                );
+                code.copy_encode(&self.output_buffer[..block_size], buffer);
 
                 offset += block_len;
             }
@@ -225,11 +227,19 @@ impl<const S: usize> PacketCoder<S> {
         }
 
         output.frame.clear();
+        output
+            .frame
+            .push_data(&input.as_slice()[HEADER_LDPC_CODE.n() / 8..])?;
+
+        output.frame.resize(output.header.length as usize);
+
+        return Ok(());
 
         // Decode payload
         {
             // Skip header input
             let input = &input.as_slice()[HEADER_LDPC_CODE.n() / 8..];
+
             let code = PAYLOAD_LDPC_CODE;
 
             let codeword_len = code.n() / 8;
