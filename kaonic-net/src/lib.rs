@@ -1,6 +1,7 @@
 pub mod demuxer;
 pub mod generator;
 pub mod muxer;
+pub mod network;
 pub mod packet;
 
 #[cfg(test)]
@@ -13,11 +14,29 @@ mod tests {
         demuxer::Demuxer,
         generator::Generator,
         muxer::Muxer,
+        network::{Network, NetworkReceiver, NetworkTransmitter},
         packet::{LdpcPacketCoder, Packet, PacketCoder},
     };
 
     const FRAME_SIZE: usize = 2048;
     const MAX_SEGMENTS_COUNT: usize = 3;
+
+    struct TestRadio {}
+
+    impl NetworkTransmitter for TestRadio {
+        fn transmit(&mut self, data: &[&[u8]]) -> Result<(), kaonic_radio::error::KaonicError> {
+            for chunk in data {
+                println!("transmit data {} B", chunk.len());
+            }
+            Ok(())
+        }
+    }
+
+    impl NetworkReceiver for TestRadio {
+        fn receive(&mut self, data: &[u8]) {
+            println!("received data {} B", data.len());
+        }
+    }
 
     #[test]
     fn test_multiplex_basic() {
@@ -81,5 +100,37 @@ mod tests {
         assert_eq!(received_data, original_data);
 
         assert!(muxer.process(1, &mut received_frame).is_err());
+    }
+
+    #[test]
+    fn test_network() {
+        let rng = OsRng;
+
+        let original_data = {
+            let mut data = [0u8; 2048];
+            Generator::generate_payload(rng, &mut data[..]).expect("generated payload");
+            data
+        };
+
+        type Coder = LdpcPacketCoder<FRAME_SIZE>;
+        let mut coder = Coder::new();
+
+        let mut network =
+            Network::<FRAME_SIZE, MAX_SEGMENTS_COUNT, 6, { Coder::MAX_PAYLOAD_SIZE }, Coder>::new(
+                coder,
+            );
+
+        let mut trx = TestRadio {};
+        let mut frames = [Frame::new(); MAX_SEGMENTS_COUNT];
+
+        network
+            .transmit(&original_data[..], rng, &mut frames, &mut trx)
+            .expect("demuxed frames");
+
+        network.receive(1, &mut frames[0]).expect("consumed frame");
+        network.receive(1, &mut frames[1]).expect("consumed frame");
+        network.receive(1, &mut frames[2]).expect("consumed frame");
+
+        network.process(1, &mut trx);
     }
 }

@@ -95,7 +95,7 @@ impl Header {
     }
 
     pub fn seq_count(&self) -> usize {
-        self.seq
+        self.seq_count
     }
 
     pub fn add_flag(&mut self, flag: PacketFlag) -> &mut Self {
