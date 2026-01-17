@@ -1,5 +1,8 @@
-use kaonic_radio::{error::KaonicError, frame::Frame};
+use core::fmt;
+
 use labrador_ldpc::LDPCCode;
+
+use kaonic_radio::{error::KaonicError, frame::Frame};
 
 pub const HEADER_SIZE: usize = 16;
 
@@ -15,35 +18,134 @@ pub enum PacketType {
     Payload = 0xBA,
 }
 
+pub type PacketId = u32;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum PacketFlag {
+    /// Header and payload are encoded with correction codes
+    Encoded = 0x01,
+    /// Large payload is split into segments
+    Segmented = 0x02,
+}
+
+#[derive(Copy, Clone, Debug)]
 pub struct Header {
-    pub packet_type: PacketType,
-    pub flags: u8,
-    pub length: u16, // Payload length
-    pub crc: u32,
+    /// Type of the packet
+    packet_type: PacketType,
+
+    /// Packet identifier
+    id: PacketId,
+
+    /// Bitmap of PacketFlag
+    flags: u8,
+
+    /// Packet Sequence number
+    seq: usize,
+
+    /// Number of packets
+    seq_count: usize,
+
+    /// Packet payload length
+    len: u16,
+
+    // CRC
+    crc: u32,
 }
 
 impl Header {
     pub const fn new() -> Self {
         Self {
             packet_type: PacketType::Payload,
+            id: 0,
             flags: 0,
-            length: 0,
+            seq: 0,
+            seq_count: 0,
+            len: 0,
             crc: 0,
         }
+    }
+
+    pub fn reset(&mut self) -> &mut Self {
+        *self = Header::new();
+        self
+    }
+
+    pub fn set_id(&mut self, id: PacketId) -> &mut Self {
+        self.id = id;
+        self
+    }
+
+    pub fn id(&self) -> PacketId {
+        self.id
+    }
+
+    pub fn set_seq(&mut self, seq: usize) -> &mut Self {
+        self.seq = seq;
+        self
+    }
+
+    pub fn seq(&self) -> usize {
+        self.seq
+    }
+
+    pub fn set_seq_count(&mut self, seq_count: usize) -> &mut Self {
+        self.seq_count = seq_count;
+        self
+    }
+
+    pub fn seq_count(&self) -> usize {
+        self.seq
+    }
+
+    pub fn add_flag(&mut self, flag: PacketFlag) -> &mut Self {
+        self.flags = self.flags | (flag as u8);
+        self
+    }
+
+    pub fn remove_flag(&mut self, flag: PacketFlag) -> &mut Self {
+        self.flags = self.flags & (!(flag as u8));
+        self
+    }
+
+    pub fn has_flag(&self, flag: PacketFlag) -> bool {
+        (self.flags & (flag as u8)) != 0u8
+    }
+
+    pub fn set_len(&mut self, len: u16) -> &mut Self {
+        self.len = len;
+        self
+    }
+
+    pub fn len(&self) -> u16 {
+        self.len
+    }
+
+    pub fn crc(&self) -> u32 {
+        self.crc
     }
 
     fn pack(&self) -> [u8; HEADER_SIZE] {
         let mut buffer: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
 
         let mut offset = 0usize;
+
         buffer[offset] = self.packet_type as u8;
         offset += 1;
+
         buffer[offset] = self.flags;
         offset += 1;
 
-        offset += 8; // Reserved
+        buffer[offset] = ((self.seq as u8) & 0x0Fu8) | (((self.seq_count as u8) & 0x0Fu8) << 4u8);
+        offset += 1;
 
-        buffer[offset..offset + 2].copy_from_slice(&self.length.to_le_bytes());
+        buffer[offset..offset + 4].copy_from_slice(&self.id.to_le_bytes());
+        offset += 4;
+
+        // Reserved
+        offset += 3;
+
+        buffer[offset..offset + 2].copy_from_slice(&self.len.to_le_bytes());
         offset += 2;
 
         buffer[offset..offset + 4].copy_from_slice(&self.crc.to_le_bytes());
@@ -51,31 +153,65 @@ impl Header {
         return buffer;
     }
 
-    fn unpack(&mut self, data: &[u8]) -> Result<(), KaonicError> {
+    fn unpack(&mut self, data: &[u8]) -> Result<usize, KaonicError> {
         if data.len() < HEADER_SIZE {
             return Err(KaonicError::IncorrectSettings);
         }
 
-        self.packet_type = match data[0] {
+        let mut offset = 0usize;
+
+        self.packet_type = match data[offset] {
             0xBA => PacketType::Payload,
             _ => return Err(KaonicError::IncorrectSettings),
         };
+        offset += 1;
 
         self.flags = data[1];
+        offset += 1;
 
-        self.length = u16::from_le_bytes([data[HEADER_SIZE - 6], data[HEADER_SIZE - 5]]);
+        self.seq = (data[2] & 0x0F) as usize;
+        self.seq_count = (((data[2] & 0xF0) as u8) >> 4u8) as usize;
+        offset += 1;
+
+        self.id = u32::from_le_bytes([
+            data[offset + 0],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
+        offset += 4;
+
+        // Reserved
+        offset += 3;
+
+        self.len = u16::from_le_bytes([data[offset + 0], data[offset + 1]]);
+        offset += 2;
 
         self.crc = u32::from_le_bytes([
-            data[HEADER_SIZE - 4],
-            data[HEADER_SIZE - 3],
-            data[HEADER_SIZE - 2],
-            data[HEADER_SIZE - 1],
+            data[offset + 0],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
         ]);
+        offset += 4;
+
+        Ok(offset)
+    }
+}
+
+impl fmt::Display for Header {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(
+            f,
+            "[tp:{:02X} id:{:0>8X} flg:{:b} len:{:0>4}B crc:{:0>8X}]",
+            self.packet_type as u8, self.id, self.flags, self.len, self.crc
+        )?;
 
         Ok(())
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct Packet<const S: usize> {
     header: Header,  // Header
     frame: Frame<S>, // Payload
@@ -95,29 +231,36 @@ impl<const S: usize> Packet<S> {
     }
 
     pub fn build(&mut self) {
-        self.header.length = self.frame.len() as u16;
+        self.header.len = self.frame.len() as u16;
         self.header.crc = Self::calculate_crc(self.frame.as_slice());
     }
 
-    pub fn validate(&self) -> bool {
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
 
+    pub fn header_mut(&mut self) -> &mut Header {
+        &mut self.header
+    }
+
+    pub fn validate(&self) -> bool {
         let actualt_crc = Self::calculate_crc(&self.frame.as_slice());
         if actualt_crc != self.header.crc {
             return false;
         }
 
-        if self.frame.len() != self.header.length.into() {
+        if self.frame.len() != self.header.len.into() {
             return false;
         }
 
         return true;
     }
 
-    pub fn get_frame(&self) -> &Frame<S> {
+    pub fn frame(&self) -> &Frame<S> {
         &self.frame
     }
 
-    pub fn get_mut_frame(&mut self) -> &mut Frame<S> {
+    pub fn frame_mut(&mut self) -> &mut Frame<S> {
         &mut self.frame
     }
 
@@ -127,20 +270,35 @@ impl<const S: usize> Packet<S> {
     }
 }
 
-pub struct PacketCoder<const S: usize> {
+pub trait PacketCoder<const S: usize> {
+    const MAX_PAYLOAD_SIZE: usize;
+
+    fn encode(&mut self, input: &Packet<S>, output: &mut Frame<S>) -> Result<(), KaonicError>;
+
+    fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), KaonicError>;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct LdpcPacketCoder<const S: usize> {
     working_buffer: [u8; PAYLOAD_LDPC_WORKING_BUFFER_SIZE],
     output_buffer: [u8; PAYLOAD_LDPC_OUTPUT_BUFFER_SIZE],
 }
 
-impl<const S: usize> PacketCoder<S> {
+impl<const S: usize> LdpcPacketCoder<S> {
+    const MAX_ENCODED_PAYLOAD_SIZE: usize = (S - (HEADER_LDPC_CODE.n() / 8));
     pub fn new() -> Self {
         Self {
             working_buffer: [0u8; PAYLOAD_LDPC_WORKING_BUFFER_SIZE],
             output_buffer: [0u8; PAYLOAD_LDPC_OUTPUT_BUFFER_SIZE],
         }
     }
+}
 
-    pub fn encode(&mut self, input: &Packet<S>, output: &mut Frame<S>) -> Result<(), KaonicError> {
+impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
+    const MAX_PAYLOAD_SIZE: usize = (Self::MAX_ENCODED_PAYLOAD_SIZE / (PAYLOAD_LDPC_CODE.n() / 8))
+        * (PAYLOAD_LDPC_CODE.k() / 8);
+
+    fn encode(&mut self, input: &Packet<S>, output: &mut Frame<S>) -> Result<(), KaonicError> {
         // Reset output frame
         output.clear();
 
@@ -154,12 +312,8 @@ impl<const S: usize> PacketCoder<S> {
                 return Err(KaonicError::OutOfMemory);
             }
 
-            let _ = code.copy_encode(&header_data[..], output.as_buffer_mut(codeword_len));
+            let _ = code.copy_encode(&header_data[..], output.alloc_buffer(codeword_len));
         }
-
-        output.push_data(input.frame.as_slice())?;
-
-        return Ok(());
 
         // Encode payload
         {
@@ -184,7 +338,7 @@ impl<const S: usize> PacketCoder<S> {
                     self.output_buffer[block_len..block_len + block_size].fill(0);
                 }
 
-                let buffer = output.as_buffer_mut(code_block_size);
+                let buffer = output.alloc_buffer(code_block_size);
                 if buffer.len() < code_block_size {
                     return Err(KaonicError::OutOfMemory);
                 }
@@ -198,7 +352,7 @@ impl<const S: usize> PacketCoder<S> {
         Ok(())
     }
 
-    pub fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), KaonicError> {
+    fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), KaonicError> {
         output.reset();
 
         // Decode header
@@ -227,13 +381,6 @@ impl<const S: usize> PacketCoder<S> {
         }
 
         output.frame.clear();
-        output
-            .frame
-            .push_data(&input.as_slice()[HEADER_LDPC_CODE.n() / 8..])?;
-
-        output.frame.resize(output.header.length as usize);
-
-        return Ok(());
 
         // Decode payload
         {
@@ -266,7 +413,7 @@ impl<const S: usize> PacketCoder<S> {
         }
 
         // Resize to original payload length
-        output.frame.resize(output.header.length as usize);
+        output.frame.resize(output.header.len as usize);
 
         Ok(())
     }
@@ -284,7 +431,7 @@ mod tests {
         let mut packet: Packet<SIZE> = Packet::new();
         let mut frame: Frame<SIZE> = Frame::new();
 
-        let mut coder = PacketCoder::<SIZE>::new();
+        let mut coder = LdpcPacketCoder::<SIZE>::new();
 
         packet
             .frame

@@ -230,10 +230,7 @@ fn run_worker(
                         .map_err(|e| format!("transmit failed: {:?}", e));
                     let _ = ack.send(res);
                 } else {
-                    log::error!(
-                        "packet encode error (frame size {}B)",
-                        packet.get_frame().len()
-                    );
+                    log::error!("packet encode error (frame size {}B)", packet.frame().len());
                 }
             }
             Ok(RadioCommand::ConfigureQoS(config, ack)) => {
@@ -380,7 +377,7 @@ fn run_worker(
                     if packet.validate() {
                         let mut out_frame = Frame::<FRAME_SIZE>::new();
 
-                        out_frame.copy_from_slice(packet.get_frame().as_slice());
+                        out_frame.copy_from_slice(packet.frame().as_slice());
 
                         let evt = ReceiveEvent {
                             module,

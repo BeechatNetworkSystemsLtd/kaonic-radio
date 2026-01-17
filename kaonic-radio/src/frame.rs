@@ -1,63 +1,66 @@
 use core::cmp::min;
 use core::fmt;
+use core::slice;
 
 use crate::error::KaonicError;
 
 #[derive(Clone, Copy, Debug)]
-pub struct Frame<const S: usize> {
-    data: [u8; S],
+pub struct FrameSegment<const S: usize, const R: usize> {
+    data: [[u8; S]; R],
     len: usize,
 }
 
-impl<const S: usize> Frame<S> {
+pub type Frame<const S: usize> = FrameSegment<S, 1>;
+
+impl<const S: usize, const R: usize> FrameSegment<S, R> {
+    pub const CAPACITY: usize = S * R;
+
     pub const fn new() -> Self {
         Self {
-            data: [0u8; S],
+            data: [[0u8; S]; R],
             len: 0,
         }
     }
 
     pub fn new_from_slice(slice: &[u8]) -> Self {
-        let len = core::cmp::min(slice.len(), S);
-        let mut data = [0u8; S];
-
-        data[..len].copy_from_slice(&slice[..len]);
-
-        Self { data, len }
+        let mut frame = Self::new();
+        frame.copy_from_slice(slice);
+        frame
     }
 
     pub fn capacity(&self) -> usize {
-        S
+        Self::CAPACITY
     }
 
     pub fn push_data(&mut self, data: &[u8]) -> Result<usize, KaonicError> {
         let data_size = data.len();
-        if self.len + data_size > S {
+        if self.len + data_size > Self::CAPACITY {
             return Err(KaonicError::OutOfMemory);
         }
 
-        self.data[self.len..(self.len + data_size)].copy_from_slice(data);
-        self.len += data_size;
+        self.alloc_buffer(data_size).copy_from_slice(data);
 
         Ok(self.len)
     }
 
     pub fn copy_from_slice(&mut self, data: &[u8]) {
-        self.len = min(data.len(), S);
-        self.data[..self.len].copy_from_slice(&data[..self.len]);
+        let len = min(data.len(), Self::CAPACITY);
+        self.alloc_buffer(len).copy_from_slice(&data[..len]);
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        &self.data[..self.len]
+        let end = self.len;
+        &self.as_flat()[..end]
     }
 
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        &mut self.data[..self.len]
+        let end = self.len;
+        &mut self.as_flat_mut()[..end]
     }
 
     pub fn move_left(&mut self, count: usize) {
         if self.len > count {
-            self.data.copy_within(count.., 0);
+            self.as_flat_mut().copy_within(count.., 0);
         }
     }
 
@@ -73,21 +76,32 @@ impl<const S: usize> Frame<S> {
         self.len = min(len, S);
     }
 
-    pub fn as_buffer_mut(&mut self, len: usize) -> &mut [u8] {
-        let alloc_len = if self.len + len <= S {
+    pub fn alloc_buffer(&mut self, len: usize) -> &mut [u8] {
+        let alloc_len = if self.len + len <= Self::CAPACITY {
             len
         } else {
-            S - self.len
+            Self::CAPACITY - self.len
         };
 
-        let buffer = &mut self.data[self.len..self.len + alloc_len];
+        let start = self.len;
         self.len += alloc_len;
+        let end = self.len;
 
-        buffer
+        &mut self.as_flat_mut()[start..end]
     }
 
-    pub fn as_max_buffer_mut(&mut self) -> &mut [u8] {
-        self.as_buffer_mut(S - self.len)
+    pub fn alloc_max_buffer(&mut self) -> &mut [u8] {
+        self.alloc_buffer(Self::CAPACITY - self.len)
+    }
+
+    #[inline]
+    fn as_flat(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.data.as_ptr() as *const u8, S * R) }
+    }
+
+    #[inline]
+    fn as_flat_mut(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.data.as_mut_ptr() as *mut u8, S * R) }
     }
 }
 
@@ -97,7 +111,8 @@ impl<const S: usize> fmt::Display for Frame<S> {
 
         writeln!(f, "FRAME[{} Bytes]:", self.len)?;
 
-        for (i, chunk) in self.data[..self.len].chunks(BYTES_PER_LINE).enumerate() {
+        let data = self.as_flat();
+        for (i, chunk) in data[..self.len].chunks(BYTES_PER_LINE).enumerate() {
             // Hex part
             write!(f, "{:08x}  ", i * BYTES_PER_LINE)?;
             for j in 0..BYTES_PER_LINE {

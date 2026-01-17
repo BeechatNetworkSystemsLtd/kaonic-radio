@@ -7,8 +7,9 @@ rust-version = "1.75"
 [dependencies]
 
 labrador-ldpc = "1.2.1"
-
 crc = "=3.3.0"
+
+rand = { version = "0.9.2", default-feautes = false }
 
 log = "0.4"
 

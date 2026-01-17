@@ -2,8 +2,11 @@
 pub enum KaonicError {
     HardwareError,
     IncorrectSettings,
+    InvalidState,
     Timeout,
     OutOfMemory,
+    PayloadTooBig,
     NotSupported,
     DataCorruption,
+    TryAgain,
 }
