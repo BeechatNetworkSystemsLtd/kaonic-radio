@@ -133,4 +133,25 @@ service Radio {
 
 //***************************************************************************//
 
+message NetworkTransmitRequest {
+  RadioFrame frame = 1;
+}
+
+message NetworkTransmitResponse { uint32 latency = 1; }
+
+message NetworkReceiveRequest {}
+
+message NetworkReceiveResponse {
+  RadioFrame frame = 1;
+  int32 rssi = 2;
+  uint32 latency = 3;
+}
+
+service Network {
+  rpc Transmit(NetworkTransmitRequest) returns (NetworkTransmitResponse) {}
+  rpc ReceiveStream(NetworkReceiveRequest) returns (stream NetworkReceiveResponse) {}
+}
+
+//***************************************************************************//
+
 

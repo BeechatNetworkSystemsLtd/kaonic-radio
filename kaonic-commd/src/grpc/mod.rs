@@ -1,9 +1,11 @@
 pub mod device;
+pub mod network;
 pub mod radio;
 
 use std::sync::Arc;
 
 use device::DeviceService;
+use network::NetworkService;
 use radio::RadioService;
 use tokio::sync::watch;
 use tonic::transport::Server;
@@ -23,6 +25,7 @@ pub async fn start_server(addr: String) -> Result<(), Box<dyn std::error::Error>
     // Shared shutdown signal for terminating streams/tasks
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let radio_service = RadioService::new(radio_controller.clone(), shutdown_rx.clone());
+    let network_service = NetworkService::new(radio_controller.clone(), shutdown_rx.clone());
 
     // Tonic server with graceful shutdown on SIGINT/SIGTERM
     let shutdown_signal = async move {
@@ -57,6 +60,7 @@ pub async fn start_server(addr: String) -> Result<(), Box<dyn std::error::Error>
     Server::builder()
         .add_service(kaonic::device_server::DeviceServer::new(device_service))
         .add_service(kaonic::radio_server::RadioServer::new(radio_service))
+        .add_service(kaonic::network_server::NetworkServer::new(network_service))
         .serve_with_shutdown(addr, shutdown_signal)
         .await?;
 

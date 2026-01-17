@@ -5,7 +5,7 @@ use std::{
 
 use kaonic_net::{
     muxer::CurrentTime,
-    network::{self, Network},
+    network::Network,
     packet::{LdpcPacketCoder, PacketCoder},
 };
 use kaonic_radio::{
@@ -13,17 +13,19 @@ use kaonic_radio::{
     frame::{Frame, FrameSegment},
     modulation::Modulation,
     platform::{create_machine, PlatformRadio},
-    radio::{self, Radio, RadioConfig},
+    radio::{Radio, RadioConfig},
 };
 use rand::rngs::OsRng;
-use tokio::sync::{self, broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex};
 use tokio_util::sync::CancellationToken;
 
 const MAX_SEGMENTS_COUNT: usize = 6;
 
 type Coder = LdpcPacketCoder<2048>;
-type RadioFrame = Frame<2048>;
+
+pub type RadioFrame = Frame<2048>;
 pub type NetworkFrame = FrameSegment<2048, MAX_SEGMENTS_COUNT>;
+
 type RadioNetwork =
     Network<2048, MAX_SEGMENTS_COUNT, 12, { Coder::MAX_PAYLOAD_SIZE }, LdpcPacketCoder<2048>>;
 
@@ -71,9 +73,8 @@ pub enum RadioCommand {
 }
 
 pub struct RadioController {
-    network: Arc<Mutex<RadioNetwork>>,
     network_rx_send: broadcast::Sender<NetworkReceive>,
-    network_tx_send: broadcast::Sender<NetworkFrame>,
+    network_tx_send: broadcast::Sender<NetworkTransmit>,
     module_send: broadcast::Sender<ModuleReceive>,
     command_send: broadcast::Sender<RadioCommand>,
 }
@@ -89,7 +90,7 @@ impl RadioController {
 
         let mut radio_index = 0;
         loop {
-            let mut radio = machine.take_radio(radio_index);
+            let radio = machine.take_radio(radio_index);
             if radio.is_none() {
                 break;
             }
@@ -121,7 +122,6 @@ impl RadioController {
         ));
 
         Ok(Self {
-            network,
             network_rx_send,
             network_tx_send,
             module_send,
@@ -134,8 +134,12 @@ impl RadioController {
     }
 
     pub fn network_transmit(&self, frame: NetworkFrame) -> Result<(), KaonicError> {
-        self.network_tx_send.send(frame);
+        let _ = self.network_tx_send.send(NetworkTransmit { frame });
         Ok(())
+    }
+
+    pub fn network_receive(&self) -> broadcast::Receiver<NetworkReceive> {
+        self.network_rx_send.subscribe()
     }
 
     pub fn module_receive(&self, _module: usize) -> broadcast::Receiver<ModuleReceive> {
@@ -173,7 +177,7 @@ async fn manage_rx_network(
 
 async fn manage_tx_network(
     network: Arc<Mutex<RadioNetwork>>,
-    mut network_tx_recv: broadcast::Receiver<NetworkFrame>,
+    mut network_tx_recv: broadcast::Receiver<NetworkTransmit>,
     command_send: broadcast::Sender<RadioCommand>,
 ) {
     let mut output_frames = [Frame::new(); MAX_SEGMENTS_COUNT];
@@ -181,9 +185,9 @@ async fn manage_tx_network(
     loop {
         tokio::select! {
             Ok(tx_frame) = network_tx_recv.recv() => {
-                let _ = network.lock().await.transmit(tx_frame.as_slice(), OsRng, &mut output_frames, |data| {
+                let _ = network.lock().await.transmit(tx_frame.frame.as_slice(), OsRng, &mut output_frames, |data| {
                         for chunk in data {
-                            command_send.send(RadioCommand::Transmit(ModuleTransmit{
+                            let _ = command_send.send(RadioCommand::Transmit(ModuleTransmit{
                                 module: 0,
                                 frame: RadioFrame::new_from_slice(chunk),
                             }));

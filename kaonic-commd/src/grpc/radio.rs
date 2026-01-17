@@ -1,4 +1,4 @@
-use kaonic_radio::{error::KaonicError, platform::kaonic1s::Kaonic1SFrame, radio::Hertz};
+use kaonic_radio::{error::KaonicError, radio::Hertz};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;
@@ -104,14 +104,16 @@ impl Radio for RadioService {
             return Err(Status::invalid_argument("frame can't be empty"));
         }
 
-        let mut frame = controller::NetworkFrame::new();
+        let mut frame = controller::RadioFrame::new();
 
         decode_frame(&req.frame.unwrap(), &mut frame)
             .map_err(|_| Status::resource_exhausted(""))?;
 
         self.radio_ctrl
-            .network_transmit(frame)
-            .map_err(kaonic_err)?;
+            .execute(RadioCommand::Transmit(controller::ModuleTransmit {
+                module,
+                frame,
+            }));
 
         Ok(Response::new(TransmitResponse { latency: 0 }))
     }
@@ -198,7 +200,7 @@ fn encode_frame(buffer: &[u8]) -> RadioFrame {
 
 fn decode_frame(
     frame: &RadioFrame,
-    output_frame: &mut controller::NetworkFrame,
+    output_frame: &mut controller::RadioFrame,
 ) -> Result<(), KaonicError> {
     if output_frame.capacity() < (frame.length as usize) {
         return Err(KaonicError::OutOfMemory);
@@ -225,12 +227,8 @@ fn decode_frame(
     Ok(())
 }
 
-fn kaonic_err(e: KaonicError) -> Status {
+fn kaonic_err(_e: KaonicError) -> Status {
     Status::internal("kaonic error")
-}
-
-fn internal_err<E: std::fmt::Display>(e: E) -> Status {
-    Status::internal(e.to_string())
 }
 
 fn phy_to_modulation(

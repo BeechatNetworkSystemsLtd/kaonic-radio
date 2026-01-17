@@ -1,6 +1,6 @@
 use kaonic_radio::{error::KaonicError, frame::FrameSegment};
 
-use crate::packet::{self, Packet, PacketFlag, PacketId};
+use crate::packet::{Packet, PacketFlag, PacketId};
 
 pub type CurrentTime = u128;
 

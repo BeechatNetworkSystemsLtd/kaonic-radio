@@ -1,14 +1,14 @@
 use kaonic_radio::{
     error::KaonicError,
-    frame::{self, Frame, FrameSegment},
+    frame::{Frame, FrameSegment},
 };
 use rand::TryCryptoRng;
 
 use crate::{
-    demuxer::{self, Demuxer},
+    demuxer::Demuxer,
     generator::Generator,
     muxer::{CurrentTime, Muxer},
-    packet::{self, Packet, PacketCoder, PacketId},
+    packet::{Packet, PacketCoder},
 };
 
 pub struct Network<
@@ -91,12 +91,4 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
 
         transmit_func(&frames_data[..packets.len()])
     }
-}
-
-pub trait NetworkReceiver {
-    fn receive(&mut self, data: &[u8]);
-}
-
-pub trait NetworkTransmitter {
-    fn transmit(&mut self, data: &[&[u8]]) -> Result<(), KaonicError>;
 }
