@@ -50,19 +50,25 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
         Ok(())
     }
 
-    pub fn process<N: NetworkReceiver>(&mut self, current_time: CurrentTime, receiver: &mut N) {
+    pub fn process<F>(&mut self, current_time: CurrentTime, receive_func: F)
+    where
+        F: FnOnce(&[u8]),
+    {
         if let Ok(frame) = self.muxer.process(current_time, &mut self.input_frame) {
-            receiver.receive(frame.as_slice());
+            receive_func(frame.as_slice());
         }
     }
 
-    pub fn transmit<'a, RNG: TryCryptoRng + Copy, N: NetworkTransmitter>(
+    pub fn transmit<'a, RNG: TryCryptoRng + Copy, F>(
         &mut self,
         data: &[u8],
         rng: RNG,
         output_frames: &'a mut [Frame<S>],
-        transmitter: &mut N,
-    ) -> Result<(), KaonicError> {
+        transmit_func: F,
+    ) -> Result<(), KaonicError>
+    where
+        F: FnOnce(&[&[u8]]) -> Result<(), KaonicError>,
+    {
         let packet_id = Generator::generate_packet_id(rng)?;
 
         let packets = self
@@ -83,7 +89,7 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
             frames_data[i] = output_frames[i].as_slice();
         }
 
-        transmitter.transmit(&frames_data[..packets.len()])
+        transmit_func(&frames_data[..packets.len()])
     }
 }
 

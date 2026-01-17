@@ -12,6 +12,8 @@ kaonic-radio = { path="../kaonic-radio/" }
 kaonic-net = { path="../kaonic-net/" }
 kaonic-qos = { path="../kaonic-qos/" }
 
+rand = { version = "0.9.2", default-feautes = false }
+
 # Logging
 simple_logger = "=5.0.0"
 log = "0.4"
@@ -21,6 +23,7 @@ tonic = "0.13.0"
 prost = "0.13.5"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = "0.7.15"
 
 # Additional dependencies
 serde = { version = "1.0", features = ["derive"] }

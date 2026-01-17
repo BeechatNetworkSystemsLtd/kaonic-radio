@@ -1,10 +1,12 @@
 pub mod device;
 pub mod radio;
 
+use std::sync::Arc;
+
 use device::DeviceService;
 use radio::RadioService;
-use tonic::transport::Server;
 use tokio::sync::watch;
+use tonic::transport::Server;
 
 pub mod kaonic {
     tonic::include_proto!("kaonic");
@@ -15,10 +17,12 @@ pub async fn start_server(addr: String) -> Result<(), Box<dyn std::error::Error>
 
     let device_service = DeviceService::default();
 
-    let mgr = crate::radio_service::RadioService::new()?;
+    let radio_controller =
+        Arc::new(crate::controller::RadioController::new().expect("valid controller"));
+
     // Shared shutdown signal for terminating streams/tasks
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let radio_service = RadioService::new(mgr.clone(), shutdown_rx.clone());
+    let radio_service = RadioService::new(radio_controller.clone(), shutdown_rx.clone());
 
     // Tonic server with graceful shutdown on SIGINT/SIGTERM
     let shutdown_signal = async move {
@@ -33,7 +37,8 @@ pub async fn start_server(addr: String) -> Result<(), Box<dyn std::error::Error>
         #[cfg(unix)]
         let terminate = async {
             use tokio::signal::unix::{signal, SignalKind};
-            let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
             sigterm.recv().await;
         };
 
@@ -47,7 +52,6 @@ pub async fn start_server(addr: String) -> Result<(), Box<dyn std::error::Error>
         log::info!("Shutdown signal received. Stopping gRPC server...");
         // Signal receivers/streams to stop and stop radio workers
         let _ = shutdown_tx.send(true);
-        mgr.shutdown();
     };
 
     Server::builder()

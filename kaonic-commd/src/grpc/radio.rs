@@ -10,8 +10,8 @@ use super::kaonic::{
 };
 
 use crate::{
+    controller::{self, RadioCommand, RadioController},
     grpc::kaonic::RadioFrame,
-    radio_service::{RadioService as Manager, ReceiveEvent},
 };
 
 use kaonic_radio::modulation::{
@@ -20,13 +20,16 @@ use kaonic_radio::modulation::{
 };
 
 pub struct RadioService {
-    mgr: Arc<Manager>,
+    radio_ctrl: Arc<RadioController>,
     shutdown: watch::Receiver<bool>,
 }
 
 impl RadioService {
-    pub fn new(mgr: Arc<Manager>, shutdown: watch::Receiver<bool>) -> Self {
-        Self { mgr, shutdown }
+    pub fn new(radio_ctrl: Arc<RadioController>, shutdown: watch::Receiver<bool>) -> Self {
+        Self {
+            radio_ctrl,
+            shutdown,
+        }
     }
 }
 
@@ -56,28 +59,11 @@ impl Radio for RadioService {
             bandwidth_filter,
         };
 
-        self.mgr
-            .configure(module, cfg)
-            .await
-            .map_err(internal_err)?;
-
-        // Configure QoS if provided
-        if let Some(qos_config) = req.qos {
-            log::info!("Configuring QoS for module {}: enabled={}", module, qos_config.enabled);
-            
-            let qos = crate::radio_service::QoSConfig {
-                enabled: qos_config.enabled,
-                adaptive_modulation: qos_config.adaptive_modulation,
-                adaptive_tx_power: qos_config.adaptive_tx_power,
-                adaptive_backoff: qos_config.adaptive_backoff,
-                cca_threshold: qos_config.cca_threshold as i8,
-            };
-
-            self.mgr
-                .configure_qos(module, qos)
-                .await
-                .map_err(internal_err)?;
-        }
+        self.radio_ctrl
+            .execute(RadioCommand::Configure(controller::ModuleConfig {
+                module,
+                config: cfg,
+            }));
 
         if let Some(phy) = req.phy_config {
             log::debug!("parse modulation settings");
@@ -94,10 +80,12 @@ impl Radio for RadioService {
                 module,
                 modulation_type_name(&modulation)
             );
-            self.mgr
-                .set_modulation(module, modulation)
-                .await
-                .map_err(internal_err)?;
+
+            self.radio_ctrl
+                .execute(RadioCommand::SetModulation(controller::ModuleModulation {
+                    module,
+                    modulation,
+                }));
         } else {
             log::warn!("no modulation settings provided");
         }
@@ -116,18 +104,16 @@ impl Radio for RadioService {
             return Err(Status::invalid_argument("frame can't be empty"));
         }
 
-        let mut frame = Kaonic1SFrame::new();
+        let mut frame = controller::NetworkFrame::new();
 
         decode_frame(&req.frame.unwrap(), &mut frame)
             .map_err(|_| Status::resource_exhausted(""))?;
 
-        let latency = self
-            .mgr
-            .transmit(module, &frame)
-            .await
-            .map_err(internal_err)?;
+        self.radio_ctrl
+            .network_transmit(frame)
+            .map_err(kaonic_err)?;
 
-        Ok(Response::new(TransmitResponse { latency }))
+        Ok(Response::new(TransmitResponse { latency: 0 }))
     }
 
     type ReceiveStreamStream = ReceiverStream<Result<ReceiveResponse, Status>>;
@@ -142,7 +128,8 @@ impl Radio for RadioService {
         log::debug!("start receive stream for module [{}]", module);
 
         // Subscribe to worker's receive broadcast and forward as gRPC stream
-        let mut sub = self.mgr.subscribe(module).map_err(internal_err)?;
+        let mut sub = self.radio_ctrl.module_receive(module);
+
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
         // Clone shutdown receiver for this stream
@@ -154,10 +141,16 @@ impl Radio for RadioService {
                     _ = shutdown.changed() => {
                         break;
                     }
-                    evt = sub.recv() => {
-                        match evt {
-                            Ok(e) => {
-                                if tx.send(Ok(to_receive_response(e))).await.is_err() {
+                    module_recv = sub.recv() => {
+                        match module_recv {
+                            Ok(rx) => {
+                                if tx.send(Ok(super::kaonic::ReceiveResponse {
+                                            module: module as i32,
+                                            frame: Some(encode_frame(rx.frame.as_slice())),
+                                            rssi: rx.rssi as i32,
+                                            latency: 0,
+                                        }
+                                    )).await.is_err() {
                                     break;
                                 }
                             }
@@ -203,7 +196,10 @@ fn encode_frame(buffer: &[u8]) -> RadioFrame {
     }
 }
 
-fn decode_frame(frame: &RadioFrame, output_frame: &mut Kaonic1SFrame) -> Result<(), KaonicError> {
+fn decode_frame(
+    frame: &RadioFrame,
+    output_frame: &mut controller::NetworkFrame,
+) -> Result<(), KaonicError> {
     if output_frame.capacity() < (frame.length as usize) {
         return Err(KaonicError::OutOfMemory);
     }
@@ -229,13 +225,8 @@ fn decode_frame(frame: &RadioFrame, output_frame: &mut Kaonic1SFrame) -> Result<
     Ok(())
 }
 
-fn to_receive_response(evt: ReceiveEvent) -> ReceiveResponse {
-    super::kaonic::ReceiveResponse {
-        module: evt.module as i32,
-        frame: Some(encode_frame(evt.frame.as_slice())),
-        rssi: evt.rssi as i32,
-        latency: evt.latency_ms,
-    }
+fn kaonic_err(e: KaonicError) -> Status {
+    Status::internal("kaonic error")
 }
 
 fn internal_err<E: std::fmt::Display>(e: E) -> Status {

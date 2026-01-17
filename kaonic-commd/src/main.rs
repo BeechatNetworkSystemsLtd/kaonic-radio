@@ -1,9 +1,8 @@
+mod controller;
 mod grpc;
-mod radio_service;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     simple_logger::SimpleLogger::new().env().init().ok();
 
     let version = env!("CARGO_PKG_VERSION");
