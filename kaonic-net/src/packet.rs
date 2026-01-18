@@ -153,7 +153,7 @@ impl Header {
         return buffer;
     }
 
-    fn unpack(&mut self, data: &[u8]) -> Result<usize, KaonicError> {
+    pub fn unpack(&mut self, data: &[u8]) -> Result<usize, KaonicError> {
         if data.len() < HEADER_SIZE {
             return Err(KaonicError::IncorrectSettings);
         }

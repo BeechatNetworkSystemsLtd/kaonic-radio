@@ -43,6 +43,7 @@ pub struct AppState {
     pub last_tx_latency: Option<u32>,
     pub continuous_tx: bool,
     pub tx_pause_ms: i32,
+    pub tx_target: i32, // 0 = Module, 1 = Network
 
     // Receive
     pub rx_events: Vec<ReceiveEvent>,
@@ -99,6 +100,7 @@ impl AppState {
             last_tx_latency: None,
             continuous_tx: false,
             tx_pause_ms: 1000,
+            tx_target: 0,
 
             rx_events: Vec::new(),
             rx_stream_active: false,
@@ -275,17 +277,14 @@ impl RadioGuiApp {
 
                 ui.same_line();
 
-                // Right column - Receive
+                // Right column - Packets (always visible)
                 ui.child_window("right_panel")
                     .size([0.0, panel_height])
                     .border(true)
                     .build(|| {
-                        // Receive Section
-                        if ui.collapsing_header("Receive", TreeNodeFlags::DEFAULT_OPEN) {
-                            ui.indent();
-                            self.draw_receive_panel(ui);
-                            ui.unindent();
-                        }
+                        ui.text("Packets");
+                        ui.separator();
+                        self.draw_receive_panel(ui);
                     });
                 
                 // Status bar at bottom
@@ -356,7 +355,9 @@ impl RadioGuiApp {
         *self.rx_receiver.lock() = Some(rx);
         // Start receive streams for both modules and merge into the same channel
         self.client.lock().start_receive_stream(RadioModule::ModuleA, tx.clone());
-        self.client.lock().start_receive_stream(RadioModule::ModuleB, tx);
+        self.client.lock().start_receive_stream(RadioModule::ModuleB, tx.clone());
+        // Also subscribe to network-level receive stream and merge
+        self.client.lock().start_network_receive_stream(tx);
         state.rx_stream_active = true;
         state.status_message = "Receive stream started".to_string();
     }
@@ -578,6 +579,12 @@ impl RadioGuiApp {
         let mut state = self.state.lock();
         let enabled = state.connected;
 
+        ui.text("Target:");
+        ui.same_line();
+        ui.radio_button("Module", &mut state.tx_target, 0);
+        ui.same_line();
+        ui.radio_button("Network", &mut state.tx_target, 1);
+
         ui.text("Data:");
         ui.set_next_item_width(-1.0);
         ui.input_text("##txdata", &mut state.tx_data).build();
@@ -618,15 +625,21 @@ impl RadioGuiApp {
                 state.tx_data.as_bytes().to_vec()
             };
 
-            let module = if state.selected_module == 0 {
-                RadioModule::ModuleA
-            } else {
-                RadioModule::ModuleB
-            };
-            drop(state);
-
             let data_len = data.len();
-            match self.client.lock().transmit_frame(module, data) {
+            let result = if state.tx_target == 0 {
+                let module = if state.selected_module == 0 {
+                    RadioModule::ModuleA
+                } else {
+                    RadioModule::ModuleB
+                };
+                drop(state);
+                self.client.lock().transmit_frame(module, data)
+            } else {
+                drop(state);
+                self.client.lock().network_transmit(data)
+            };
+
+            match result {
                 Ok(latency) => {
                     let mut state = self.state.lock();
                     state.last_tx_latency = Some(latency);
@@ -812,7 +825,7 @@ impl RadioGuiApp {
             .border(true)
             .flags(WindowFlags::ALWAYS_VERTICAL_SCROLLBAR)
             .build(|| {
-                // Table header
+                // Table header (no separate Type column; Source will be colored)
                 ui.columns(6, "rx_table_cols", false);
                 ui.text("Time"); ui.next_column();
                 ui.text("Source"); ui.next_column();
@@ -826,34 +839,98 @@ impl RadioGuiApp {
                 for (i, event) in events_snapshot.iter().rev().enumerate() {
                     let idx = events_snapshot.len().saturating_sub(1 + i);
 
-                    // Time column
+                    // Choose color by packet type (used for Type text and selection bg)
+                    let (r, g, b, a) = match event.packet_type {
+                        crate::grpc_client::PacketType::Network => (1.0, 0.0, 1.0, 0.12), // magenta
+                        _ => (0.0, 1.0, 1.0, 0.08), // cyan for radio
+                    };
+
+                    // If this row is selected, push header-style background so the whole row is highlighted
+                    let mut _row_guard_t = None;
+                    let mut _row_guard_h = None;
+                    let mut _row_guard_a = None;
+                    {
+                        let s = self.state.lock();
+                        if s.selected_index == Some(idx) {
+                            _row_guard_t = Some(ui.push_style_color(StyleColor::Header, [r, g, b, a]));
+                            _row_guard_h = Some(ui.push_style_color(StyleColor::HeaderHovered, [r, g, b, a * 1.8]));
+                            _row_guard_a = Some(ui.push_style_color(StyleColor::HeaderActive, [r, g, b, a * 2.0]));
+                        }
+                    }
+
+                    // Time column (selectable spans the row because every cell is selectable)
                     let time_str = event.timestamp.format("%H:%M:%S%.3f").to_string();
-                    if ui.selectable(&time_str) {
+                    let time_label = format!("{}##row{}_time", time_str, idx);
+                    if ui.selectable(&time_label) {
                         let mut s = self.state.lock();
                         s.selected_index = Some(idx);
                     }
                     ui.next_column();
 
-                    // Source column (module or network)
+                    // Source column (module or network) — color the Source text by packet origin
                     let source = match event.module {
                         0 => "Module A",
                         1 => "Module B",
                         _ => "Network",
                     };
-                    ui.text(source); ui.next_column();
+                    let src_label = format!("{}##row{}_src", source, idx);
+                    // Color only the Source column text
+                    let text_color = [r, g, b, 1.0_f32];
+                    let _tc = ui.push_style_color(StyleColor::Text, text_color);
+                    if ui.selectable(&src_label) {
+                        let mut s = self.state.lock();
+                        s.selected_index = Some(idx);
+                    }
+                    drop(_tc);
+                    ui.next_column();
 
                     // Size
-                    ui.text(format!("{} B", event.frame_data.len())); ui.next_column();
+                    let size_label = format!("{} B##row{}_size", event.frame_data.len(), idx);
+                    if ui.selectable(&size_label) {
+                        let mut s = self.state.lock();
+                        s.selected_index = Some(idx);
+                    }
+                    ui.next_column();
 
                     // RSSI
-                    ui.text(format!("{} dBm", event.rssi)); ui.next_column();
+                    let rssi_label = format!("{} dBm##row{}_rssi", event.rssi, idx);
+                    if ui.selectable(&rssi_label) {
+                        let mut s = self.state.lock();
+                        s.selected_index = Some(idx);
+                    }
+                    ui.next_column();
 
                     // Latency
-                    ui.text(format!("{} ms", event.latency)); ui.next_column();
+                    let lat_label = format!("{} ms##row{}_lat", event.latency, idx);
+                    if ui.selectable(&lat_label) {
+                        let mut s = self.state.lock();
+                        s.selected_index = Some(idx);
+                    }
+                    ui.next_column();
 
-                    // Preview short
-                    let short = event.frame_data.iter().take(8).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                    ui.text(short); ui.next_column();
+                    // Preview short; if packet looks like a network packet, show packet id
+                    let mut preview_prefix = String::new();
+                    if event.packet_type == crate::grpc_client::PacketType::Network {
+                        // For network-origin packets, show "Binary" in preview per request
+                        preview_prefix = "Binary ".to_string();
+                    } else {
+                        // For regular module packets: try to detect embedded network header and extract ID,
+                        // otherwise mark as Binary.
+                        if let Some(id) = crate::grpc_client::parse_network_id(&event.frame_data) {
+                            preview_prefix = format!("ID:{} ", id);
+                        } else {
+                            preview_prefix = "Binary ".to_string();
+                        }
+                    }
+
+                    // Show only parsed ID or "Binary" in the preview column (no hex dump)
+                    let preview_text = preview_prefix.trim_end();
+                    let prev_label = format!("{}##row{}_prev", preview_text, idx);
+                    if ui.selectable(&prev_label) {
+                        let mut s = self.state.lock();
+                        s.selected_index = Some(idx);
+                    }
+                    ui.next_column();
 
                     ui.separator();
                 }

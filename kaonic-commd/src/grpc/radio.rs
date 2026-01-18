@@ -158,7 +158,6 @@ impl Radio for RadioService {
                                     continue;
                                 }
 
-                                log::debug!("send rx for module {}", module);
                                 let resp = super::kaonic::ReceiveResponse {
                                     module: rx.module as i32,
                                     frame: Some(encode_frame(rx.frame.as_slice())),

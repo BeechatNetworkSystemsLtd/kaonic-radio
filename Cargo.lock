@@ -1706,6 +1706,7 @@ dependencies = [
  "imgui",
  "imgui-glow-renderer",
  "imgui-winit-support",
+ "kaonic-net",
  "parking_lot",
  "prost",
  "raw-window-handle 0.5.2",

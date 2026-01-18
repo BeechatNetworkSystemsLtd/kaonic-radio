@@ -192,6 +192,13 @@ async fn manage_rx_network(
     mut shutdown: CancellationToken,
 ) {
     loop {
+        network.lock().await.process(get_current_time(), |frame| {
+            log::debug!("Network RX Frame {}B", frame.len());
+            let _ = network_send.send(NetworkReceive {
+                frame: FrameSegment::new_from_slice(frame),
+            });
+        });
+
         tokio::select! {
             _ = shutdown.cancelled() => {
                 log::info!("Network RX manager received shutdown");
@@ -203,12 +210,6 @@ async fn manage_rx_network(
                         log::debug!("manage_rx_network: module {} -> received radio frame len={} bytes rssi={}", event.module, event.frame.as_slice().len(), event.rssi);
                         let _ = network.lock().await.receive(get_current_time(), &event.frame);
 
-                        network.lock().await.process(get_current_time(), | frame | {
-                            log::debug!("manage_rx_network: network processed frame len={}", frame.len());
-                            let _ = network_send.send(NetworkReceive {
-                                frame: FrameSegment::new_from_slice(frame),
-                            });
-                        });
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         log::warn!("manage_rx_network: receiver lagged, skipped {} messages", n);
@@ -219,6 +220,9 @@ async fn manage_rx_network(
                         break;
                     }
                 }
+            }
+            _ = tokio::time::sleep(core::time::Duration::from_secs(1)) => {
+
             }
         }
     }
@@ -312,7 +316,7 @@ async fn manage_radio(
             let module_send = module_send.clone();
             let radio = radio.clone();
 
-            tokio::task::spawn_blocking(move || {
+            let _ = tokio::task::spawn_blocking(move || {
                 rx_frame.clear();
                 match radio
                     .lock()

@@ -61,6 +61,7 @@ impl Network for NetworkService {
         &self,
         _request: Request<NetworkReceiveRequest>,
     ) -> Result<Response<Self::ReceiveStreamStream>, Status> {
+
         log::debug!("start network receive stream");
 
         // Subscribe to network receive broadcast and forward as gRPC stream

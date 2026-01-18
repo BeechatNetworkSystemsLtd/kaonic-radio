@@ -1,11 +1,13 @@
 use crate::kaonic::{
-    device_client::DeviceClient, radio_client::RadioClient, ConfigurationRequest, Empty,
+    device_client::DeviceClient, radio_client::RadioClient, network_client::NetworkClient,
+    ConfigurationRequest, Empty,
     QoSConfig, RadioFrame, RadioModule, ReceiveRequest, TransmitRequest,
 };
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
+use kaonic_net::packet::Header;
 
 pub struct GrpcClient {
     runtime: Arc<Runtime>,
@@ -15,6 +17,7 @@ pub struct GrpcClient {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PacketType {
     Custom,
+    Network,
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +43,22 @@ pub struct ReceiveEvent {
 // For now treat all packets as Custom
 fn analyze_packet(_data: &[u8]) -> (PacketType, Option<()>) {
     (PacketType::Custom, None)
+}
+
+// Heuristic parser: check whether a radio module packet contains a network message
+// If so, return Some(packet_id_hex) where packet id is the first 4 bytes of the network header.
+pub fn parse_network_id(data: &[u8]) -> Option<String> {
+    // Use the canonical `Header::unpack` from `kaonic-net` to detect and parse
+    // a network header. If unpack succeeds, return the header id as hex.
+    if data.len() < kaonic_net::packet::HEADER_SIZE {
+        return None;
+    }
+
+    let mut header = Header::new();
+    match header.unpack(data) {
+        Ok(_) => Some(format!("{:08X}", header.id())),
+        Err(_) => None,
+    }
 }
 
 /// Encode bytes into RadioFrame format (copied from server)
@@ -197,6 +216,25 @@ impl GrpcClient {
         })
     }
 
+    pub fn network_transmit(&self, data: Vec<u8>) -> Result<u32, String> {
+        self.runtime.block_on(async {
+            let mut client = NetworkClient::connect(self.server_addr.clone())
+                .await
+                .map_err(|e| format!("Failed to connect: {}", e))?;
+
+            let frame = encode_frame(&data);
+
+            let request = crate::kaonic::NetworkTransmitRequest { frame: Some(frame) };
+
+            let response = client
+                .transmit(tonic::Request::new(request))
+                .await
+                .map_err(|e| format!("Failed to transmit network frame: {}", e))?;
+
+            Ok(response.into_inner().latency)
+        })
+    }
+
     pub fn start_receive_stream(
         &self,
         module: RadioModule,
@@ -259,6 +297,63 @@ impl GrpcClient {
                 }
 
                 // Wait before reconnecting
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            }
+        });
+    }
+
+    pub fn start_network_receive_stream(&self, rx: mpsc::UnboundedSender<ReceiveEvent>) {
+        let server_addr = self.server_addr.clone();
+
+        self.runtime.spawn(async move {
+            loop {
+                match crate::kaonic::network_client::NetworkClient::connect(server_addr.clone()).await {
+                    Ok(mut client) => {
+                        let request = crate::kaonic::NetworkReceiveRequest {};
+
+                        match client.receive_stream(tonic::Request::new(request)).await {
+                            Ok(response) => {
+                                let mut stream = response.into_inner();
+
+                                while let Some(result) = stream.next().await {
+                                    match result {
+                                        Ok(rx_response) => {
+                                            let frame_data: Vec<u8> = if let Some(frame) = rx_response.frame {
+                                                decode_frame(&frame)
+                                            } else {
+                                                Vec::new()
+                                            };
+
+                                            let event = ReceiveEvent {
+                                                timestamp: chrono::Local::now(),
+                                                module: -1,
+                                                frame_data,
+                                                rssi: rx_response.rssi,
+                                                latency: rx_response.latency,
+                                                packet_type: PacketType::Network,
+                                            };
+
+                                            if rx.send(event).is_err() {
+                                                return; // Channel closed, stop stream
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Network stream error: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to start network receive stream: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to connect network client: {}", e);
+                    }
+                }
+
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
         });

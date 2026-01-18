@@ -32,6 +32,9 @@ sha2 = "0.10"
 reqwest = { version = "0.11", features = ["blocking", "multipart", "json"] }
 serde_json = "1.0"
 
+# Local crates
+kaonic-net = { path = "../kaonic-net/" }
+
 # File dialog
 rfd = "0.12"
 
