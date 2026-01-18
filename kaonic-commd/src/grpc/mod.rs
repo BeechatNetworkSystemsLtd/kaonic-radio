@@ -7,7 +7,8 @@ use std::sync::Arc;
 use device::DeviceService;
 use network::NetworkService;
 use radio::RadioService;
-use tokio::sync::watch;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
 
 pub mod kaonic {
@@ -19,23 +20,20 @@ pub async fn start_server(addr: String) -> Result<(), Box<dyn std::error::Error>
 
     let device_service = DeviceService::default();
 
-    let radio_controller =
-        Arc::new(crate::controller::RadioController::new().expect("valid controller"));
+    // Shared cancellation token for terminating streams/tasks
+    let shutdown_token = CancellationToken::new();
 
-    // Shared shutdown signal for terminating streams/tasks
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let radio_service = RadioService::new(radio_controller.clone(), shutdown_rx.clone());
-    let network_service = NetworkService::new(radio_controller.clone(), shutdown_rx.clone());
+    let radio_controller = Arc::new(Mutex::new(
+        crate::controller::RadioController::new(shutdown_token.clone()).expect("valid controller"),
+    ));
+
+    let radio_service = RadioService::new(radio_controller.clone(), shutdown_token.clone());
+    let network_service = NetworkService::new(radio_controller.clone(), shutdown_token.clone());
 
     // Tonic server with graceful shutdown on SIGINT/SIGTERM
-    let shutdown_signal = async move {
-        // Ctrl+C
-        let ctrl_c = async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to install Ctrl+C handler");
-        };
+    let radio_controller = radio_controller.clone();
 
+    let shutdown_signal = async move {
         // SIGTERM (Unix only)
         #[cfg(unix)]
         let terminate = async {
@@ -48,13 +46,24 @@ pub async fn start_server(addr: String) -> Result<(), Box<dyn std::error::Error>
         #[cfg(not(unix))]
         let terminate = std::future::pending::<()>();
 
+        log::info!("wait shutdown listeners");
+
         tokio::select! {
-            _ = ctrl_c => {},
-            _ = terminate => {},
+            _ = tokio::signal::ctrl_c() => {
+                log::warn!("Stopping by Ctrl+C");
+            },
+            _ = terminate => {
+                log::warn!("Stopping by terminate");
+            },
         }
-        log::info!("Shutdown signal received. Stopping gRPC server...");
-        // Signal receivers/streams to stop and stop radio workers
-        let _ = shutdown_tx.send(true);
+
+        log::info!("Shutdown signal received. Cancelling tasks...");
+
+        // Cancel token will notify all tasks
+        shutdown_token.cancel();
+
+        // Wait for controller workers to finish
+        radio_controller.lock().await.wait_for_workers().await;
     };
 
     Server::builder()
@@ -65,5 +74,6 @@ pub async fn start_server(addr: String) -> Result<(), Box<dyn std::error::Error>
         .await?;
 
     log::info!("gRPC server stopped.");
+
     Ok(())
 }

@@ -58,8 +58,7 @@ pub struct AppState {
     pub waterfall_max_entries: usize,
     
     // Packet type statistics
-    pub reticulum_count: usize,
-    pub custom_count: usize,
+    // (packet type statistics removed)
     
     // OTA
     pub ota_file_path: String,
@@ -110,8 +109,7 @@ impl AppState {
             waterfall_data: Vec::new(),
             waterfall_max_entries: 500,
             
-            reticulum_count: 0,
-            custom_count: 0,
+            
             
             ota_file_path: String::new(),
             ota_status: String::new(),
@@ -153,11 +151,7 @@ impl RadioGuiApp {
             while let Ok(event) = rx.try_recv() {
                 let mut state = self.state.lock();
                 
-                // Update packet type statistics
-                match event.packet_type {
-                    PacketType::Reticulum => state.reticulum_count += 1,
-                    PacketType::Custom => state.custom_count += 1,
-                }
+                // (packet type statistics removed)
                 
                 // Add to events list
                 state.rx_events.push(event.clone());
@@ -775,18 +769,13 @@ impl RadioGuiApp {
         let mut state = self.state.lock();
         let _enabled = state.connected;
 
-        // Packet type statistics
-        ui.text(format!("Total: {} packets | Reticulum: {} | Custom: {}", 
-            state.rx_events.len(), 
-            state.reticulum_count, 
-            state.custom_count));
+        // Packet statistics
+        ui.text(format!("Total: {} packets", state.rx_events.len()));
 
         if ui.button("Clear") {
             state.rx_events.clear();
             state.rssi_history.clear();
             state.waterfall_data.clear();
-            state.reticulum_count = 0;
-            state.custom_count = 0;
         }
 
         ui.separator();
@@ -796,22 +785,8 @@ impl RadioGuiApp {
             .size([0.0, 0.0])
             .build(|| {
                 for (_idx, event) in state.rx_events.iter().rev().enumerate() {
-                    // Packet type with color coding
-                    let (type_char, type_color, bg_color) = match event.packet_type {
-                        PacketType::Reticulum => ("R", [0.0, 0.8, 1.0, 1.0], [0.0, 0.2, 0.3, 1.0]), // Cyan text, dark cyan bg
-                        PacketType::Custom => ("C", [1.0, 0.8, 0.0, 1.0], [0.3, 0.2, 0.0, 1.0]),      // Yellow text, dark yellow bg
-                    };
-                    
-                    // Create a small colored box with type indicator
-                    let _bg_token = ui.push_style_color(StyleColor::ChildBg, bg_color);
-                    ui.child_window(format!("type_column_{}", _idx))
-                        .size([20.0, ui.text_line_height()])
-                        .build(|| {
-                            ui.text_colored(type_color, type_char);
-                        });
-                    _bg_token.pop();
-                    
-                    ui.same_line();
+                        // Small type column removed
+                        ui.same_line();
                     
                     // Main content area
                     ui.group(|| {
@@ -823,19 +798,7 @@ impl RadioGuiApp {
                             event.frame_data.len()
                         ));
 
-                        // Content depending on type
-                        if let Some(ref info) = event.reticulum_info {
-                            ui.text(format!("  Type: {} | Hops: {}", info.header_type, info.hops));
-                            if let Some(ref dest) = info.destination {
-                                ui.text("  Destination: ");
-                                ui.same_line();
-                                ui.text_colored([1.0, 0.0, 1.0, 1.0], dest);
-                            }
-                            if let Some(ref transport) = info.transport_id {
-                                ui.text(format!("  Transport ID: {}", transport));
-                            }
-                            ui.text(format!("  Hash: {}", &info.packet_hash));
-                        }
+                        // No reticulum-specific content
                         
                         // Packet data hex (truncated to 64 bytes)
                         let hex_bytes: Vec<u8> = event.frame_data.iter().take(64).copied().collect();
@@ -909,10 +872,7 @@ impl RadioGuiApp {
         }
         
         // Show TX/RX statistics before RSSI
-        let stats_text = format!("RX: {} | R: {} C: {}", 
-            state.rx_events.len(), 
-            state.reticulum_count, 
-            state.custom_count);
+        let stats_text = format!("RX: {}", state.rx_events.len());
         let stats_width = ui.calc_text_size(&stats_text)[0];
         right_pos -= stats_width + 20.0;
         ui.set_cursor_pos([right_pos, ui.cursor_pos()[1]]);

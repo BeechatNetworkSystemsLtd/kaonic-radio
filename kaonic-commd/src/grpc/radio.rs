@@ -1,7 +1,8 @@
 use kaonic_radio::{error::KaonicError, radio::Hertz};
 use std::sync::Arc;
-use tokio::sync::watch;
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
 use super::kaonic::{
@@ -20,12 +21,12 @@ use kaonic_radio::modulation::{
 };
 
 pub struct RadioService {
-    radio_ctrl: Arc<RadioController>,
-    shutdown: watch::Receiver<bool>,
+    radio_ctrl: Arc<Mutex<RadioController>>,
+    shutdown: CancellationToken,
 }
 
 impl RadioService {
-    pub fn new(radio_ctrl: Arc<RadioController>, shutdown: watch::Receiver<bool>) -> Self {
+    pub fn new(radio_ctrl: Arc<Mutex<RadioController>>, shutdown: CancellationToken) -> Self {
         Self {
             radio_ctrl,
             shutdown,
@@ -60,6 +61,8 @@ impl Radio for RadioService {
         };
 
         self.radio_ctrl
+            .lock()
+            .await
             .execute(RadioCommand::Configure(controller::ModuleConfig {
                 module,
                 config: cfg,
@@ -82,6 +85,8 @@ impl Radio for RadioService {
             );
 
             self.radio_ctrl
+                .lock()
+                .await
                 .execute(RadioCommand::SetModulation(controller::ModuleModulation {
                     module,
                     modulation,
@@ -110,6 +115,8 @@ impl Radio for RadioService {
             .map_err(|_| Status::resource_exhausted(""))?;
 
         self.radio_ctrl
+            .lock()
+            .await
             .execute(RadioCommand::Transmit(controller::ModuleTransmit {
                 module,
                 frame,
@@ -130,17 +137,17 @@ impl Radio for RadioService {
         log::debug!("start receive stream for module [{}]", module);
 
         // Subscribe to worker's receive broadcast and forward as gRPC stream
-        let mut sub = self.radio_ctrl.module_receive(module);
+        let mut sub = self.radio_ctrl.lock().await.module_receive(module);
 
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
-        // Clone shutdown receiver for this stream
-        let mut shutdown = self.shutdown.clone();
+        // Clone cancellation token for this stream
+        let shutdown = self.shutdown.clone();
 
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => {
+                    _ = shutdown.cancelled() => {
                         break;
                     }
                     module_recv = sub.recv() => {

@@ -1,7 +1,8 @@
 use kaonic_radio::error::KaonicError;
 use std::sync::Arc;
-use tokio::sync::watch;
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
 use super::kaonic::{
@@ -15,12 +16,12 @@ use crate::{
 };
 
 pub struct NetworkService {
-    radio_ctrl: Arc<RadioController>,
-    shutdown: watch::Receiver<bool>,
+    radio_ctrl: Arc<Mutex<RadioController>>,
+    shutdown: CancellationToken,
 }
 
 impl NetworkService {
-    pub fn new(radio_ctrl: Arc<RadioController>, shutdown: watch::Receiver<bool>) -> Self {
+    pub fn new(radio_ctrl: Arc<Mutex<RadioController>>, shutdown: CancellationToken) -> Self {
         Self {
             radio_ctrl,
             shutdown,
@@ -46,6 +47,8 @@ impl Network for NetworkService {
             .map_err(|_| Status::resource_exhausted(""))?;
 
         self.radio_ctrl
+            .lock()
+            .await
             .network_transmit(frame)
             .map_err(|_| Status::internal("network transmit error"))?;
 
@@ -61,17 +64,17 @@ impl Network for NetworkService {
         log::debug!("start network receive stream");
 
         // Subscribe to network receive broadcast and forward as gRPC stream
-        let mut sub = self.radio_ctrl.network_receive();
+        let mut sub = self.radio_ctrl.lock().await.network_receive();
 
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
-        // Clone shutdown receiver for this stream
-        let mut shutdown = self.shutdown.clone();
+        // Clone cancellation token for this stream
+        let shutdown = self.shutdown.clone();
 
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => {
+                    _ = shutdown.cancelled() => {
                         break;
                     }
                     network_recv = sub.recv() => {
@@ -148,4 +151,3 @@ fn decode_frame(
 
     Ok(())
 }
-

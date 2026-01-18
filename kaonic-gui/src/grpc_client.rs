@@ -14,7 +14,6 @@ pub struct GrpcClient {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PacketType {
-    Reticulum,
     Custom,
 }
 
@@ -35,68 +34,12 @@ pub struct ReceiveEvent {
     pub rssi: i32,
     pub latency: u32,
     pub packet_type: PacketType,
-    pub reticulum_info: Option<ReticulumPacketInfo>,
 }
 
 /// Parse Reticulum packet using reticulum-rs library
-fn parse_reticulum_packet(data: &[u8]) -> Option<ReticulumPacketInfo> {
-    use reticulum::buffer::InputBuffer;
-    use reticulum::packet::Packet;
-    
-    // Minimum Reticulum packet: 1 header + 1 hops + 16 destination + 1 context = 19 bytes
-    if data.len() < 19 {
-        return None;
-    }
-    
-    // Try to deserialize using reticulum-rs
-    let mut buffer = InputBuffer::new(data);
-    
-    match Packet::deserialize(&mut buffer) {
-        Ok(packet) => {
-            // Extract packet type
-            let header_type = format!("{:?}", packet.header.packet_type);
-            
-            // Extract destination hash
-            let destination = Some(hex::encode(packet.destination.as_slice()));
-            
-            // Extract transport ID if present
-            let transport_id = packet.transport
-                .map(|t| hex::encode(t.as_slice()));
-            
-            // Calculate packet hash using Reticulum's hash method
-            let packet_hash = hex::encode(packet.hash().as_slice());
-            
-            // Extract hops from deserialized packet
-            let hops = packet.header.hops;
-            
-            // Additional validation: check if destination hash is not all zeros
-            let dest_is_zero = packet.destination.as_slice().iter().all(|&b| b == 0);
-            if dest_is_zero {
-                return None;
-            }
-            
-            Some(ReticulumPacketInfo {
-                header_type,
-                destination,
-                transport_id,
-                packet_hash,
-                hops,
-            })
-        }
-        Err(_) => {
-            // Not a valid Reticulum packet
-            None
-        }
-    }
-}
-
-/// Detect packet type and parse if it's Reticulum
-fn analyze_packet(data: &[u8]) -> (PacketType, Option<ReticulumPacketInfo>) {
-    if let Some(info) = parse_reticulum_packet(data) {
-        (PacketType::Reticulum, Some(info))
-    } else {
-        (PacketType::Custom, None)
-    }
+// For now treat all packets as Custom
+fn analyze_packet(_data: &[u8]) -> (PacketType, Option<()>) {
+    (PacketType::Custom, None)
 }
 
 /// Encode bytes into RadioFrame format (copied from server)
@@ -283,7 +226,7 @@ impl GrpcClient {
                                                 Vec::new()
                                             };
 
-                                            let (packet_type, reticulum_info) = analyze_packet(&frame_data);
+                                            let (packet_type, _info) = analyze_packet(&frame_data);
 
                                             let event = ReceiveEvent {
                                                 timestamp: chrono::Local::now(),
@@ -292,7 +235,6 @@ impl GrpcClient {
                                                 rssi: rx_response.rssi,
                                                 latency: rx_response.latency,
                                                 packet_type,
-                                                reticulum_info,
                                             };
 
                                             if rx.send(event).is_err() {

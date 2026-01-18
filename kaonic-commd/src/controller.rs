@@ -17,6 +17,7 @@ use kaonic_radio::{
 };
 use rand::rngs::OsRng;
 use tokio::sync::{broadcast, Mutex};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 const MAX_SEGMENTS_COUNT: usize = 6;
@@ -77,10 +78,12 @@ pub struct RadioController {
     network_tx_send: broadcast::Sender<NetworkTransmit>,
     module_send: broadcast::Sender<ModuleReceive>,
     command_send: broadcast::Sender<RadioCommand>,
+    shutdown: CancellationToken,
+    worker_handles: Vec<JoinHandle<()>>,
 }
 
 impl RadioController {
-    pub fn new() -> Result<Self, KaonicError> {
+    pub fn new(shutdown: CancellationToken) -> Result<Self, KaonicError> {
         let mut machine = create_machine()?;
 
         let (module_send, _) = broadcast::channel(8);
@@ -88,6 +91,7 @@ impl RadioController {
         let (network_rx_send, _) = broadcast::channel(8);
         let (network_tx_send, _) = broadcast::channel(8);
 
+        let mut worker_handles: Vec<JoinHandle<()>> = Vec::new();
         let mut radio_index = 0;
         loop {
             let radio = machine.take_radio(radio_index);
@@ -97,36 +101,54 @@ impl RadioController {
 
             let radio = Arc::new(Mutex::new(radio.unwrap()));
 
-            tokio::spawn(manage_radio(
+            let handle = tokio::spawn(manage_radio(
                 radio_index,
                 radio,
                 command_send.subscribe(),
                 module_send.clone(),
+                shutdown.clone(),
             ));
+
+            worker_handles.push(handle);
 
             radio_index += 1;
         }
 
         let network = Arc::new(Mutex::new(RadioNetwork::new(Coder::new())));
 
-        tokio::spawn(manage_rx_network(
+        let rx_handle = tokio::spawn(manage_rx_network(
             network.clone(),
             network_rx_send.clone(),
             module_send.subscribe(),
+            shutdown.clone(),
         ));
 
-        tokio::spawn(manage_tx_network(
+        let tx_handle = tokio::spawn(manage_tx_network(
             network.clone(),
             network_tx_send.subscribe(),
             command_send.clone(),
+            shutdown.clone(),
         ));
+
+        worker_handles.push(rx_handle);
+        worker_handles.push(tx_handle);
 
         Ok(Self {
             network_rx_send,
             network_tx_send,
             module_send,
             command_send,
+            shutdown,
+            worker_handles: worker_handles,
         })
+    }
+
+    pub async fn wait_for_workers(&self) {
+        // for (i, h) in self.worker_handles.into_iter().enumerate() {
+        //     log::info!("Waiting for worker {} to finish", i);
+        //     let _ = h.await;
+        //     log::info!("Worker {} finished", i);
+        // }
     }
 
     pub fn execute(&self, command: RadioCommand) {
@@ -158,9 +180,14 @@ async fn manage_rx_network(
     network: Arc<Mutex<RadioNetwork>>,
     network_send: broadcast::Sender<NetworkReceive>,
     mut module_recv: broadcast::Receiver<ModuleReceive>,
+    mut shutdown: CancellationToken,
 ) {
     loop {
         tokio::select! {
+            _ = shutdown.cancelled() => {
+                log::info!("Network RX manager received shutdown");
+                break;
+            }
             Ok(event) = module_recv.recv() => {
                 let _ = network.lock().await.receive(get_current_time(), &event.frame);
 
@@ -179,11 +206,16 @@ async fn manage_tx_network(
     network: Arc<Mutex<RadioNetwork>>,
     mut network_tx_recv: broadcast::Receiver<NetworkTransmit>,
     command_send: broadcast::Sender<RadioCommand>,
+    mut shutdown: CancellationToken,
 ) {
     let mut output_frames = [Frame::new(); MAX_SEGMENTS_COUNT];
 
     loop {
         tokio::select! {
+            _ = shutdown.cancelled() => {
+                log::info!("Network TX manager received shutdown");
+                break;
+            }
             Ok(tx_frame) = network_tx_recv.recv() => {
                 let _ = network.lock().await.transmit(tx_frame.frame.as_slice(), OsRng, &mut output_frames, |data| {
                         for chunk in data {
@@ -204,12 +236,17 @@ async fn manage_radio(
     radio: Arc<Mutex<PlatformRadio>>,
     mut command_recv: broadcast::Receiver<RadioCommand>,
     module_send: broadcast::Sender<ModuleReceive>,
+    mut shutdown: CancellationToken,
 ) {
     let mut radio = radio.lock().await;
 
     let mut rx_frame = RadioFrame::new();
 
     loop {
+        if shutdown.is_cancelled() {
+            log::info!("Radio module {} received cancellation", module);
+            break;
+        }
         match command_recv.try_recv() {
             Ok(RadioCommand::Transmit(command)) => {
                 if command.module == module {

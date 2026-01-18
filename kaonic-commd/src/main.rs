@@ -1,8 +1,9 @@
 mod controller;
 mod grpc;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 6)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
     simple_logger::SimpleLogger::new().env().init().ok();
 
     let version = env!("CARGO_PKG_VERSION");
