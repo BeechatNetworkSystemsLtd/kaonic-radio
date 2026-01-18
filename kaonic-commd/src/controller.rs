@@ -207,9 +207,7 @@ async fn manage_rx_network(
             module_recv = module_recv.recv() => {
                 match module_recv {
                     Ok(event) => {
-                        log::debug!("manage_rx_network: module {} -> received radio frame len={} bytes rssi={}", event.module, event.frame.as_slice().len(), event.rssi);
                         let _ = network.lock().await.receive(get_current_time(), &event.frame);
-
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         log::warn!("manage_rx_network: receiver lagged, skipped {} messages", n);
@@ -221,7 +219,7 @@ async fn manage_rx_network(
                     }
                 }
             }
-            _ = tokio::time::sleep(core::time::Duration::from_secs(1)) => {
+            _ = tokio::time::sleep(core::time::Duration::from_millis(100)) => {
 
             }
         }
@@ -288,13 +286,7 @@ async fn manage_radio(
         match command_recv.try_recv() {
             Ok(RadioCommand::Transmit(command)) => {
                 if command.module == module {
-                    log::debug!(
-                        "manage_radio: module {} transmit frame len={}",
-                        module,
-                        command.frame.as_slice().len()
-                    );
                     let _ = radio.lock().unwrap().transmit(&command.frame);
-                    log::debug!("manage_radio: module {} transmit complete", module);
                 }
             }
             Ok(RadioCommand::Configure(command)) => {
@@ -321,24 +313,15 @@ async fn manage_radio(
                 match radio
                     .lock()
                     .unwrap()
-                    .receive(&mut rx_frame, core::time::Duration::from_millis(20))
+                    .receive(&mut rx_frame, core::time::Duration::from_millis(10))
                 {
                     Ok(rr) => {
-                        log::debug!(
-                            "manage_radio: module {} received frame len={} rssi={}",
-                            module,
-                            rx_frame.as_slice().len(),
-                            rr.rssi
-                        );
                         match module_send.send(ModuleReceive {
                             module,
                             frame: rx_frame,
                             rssi: rr.rssi,
                         }) {
-                            Ok(subs) => log::debug!(
-                                "manage_radio: module_send delivered to {} subscribers",
-                                subs
-                            ),
+                            Ok(subs) => {}
                             Err(e) => {
                                 log::warn!("manage_radio: module_send error sending: {:?}", e)
                             }

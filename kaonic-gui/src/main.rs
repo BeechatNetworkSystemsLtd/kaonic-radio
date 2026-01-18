@@ -9,13 +9,14 @@ use glow::HasContext;
 use raw_window_handle::HasRawWindowHandle;
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use tokio::runtime::Runtime;
+use tokio::runtime::{Runtime, Builder};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
 
 mod grpc_client;
 mod ui;
+mod iperf;
 
 pub mod kaonic {
     tonic::include_proto!("kaonic");
@@ -40,8 +41,13 @@ struct Cli {
 fn main() {
     env_logger::init();
 
-    // Create tokio runtime for async gRPC operations
-    let runtime = Arc::new(Runtime::new().expect("Failed to create tokio runtime"));
+    // Create multi-threaded tokio runtime for async gRPC operations
+    let runtime = Arc::new(
+        Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create tokio runtime"),
+    );
 
     // Create gRPC client
     let client = Arc::new(Mutex::new(GrpcClient::new(runtime.clone())));

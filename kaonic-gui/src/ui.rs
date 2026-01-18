@@ -1,11 +1,12 @@
-use crate::grpc_client::{GrpcClient, ReceiveEvent};
+use crate::grpc_client::{GrpcClient, ReceiveEvent, TxTarget};
 use crate::kaonic::{configuration_request::PhyConfig, QoSConfig, RadioModule, RadioPhyConfigOfdm, RadioPhyConfigQpsk};
 use imgui::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+use crate::iperf::{start_client, start_server_monitor};
 
 pub struct AppState {
     // Connection
@@ -66,6 +67,18 @@ pub struct AppState {
     pub ota_file_path: String,
     pub ota_status: String,
     pub ota_version: String,
+        // iPerf
+        pub iperf_server_running: bool,
+        pub iperf_client_running: bool,
+        pub iperf_duration_secs: u64,
+        pub iperf_max_payload: usize,
+        pub iperf_interval_ms: u64,
+        pub iperf_key: u32,
+        pub iperf_status: String,
+        pub iperf_output: String,
+        pub iperf_key_text: String,
+        pub iperf_client_kbps: f64,
+        pub iperf_server_kbps: f64,
 }
 
 impl AppState {
@@ -118,6 +131,18 @@ impl AppState {
             ota_file_path: String::new(),
             ota_status: String::new(),
             ota_version: String::new(),
+            // iPerf defaults
+            iperf_server_running: false,
+            iperf_client_running: false,
+            iperf_duration_secs: 10,
+            iperf_max_payload: 512,
+            iperf_interval_ms: 100,
+            iperf_key: 1,
+            iperf_key_text: "IPRF".to_string(),
+            iperf_client_kbps: 0.0,
+            iperf_server_kbps: 0.0,
+            iperf_status: String::new(),
+            iperf_output: String::new(),
         }
     }
 }
@@ -129,6 +154,9 @@ pub struct RadioGuiApp {
     rx_receiver: Arc<Mutex<Option<mpsc::UnboundedReceiver<ReceiveEvent>>>>,
     pub last_frame: Instant,
     last_tx_time: Instant,
+    // iPerf task handles
+    iperf_server_task: Option<tokio::task::JoinHandle<()>>,
+    iperf_client_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RadioGuiApp {
@@ -144,6 +172,8 @@ impl RadioGuiApp {
             rx_receiver: Arc::new(Mutex::new(None)),
             last_frame: Instant::now(),
             last_tx_time: Instant::now(),
+            iperf_server_task: None,
+            iperf_client_task: None,
         }
     }
 
@@ -203,13 +233,34 @@ impl RadioGuiApp {
                 };
                 
                 drop(state);
-                
-                match self.client.lock().transmit_frame(module, data) {
-                    Ok(latency) => {
-                        let mut state = self.state.lock();
-                        state.last_tx_latency = Some(latency);
-                    }
-                    Err(_) => {}
+
+                // Enqueue non-blocking and await response in background to keep UI responsive
+                let data_len = data.len();
+                let (resp_tx, resp_rx) = oneshot::channel::<Result<u32, String>>();
+                let req = crate::grpc_client::TxRequest { target: TxTarget::Radio(module), payload: data, resp: Some(resp_tx) };
+                if let Err(e) = self.client.lock().tx_enqueue(req) {
+                    let mut s = self.state.lock();
+                    s.status_message = format!("TX enqueue failed: {}", e);
+                } else {
+                    let state_clone = Arc::clone(&self.state);
+                    let runtime = self.runtime.clone();
+                    runtime.spawn(async move {
+                        match resp_rx.await {
+                            Ok(Ok(lat)) => {
+                                let mut s = state_clone.lock();
+                                s.last_tx_latency = Some(lat);
+                                s.status_message = format!("Transmitted {} bytes (latency: {} ms)", data_len, lat);
+                            }
+                            Ok(Err(e)) => {
+                                let mut s = state_clone.lock();
+                                s.status_message = format!("Transmit failed: {}", e);
+                            }
+                            Err(_) => {
+                                let mut s = state_clone.lock();
+                                s.status_message = "Transmit response channel closed".to_string();
+                            }
+                        }
+                    });
                 }
                 
                 self.last_tx_time = now;
@@ -267,6 +318,14 @@ impl RadioGuiApp {
                         }
                         ui.separator();
                         
+                        // iPerf Section
+                        if ui.collapsing_header("iPerf", TreeNodeFlags::empty()) {
+                            ui.indent();
+                            self.draw_iperf_panel(ui);
+                            ui.unindent();
+                        }
+                        ui.separator();
+
                         // OTA Section
                         if ui.collapsing_header("OTA Update", TreeNodeFlags::empty()) {
                             ui.indent();
@@ -358,6 +417,10 @@ impl RadioGuiApp {
         self.client.lock().start_receive_stream(RadioModule::ModuleB, tx.clone());
         // Also subscribe to network-level receive stream and merge
         self.client.lock().start_network_receive_stream(tx);
+
+        // GUI will receive events via the merged `mpsc` receiver we passed to the
+        // `start_receive_stream` calls above. Do not also subscribe to the
+        // broadcast channel here, or events will be duplicated.
         state.rx_stream_active = true;
         state.status_message = "Receive stream started".to_string();
     }
@@ -429,6 +492,7 @@ impl RadioGuiApp {
         } else {
             vec![]
         };
+        
         
         ui.slider("##txpower", 0, 31, &mut state.tx_power);
         
@@ -633,23 +697,63 @@ impl RadioGuiApp {
                     RadioModule::ModuleB
                 };
                 drop(state);
-                self.client.lock().transmit_frame(module, data)
+                // Enqueue and await in background
+                let (resp_tx, resp_rx) = oneshot::channel::<Result<u32, String>>();
+                let req = crate::grpc_client::TxRequest { target: TxTarget::Radio(module), payload: data.clone(), resp: Some(resp_tx) };
+                if let Err(e) = self.client.lock().tx_enqueue(req) {
+                    let mut s = self.state.lock();
+                    s.status_message = format!("TX enqueue failed: {}", e);
+                } else {
+                    let state_clone = Arc::clone(&self.state);
+                    let runtime = self.runtime.clone();
+                    runtime.spawn(async move {
+                        match resp_rx.await {
+                            Ok(Ok(lat)) => {
+                                let mut s = state_clone.lock();
+                                s.last_tx_latency = Some(lat);
+                                s.status_message = format!("Transmitted {} bytes (latency: {} ms)", data_len, lat);
+                            }
+                            Ok(Err(e)) => {
+                                let mut s = state_clone.lock();
+                                s.status_message = format!("Transmit failed: {}", e);
+                            }
+                            Err(_) => {
+                                let mut s = state_clone.lock();
+                                s.status_message = "Transmit response channel closed".to_string();
+                            }
+                        }
+                    });
+                }
             } else {
                 drop(state);
-                self.client.lock().network_transmit(data)
+                // Network target
+                let (resp_tx, resp_rx) = oneshot::channel::<Result<u32, String>>();
+                let req = crate::grpc_client::TxRequest { target: TxTarget::Network, payload: data.clone(), resp: Some(resp_tx) };
+                if let Err(e) = self.client.lock().tx_enqueue(req) {
+                    let mut s = self.state.lock();
+                    s.status_message = format!("TX enqueue failed: {}", e);
+                } else {
+                    let state_clone = Arc::clone(&self.state);
+                    let runtime = self.runtime.clone();
+                    runtime.spawn(async move {
+                        match resp_rx.await {
+                            Ok(Ok(lat)) => {
+                                let mut s = state_clone.lock();
+                                s.last_tx_latency = Some(lat);
+                                s.status_message = format!("Transmitted {} bytes (latency: {} ms)", data_len, lat);
+                            }
+                            Ok(Err(e)) => {
+                                let mut s = state_clone.lock();
+                                s.status_message = format!("Transmit failed: {}", e);
+                            }
+                            Err(_) => {
+                                let mut s = state_clone.lock();
+                                s.status_message = "Transmit response channel closed".to_string();
+                            }
+                        }
+                    });
+                }
             };
-
-            match result {
-                Ok(latency) => {
-                    let mut state = self.state.lock();
-                    state.last_tx_latency = Some(latency);
-                    state.status_message = format!("Transmitted {} bytes (latency: {} ms)", data_len, latency);
-                }
-                Err(e) => {
-                    let mut state = self.state.lock();
-                    state.status_message = format!("Transmit failed: {}", e);
-                }
-            }
         }
         drop(_once_token);
 
@@ -761,6 +865,174 @@ impl RadioGuiApp {
         if !ota_status.is_empty() {
             ui.text_wrapped(&ota_status);
         }
+    }
+
+    fn draw_iperf_panel(&mut self, ui: &Ui) {
+        // Snapshot state to avoid holding the mutex while rendering UI (prevents deadlocks)
+        let (server_running, client_running, mut duration_i32, mut payload_i32, mut interval_i32, mut key_text, status_snapshot, output_snapshot, client_kbps_snapshot, server_kbps_snapshot) = {
+            let s = self.state.lock();
+            (
+                s.iperf_server_running,
+                s.iperf_client_running,
+                s.iperf_duration_secs as i32,
+                s.iperf_max_payload as i32,
+                s.iperf_interval_ms as i32,
+                s.iperf_key_text.clone(),
+                s.iperf_status.clone(),
+                s.iperf_output.clone(),
+                s.iperf_client_kbps,
+                s.iperf_server_kbps,
+            )
+        };
+
+            let total_kbps_snapshot = client_kbps_snapshot + server_kbps_snapshot;
+
+        ui.text("iPerf (server + client)");
+        ui.separator();
+
+        // Each setting on its own row: label -> input
+        ui.text("Duration (s):");
+        ui.same_line();
+        ui.set_next_item_width(100.0);
+        ui.input_int("##iperf_dur", &mut duration_i32).build();
+
+        ui.separator();
+        ui.text("Max payload (B):");
+        ui.same_line();
+        ui.set_next_item_width(100.0);
+        ui.input_int("##iperf_size", &mut payload_i32).build();
+        
+
+        ui.separator();
+        ui.text("Interval (ms, for latency):");
+        ui.same_line();
+        ui.set_next_item_width(100.0);
+        ui.input_int("##iperf_int", &mut interval_i32).build();
+        
+
+        ui.separator();
+        ui.text("Key (4 chars):");
+        ui.same_line();
+        ui.set_next_item_width(200.0);
+        ui.input_text("##iperf_key_text", &mut key_text).build();
+        if key_text.len() > 4 {
+            key_text.truncate(4);
+        }
+
+        // persist changes immediately so +/- and inputs work without pressing Start
+        {
+            let mut s = self.state.lock();
+            s.iperf_duration_secs = duration_i32.max(0) as u64;
+            s.iperf_max_payload = payload_i32.max(1) as usize;
+            s.iperf_interval_ms = interval_i32.max(1) as u64;
+            s.iperf_key_text = key_text.clone();
+            // convert key_text to u32 (big-endian)
+            let mut kb = [0u8; 4];
+            for (i, &b) in key_text.as_bytes().iter().enumerate().take(4) {
+                kb[i] = b;
+            }
+            s.iperf_key = u32::from_be_bytes(kb);
+        }
+
+        ui.separator();
+
+        // Server control (internal monitor sampling `rx_events`)
+        if server_running {
+            if ui.button("Stop Server") {
+                let mut s = self.state.lock();
+                s.iperf_server_running = false;
+                s.iperf_status = "Stopping server...".to_string();
+            }
+        } else {
+            if ui.button("Start Server") {
+                {
+                    let mut s = self.state.lock();
+                    s.iperf_server_running = true;
+                    s.iperf_status = "Server running".to_string();
+                }
+                let state_clone = Arc::clone(&self.state);
+                // pass client and key to the server monitor
+                let client_clone = Arc::clone(&self.client);
+                let key_val = {
+                    let s = self.state.lock();
+                    s.iperf_key
+                };
+                let _h = start_server_monitor(client_clone, state_clone, key_val);
+            }
+        }
+
+        ui.same_line();
+
+        // Client control (internal sender thread)
+        if client_running {
+            if ui.button("Stop Client") {
+                let mut s = self.state.lock();
+                s.iperf_client_running = false;
+                s.iperf_status = "Stopping client...".to_string();
+            }
+        } else {
+            if ui.button("Start Client") {
+                // Persist any updated parameters then start
+                {
+                    let mut s = self.state.lock();
+                    s.iperf_duration_secs = duration_i32.max(0) as u64;
+                    s.iperf_max_payload = payload_i32.max(1) as usize;
+                    s.iperf_interval_ms = interval_i32.max(1) as u64;
+                    s.iperf_client_running = true;
+                    s.iperf_status = "Client running".to_string();
+                }
+
+                let client = Arc::clone(&self.client);
+                let state_clone = Arc::clone(&self.state);
+                let dur = duration_i32.max(0) as u64;
+                let size = payload_i32.max(1) as usize;
+                let interval = interval_i32.max(1) as u64;
+                let key_val = {
+                    let s = self.state.lock();
+                    s.iperf_key
+                };
+                let _h = start_client(client, state_clone, dur, size, interval, key_val);
+            }
+        }
+
+        ui.separator();
+        ui.text(format!("Status: {}", status_snapshot));
+        ui.text(format!("Total: {:.2} kB/s", total_kbps_snapshot));
+        ui.text(format!("Client: {:.2} kB/s", client_kbps_snapshot));
+        ui.text(format!("Server: {:.2} kB/s", server_kbps_snapshot));
+        if ui.button("Show Output") {
+            ui.open_popup("iperf_output");
+        }
+
+        // Output popup (render last N bytes inside a scrollable child to avoid UI hangs)
+        ui.popup("iperf_output", || {
+            // Use snapshot to avoid locking while rendering
+            let output = output_snapshot.clone();
+
+            // Truncate to last 32 KB for display
+            const MAX_DISPLAY: usize = 32 * 1024;
+            let display = if output.len() > MAX_DISPLAY {
+                let start = output.len() - MAX_DISPLAY;
+                format!("...[truncated]...\n{}", &output[start..])
+            } else {
+                output.clone()
+            };
+
+            ui.child_window("iperf_output_child")
+                .size([0.0, 300.0])
+                .border(true)
+                .flags(WindowFlags::ALWAYS_VERTICAL_SCROLLBAR)
+                .build(|| {
+                    for line in display.lines() {
+                        ui.text_wrapped(line);
+                    }
+                });
+
+            ui.same_line();
+            if ui.button("Close") {
+                ui.close_current_popup();
+            }
+        });
     }
     
     fn fetch_ota_version(&self, ip: String) {
