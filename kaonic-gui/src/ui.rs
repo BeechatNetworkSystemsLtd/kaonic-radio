@@ -1180,19 +1180,13 @@ impl RadioGuiApp {
                     }
                     ui.next_column();
 
-                    // Preview short; if packet looks like a network packet, show packet id
+                    // Preview short: try to detect an embedded network header and extract ID;
+                    // show parsed ID when available, otherwise mark as Binary.
                     let mut preview_prefix = String::new();
-                    if event.packet_type == crate::grpc_client::PacketType::Network {
-                        // For network-origin packets, show "Binary" in preview per request
-                        preview_prefix = "Binary ".to_string();
+                    if let Some(id) = crate::grpc_client::parse_network_id(&event.frame_data) {
+                        preview_prefix = format!("ID:{} ", id);
                     } else {
-                        // For regular module packets: try to detect embedded network header and extract ID,
-                        // otherwise mark as Binary.
-                        if let Some(id) = crate::grpc_client::parse_network_id(&event.frame_data) {
-                            preview_prefix = format!("ID:{} ", id);
-                        } else {
-                            preview_prefix = "Binary ".to_string();
-                        }
+                        preview_prefix = "Binary ".to_string();
                     }
 
                     // Show only parsed ID or "Binary" in the preview column (no hex dump)

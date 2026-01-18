@@ -88,10 +88,10 @@ impl RadioController {
         let mut machine = create_machine()?;
 
         // Increase channel capacities to reduce risk of lagging drops under load
-        let (module_send, _) = broadcast::channel(32);
-        let (command_send, _) = broadcast::channel(32);
-        let (network_rx_send, _) = broadcast::channel(32);
-        let (network_tx_send, _) = broadcast::channel(32);
+        let (module_send, _) = broadcast::channel(256);
+        let (command_send, _) = broadcast::channel(128);
+        let (network_rx_send, _) = broadcast::channel(128);
+        let (network_tx_send, _) = broadcast::channel(128);
 
         let mut worker_handles: Vec<JoinHandle<()>> = Vec::new();
 
