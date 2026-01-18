@@ -1,4 +1,4 @@
-use crate::grpc_client::{GrpcClient, PacketType, ReceiveEvent};
+use crate::grpc_client::{GrpcClient, ReceiveEvent};
 use crate::kaonic::{configuration_request::PhyConfig, QoSConfig, RadioModule, RadioPhyConfigOfdm, RadioPhyConfigQpsk};
 use imgui::*;
 use parking_lot::Mutex;
@@ -48,6 +48,7 @@ pub struct AppState {
     pub rx_events: Vec<ReceiveEvent>,
     pub rx_stream_active: bool,
     pub max_rx_events: usize,
+    pub selected_index: Option<usize>,
 
     // RSSI visualization
     pub rssi_history: Vec<(Instant, i32)>, // (timestamp, rssi)
@@ -102,6 +103,7 @@ impl AppState {
             rx_events: Vec::new(),
             rx_stream_active: false,
             max_rx_events: 100,
+            selected_index: None,
 
             rssi_history: Vec::new(),
             rssi_window_secs: 30.0,
@@ -766,62 +768,122 @@ impl RadioGuiApp {
     }
 
     fn draw_receive_panel(&mut self, ui: &Ui) {
-        let mut state = self.state.lock();
-        let _enabled = state.connected;
+        // Snapshot minimal state so we don't hold the lock across UI calls
+        let total_packets = { let s = self.state.lock(); s.rx_events.len() };
 
         // Packet statistics
-        ui.text(format!("Total: {} packets", state.rx_events.len()));
+        ui.text(format!("Total: {} packets", total_packets));
 
         if ui.button("Clear") {
-            state.rx_events.clear();
-            state.rssi_history.clear();
-            state.waterfall_data.clear();
+            let mut s = self.state.lock();
+            s.rx_events.clear();
+            s.rssi_history.clear();
+            s.waterfall_data.clear();
         }
 
         ui.separator();
 
-        // Display received frames
+        // Snapshot events to iterate without holding the lock
+        let events_snapshot = { let s = self.state.lock(); s.rx_events.clone() };
+
         ui.child_window("rx_events")
             .size([0.0, 0.0])
             .build(|| {
-                for (_idx, event) in state.rx_events.iter().rev().enumerate() {
-                        // Small type column removed
-                        ui.same_line();
-                    
-                    // Main content area
-                    ui.group(|| {
-                        // Header: time rssi latency packet_size
-                        ui.text(format!("{} {}dBm {}ms {}B", 
-                            event.timestamp.format("%H:%M:%S%.3f"),
-                            event.rssi,
-                            event.latency,
-                            event.frame_data.len()
-                        ));
+                // Table header
+                ui.columns(6, "rx_table_cols", false);
+                ui.text("Time"); ui.next_column();
+                ui.text("Source"); ui.next_column();
+                ui.text("Size"); ui.next_column();
+                ui.text("RSSI"); ui.next_column();
+                ui.text("Latency"); ui.next_column();
+                ui.text("Preview"); ui.next_column();
+                ui.separator();
 
-                        // No reticulum-specific content
-                        
-                        // Packet data hex (truncated to 64 bytes)
-                        let hex_bytes: Vec<u8> = event.frame_data.iter().take(64).copied().collect();
-                        let hex_str = hex_bytes.iter()
-                            .map(|b| format!("{:02X}", b))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        
-                        // Display hex data with grey color
-                        ui.text_colored([0.6, 0.6, 0.7, 1.0], format!("  {}", hex_str));
-                        
-                        // Packet data ASCII (. for non-printable)
-                        let ascii_str: String = hex_bytes.iter()
-                            .map(|&b| if b >= 0x20 && b <= 0x7E { b as char } else { '.' })
-                            .collect();
-                        
-                        // Display ASCII data with grey color
-                        ui.text_colored([0.6, 0.6, 0.7, 1.0], format!("  {}", ascii_str));
-                    });
-                    
+                // Show rows (newest last) - we display newest at top
+                for (i, event) in events_snapshot.iter().rev().enumerate() {
+                    let idx = events_snapshot.len().saturating_sub(1 + i);
+
+                    // Time column
+                    let time_str = event.timestamp.format("%H:%M:%S%.3f").to_string();
+                    if ui.selectable(&time_str) {
+                        let mut s = self.state.lock();
+                        s.selected_index = Some(idx);
+                    }
+                    ui.next_column();
+
+                    // Source column (module or network)
+                    let source = match event.module {
+                        0 => "Module A",
+                        1 => "Module B",
+                        _ => "Network",
+                    };
+                    ui.text(source); ui.next_column();
+
+                    // Size
+                    ui.text(format!("{} B", event.frame_data.len())); ui.next_column();
+
+                    // RSSI
+                    ui.text(format!("{} dBm", event.rssi)); ui.next_column();
+
+                    // Latency
+                    ui.text(format!("{} ms", event.latency)); ui.next_column();
+
+                    // Preview short
+                    let short = event.frame_data.iter().take(8).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                    ui.text(short); ui.next_column();
+
                     ui.separator();
                 }
+
+                ui.columns(1, "", false);
             });
+
+        // Packet preview area (below table)
+        ui.separator();
+        ui.group(|| {
+            ui.text("Packet Preview");
+            ui.separator();
+
+            // Clone the selected event under the lock so we can render without holding it
+            let maybe_ev = {
+                let s = self.state.lock();
+                if let Some(sel) = s.selected_index {
+                    if sel < s.rx_events.len() {
+                        Some(s.rx_events[sel].clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some(ev) = maybe_ev {
+                ui.text(format!("Time: {}", ev.timestamp.format("%Y-%m-%d %H:%M:%S%.3f")));
+                ui.text(format!("Source: {}", match ev.module {0 => "Module A", 1 => "Module B", _ => "Network"}));
+                ui.text(format!("Size: {} B", ev.frame_data.len()));
+                ui.text(format!("RSSI: {} dBm", ev.rssi));
+                ui.text(format!("Latency: {} ms", ev.latency));
+                ui.separator();
+                // Hex dump
+                let mut hex_lines: Vec<String> = Vec::new();
+                for chunk in ev.frame_data.chunks(16) {
+                    let hex = chunk.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                    hex_lines.push(hex);
+                }
+                for line in hex_lines {
+                    ui.text(line);
+                }
+            } else {
+                // Determine whether the selection is out-of-range or absent
+                let selection_state = { let s = self.state.lock(); s.selected_index };
+                if selection_state.is_some() {
+                    ui.text("Selected index out of range");
+                } else {
+                    ui.text("No packet selected");
+                }
+            }
+        });
     }
 
     fn draw_status_bar(&mut self, ui: &Ui) {
