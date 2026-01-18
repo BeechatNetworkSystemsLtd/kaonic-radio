@@ -1,7 +1,7 @@
 mod controller;
 mod grpc;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 6)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     simple_logger::SimpleLogger::new().env().init().ok();

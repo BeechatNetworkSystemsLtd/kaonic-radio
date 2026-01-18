@@ -21,8 +21,21 @@ pub mod kaonic {
     tonic::include_proto!("kaonic");
 }
 
+use clap::Parser;
 use grpc_client::GrpcClient;
 use ui::{AppState, RadioGuiApp};
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Server IP address to pre-fill into the IP field (e.g. 192.168.10.1)
+    #[arg(short, long)]
+    ip: Option<String>,
+
+    /// Automatically connect and start receive stream on startup
+    #[arg(short = 'a', long)]
+    auto_connect: bool,
+}
 
 fn main() {
     env_logger::init();
@@ -111,7 +124,44 @@ fn main() {
         .expect("Failed to initialize renderer");
 
     // Create app
-    let mut app = RadioGuiApp::new(client, state, runtime);
+    let mut app = RadioGuiApp::new(client.clone(), state.clone(), runtime);
+
+    // Apply CLI options
+    let cli = Cli::parse();
+    if let Some(ip) = cli.ip {
+        let mut s = state.lock();
+        s.server_addr = ip.clone();
+        drop(s);
+
+        let addr = format!("http://{}:8080", ip);
+        client.lock().set_server_addr(addr);
+    }
+
+    if cli.auto_connect {
+        // attempt to connect using the client's configured server address
+        {
+            let mut s = state.lock();
+            s.status_message = "Connecting...".to_string();
+        }
+
+        let connect_result = client.lock().get_device_info();
+        match connect_result {
+            Ok(_) => {
+                let mut s = state.lock();
+                s.connected = true;
+                s.status_message = "Connected successfully".to_string();
+                drop(s);
+
+                // start receive stream (uses client + state)
+                app.start_receiving();
+            }
+            Err(e) => {
+                let mut s = state.lock();
+                s.connected = false;
+                s.status_message = format!("Auto-connect failed: {}", e);
+            }
+        }
+    }
 
     // Main loop
     event_loop

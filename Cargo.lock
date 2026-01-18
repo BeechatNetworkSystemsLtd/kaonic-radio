@@ -1697,6 +1697,7 @@ name = "kaonic-gui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap",
  "env_logger",
  "glow",
  "glutin",

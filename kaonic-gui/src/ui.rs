@@ -346,7 +346,7 @@ impl RadioGuiApp {
         }
     }
 
-    fn start_receiving(&mut self) {
+    pub fn start_receiving(&mut self) {
         let mut state = self.state.lock();
         if !state.connected || state.rx_stream_active {
             return;
@@ -786,8 +786,16 @@ impl RadioGuiApp {
         // Snapshot events to iterate without holding the lock
         let events_snapshot = { let s = self.state.lock(); s.rx_events.clone() };
 
-        ui.child_window("rx_events")
-            .size([0.0, 0.0])
+        // Determine available space and split into table + preview panels
+        let avail = ui.content_region_avail();
+        let table_height = (avail[1] * 0.65).max(100.0);
+        let preview_height = (avail[1] - table_height).max(80.0);
+
+        // Top: receive table
+        ui.child_window("rx_events_table")
+            .size([0.0, table_height])
+            .border(true)
+            .flags(WindowFlags::ALWAYS_VERTICAL_SCROLLBAR)
             .build(|| {
                 // Table header
                 ui.columns(6, "rx_table_cols", false);
@@ -838,52 +846,57 @@ impl RadioGuiApp {
                 ui.columns(1, "", false);
             });
 
-        // Packet preview area (below table)
-        ui.separator();
-        ui.group(|| {
-            ui.text("Packet Preview");
-            ui.separator();
+        // Bottom: preview panel (separate child window)
+        ui.child_window("rx_events_preview")
+            .size([0.0, preview_height])
+            .border(true)
+            .flags(WindowFlags::ALWAYS_VERTICAL_SCROLLBAR | WindowFlags::HORIZONTAL_SCROLLBAR)
+            .build(|| {
+                ui.text("Packet Preview");
+                ui.separator();
 
-            // Clone the selected event under the lock so we can render without holding it
-            let maybe_ev = {
-                let s = self.state.lock();
-                if let Some(sel) = s.selected_index {
-                    if sel < s.rx_events.len() {
-                        Some(s.rx_events[sel].clone())
+                // Clone the selected event under the lock so we can render without holding it
+                let maybe_ev = {
+                    let s = self.state.lock();
+                    if let Some(sel) = s.selected_index {
+                        if sel < s.rx_events.len() {
+                            Some(s.rx_events[sel].clone())
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
-                } else {
-                    None
-                }
-            };
+                };
 
-            if let Some(ev) = maybe_ev {
-                ui.text(format!("Time: {}", ev.timestamp.format("%Y-%m-%d %H:%M:%S%.3f")));
-                ui.text(format!("Source: {}", match ev.module {0 => "Module A", 1 => "Module B", _ => "Network"}));
-                ui.text(format!("Size: {} B", ev.frame_data.len()));
-                ui.text(format!("RSSI: {} dBm", ev.rssi));
-                ui.text(format!("Latency: {} ms", ev.latency));
-                ui.separator();
-                // Hex dump
-                let mut hex_lines: Vec<String> = Vec::new();
-                for chunk in ev.frame_data.chunks(16) {
-                    let hex = chunk.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                    hex_lines.push(hex);
-                }
-                for line in hex_lines {
-                    ui.text(line);
-                }
-            } else {
-                // Determine whether the selection is out-of-range or absent
-                let selection_state = { let s = self.state.lock(); s.selected_index };
-                if selection_state.is_some() {
-                    ui.text("Selected index out of range");
+                if let Some(ev) = maybe_ev {
+                    ui.text(format!("Time: {}", ev.timestamp.format("%Y-%m-%d %H:%M:%S%.3f")));
+                    ui.text(format!("Source: {}", match ev.module {0 => "Module A", 1 => "Module B", _ => "Network"}));
+                    ui.text(format!("Size: {} B", ev.frame_data.len()));
+                    ui.text(format!("RSSI: {} dBm", ev.rssi));
+                    ui.text(format!("Latency: {} ms", ev.latency));
+                    ui.separator();
+                    // Hex dump
+                    let mut hex_lines: Vec<String> = Vec::new();
+                    for chunk in ev.frame_data.chunks(16) {
+                        let hex = chunk.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                        hex_lines.push(hex);
+                    }
+                    for line in hex_lines {
+                        ui.text(line);
+                    }
                 } else {
-                    ui.text("No packet selected");
+                    // Determine whether the selection is out-of-range or absent
+                    let selection_state = { let s = self.state.lock(); s.selected_index };
+                    if selection_state.is_some() {
+                        ui.text("Selected index out of range");
+                    } else {
+                        ui.text("No packet selected");
+                    }
                 }
-            }
-        });
+            });
+
+        // (preview rendered in dedicated child window above)
     }
 
     fn draw_status_bar(&mut self, ui: &Ui) {
