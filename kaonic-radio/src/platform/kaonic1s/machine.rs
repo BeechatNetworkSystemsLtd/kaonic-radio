@@ -82,7 +82,7 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
         irq_gpio: LinuxGpioConfig { line_name: "PD9" },
         spi: LinuxSpiConfig {
             path: "/dev/spidev6.0",
-            max_speed: 5_000_000,
+            max_speed: 15_000_000,
         },
         flt_v1_gpio: LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
@@ -107,7 +107,7 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
         irq_gpio: LinuxGpioConfig { line_name: "PE15" },
         spi: LinuxSpiConfig {
             path: "/dev/spidev3.0",
-            max_speed: 5_000_000,
+            max_speed: 15_000_000,
         },
         flt_v1_gpio: LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
