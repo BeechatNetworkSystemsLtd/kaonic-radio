@@ -153,17 +153,28 @@ impl Radio for RadioService {
                     module_recv = sub.recv() => {
                         match module_recv {
                             Ok(rx) => {
-                                if tx.send(Ok(super::kaonic::ReceiveResponse {
-                                            module: module as i32,
-                                            frame: Some(encode_frame(rx.frame.as_slice())),
-                                            rssi: rx.rssi as i32,
-                                            latency: 0,
-                                        }
-                                    )).await.is_err() {
+                                // Only forward frames that match the requested module
+                                if rx.module != module {
+                                    continue;
+                                }
+
+                                log::debug!("send rx for module {}", module);
+                                let resp = super::kaonic::ReceiveResponse {
+                                    module: rx.module as i32,
+                                    frame: Some(encode_frame(rx.frame.as_slice())),
+                                    rssi: rx.rssi as i32,
+                                    latency: 0,
+                                };
+
+                                if tx.send(Ok(resp)).await.is_err() {
                                     break;
                                 }
                             }
-                            Err(_) => break, // channel closed/lagged
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                log::warn!("receive_stream: subscriber lagged, skipped {} messages", n);
+                                continue;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
                 }

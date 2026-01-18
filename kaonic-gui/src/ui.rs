@@ -354,14 +354,9 @@ impl RadioGuiApp {
 
         let (tx, rx) = mpsc::unbounded_channel();
         *self.rx_receiver.lock() = Some(rx);
-
-        let module = if state.selected_module == 0 {
-            RadioModule::ModuleA
-        } else {
-            RadioModule::ModuleB
-        };
-
-        self.client.lock().start_receive_stream(module, tx);
+        // Start receive streams for both modules and merge into the same channel
+        self.client.lock().start_receive_stream(RadioModule::ModuleA, tx.clone());
+        self.client.lock().start_receive_stream(RadioModule::ModuleB, tx);
         state.rx_stream_active = true;
         state.status_message = "Receive stream started".to_string();
     }
@@ -370,13 +365,33 @@ impl RadioGuiApp {
         ui.text("Radio");
         ui.separator();
 
-        let mut state = self.state.lock();
+        // Handle module selection and possible stream restart without holding
+        // the `state` lock while calling `start_receiving` (avoids borrow conflicts).
+        {
+            let mut state = self.state.lock();
 
-        ui.text("Module:");
-        ui.same_line();
-        ui.radio_button("Module A", &mut state.selected_module, 0);
-        ui.same_line();
-        ui.radio_button("Module B", &mut state.selected_module, 1);
+            ui.text("Module:");
+            ui.same_line();
+            let prev_selected = state.selected_module;
+            ui.radio_button("Module A", &mut state.selected_module, 0);
+            ui.same_line();
+            ui.radio_button("Module B", &mut state.selected_module, 1);
+
+            let selected_changed = prev_selected != state.selected_module;
+            let was_connected = state.connected;
+            let was_rx_active = state.rx_stream_active;
+
+            if selected_changed && was_connected && was_rx_active {
+                state.rx_stream_active = false;
+                state.status_message = "Restarting receive stream...".to_string();
+                // drop lock before performing operations that borrow `self` mutably
+                drop(state);
+                *self.rx_receiver.lock() = None;
+                self.start_receiving();
+            }
+        }
+
+        let mut state = self.state.lock();
 
         ui.text("Frequency (MHz):");
         ui.set_next_item_width(-1.0);
