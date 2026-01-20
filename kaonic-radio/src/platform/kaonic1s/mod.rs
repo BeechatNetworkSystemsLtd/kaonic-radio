@@ -183,11 +183,11 @@ impl Radio for Kaonic1SRadio {
         match result {
             Ok(_) => {
                 log::trace!(
-                    "RX ({}): RSSI:{}dBm {}dBm {}B",
+                    "RX ({}): {}B RSSI:{}dBm {}dBm ",
                     self.radio.name(),
+                    self.bb_frame.len(),
                     edv,
-                    self.noise_dbm,
-                    frame.len()
+                    self.noise_dbm
                 );
 
                 frame.copy_from_slice(self.bb_frame.as_slice());
