@@ -1,6 +1,7 @@
-use clap::{Parser, Subcommand, ValueEnum};
-use log::{error, info, warn};
-use std::time::{Duration, Instant};
+use clap::Parser;
+use crc32fast::Hasher;
+use log::{error, warn};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 
@@ -9,259 +10,50 @@ pub mod kaonic {
 }
 
 use kaonic::{
-    radio_client::RadioClient, ConfigurationRequest, RadioFrame, RadioModule,
-    RadioPhyConfigOfdm, ReceiveRequest, TransmitRequest,
+    radio_client::RadioClient, RadioFrame, RadioModule, ReceiveRequest, TransmitRequest,
 };
 
 const DEFAULT_COMMD_ADDR: &str = "http://127.0.0.1:8080";
-const DEFAULT_PACKET_SIZE: usize = 512;
 const DEFAULT_DURATION_SECS: u64 = 10;
-const DEFAULT_INTERVAL_MS: u64 = 100;
-const MAX_PAYLOAD_SIZE: usize = 3600;
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum TestMode {
-    Bandwidth,
-    Latency,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum Module {
-    A,
-    B,
-}
-
-impl From<Module> for RadioModule {
-    fn from(m: Module) -> Self {
-        match m {
-            Module::A => RadioModule::ModuleA,
-            Module::B => RadioModule::ModuleB,
-        }
-    }
-}
-
-impl From<Module> for i32 {
-    fn from(m: Module) -> Self {
-        match m {
-            Module::A => RadioModule::ModuleA as i32,
-            Module::B => RadioModule::ModuleB as i32,
-        }
-    }
-}
+const DEFAULT_PACKET_SIZE: usize = 256;
+const MIN_PACKET_SIZE: usize = 24; // MAGIC(4) + SEQ(4) + TIMESTAMP(8) + padding(4) + CRC(4)
+const MAX_PACKET_SIZE: usize = 2048;
+const RESPONSE_TIMEOUT_MS: u64 = 2000;
 
 #[derive(Parser, Debug)]
 #[command(name = "kaonic-iperf")]
-#[command(about = "Network performance testing tool for Kaonic radio", long_about = None)]
+#[command(about = "Simple RTT and throughput measurement for Kaonic radio")]
 struct Args {
     /// kaonic-commd gRPC address
-    #[arg(short = 'a', long, default_value = DEFAULT_COMMD_ADDR)]
+    #[arg(default_value = DEFAULT_COMMD_ADDR)]
     address: String,
 
-    /// Radio module to use
-    #[arg(short = 'm', long, default_value = "a")]
-    module: Module,
+    /// Run as server (responder)
+    #[arg(long, conflicts_with = "client")]
+    server: bool,
 
-    #[command(subcommand)]
-    command: Commands,
+    /// Run as client (initiator)
+    #[arg(long, conflicts_with = "server")]
+    client: bool,
+
+    /// Test duration in seconds
+    #[arg(long, default_value_t = DEFAULT_DURATION_SECS)]
+    duration: u64,
+
+    /// Packet payload size in bytes (24-2048)
+    #[arg(long, short = 's', default_value_t = DEFAULT_PACKET_SIZE)]
+    size: usize,
 }
 
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Run as server (receiver)
-    Server {
-        /// Receive timeout in milliseconds (0 = infinite)
-        #[arg(short = 't', long, default_value = "0")]
-        timeout: u32,
-    },
-    /// Run as client (sender)
-    Client {
-        /// Test mode
-        #[arg(short = 'M', long, default_value = "bandwidth")]
-        mode: TestMode,
+// Packet structure:
+// MAGIC (4) + SEQ (4) + TIMESTAMP (8) + PADDING (N) + CRC32 (4)
+// Minimum size: 24 bytes
+const MAGIC: [u8; 4] = [0x4B, 0x52, 0x54, 0x54]; // "KRTT"
 
-        /// Packet size in bytes (max 3600)
-        #[arg(short = 's', long, default_value_t = DEFAULT_PACKET_SIZE)]
-        size: usize,
-
-        /// Test duration in seconds
-        #[arg(short = 'd', long, default_value_t = DEFAULT_DURATION_SECS)]
-        duration: u64,
-
-        /// Interval between packets in milliseconds (for latency test)
-        #[arg(short = 'i', long, default_value_t = DEFAULT_INTERVAL_MS)]
-        interval: u64,
-
-        /// Number of packets to send (overrides duration if set)
-        #[arg(short = 'n', long)]
-        count: Option<u64>,
-
-        /// Wait for response (bidirectional test)
-        #[arg(short = 'b', long)]
-        bidirectional: bool,
-    },
-    /// Configure radio parameters
-    Configure {
-        /// Frequency in kHz
-        #[arg(short = 'f', long, default_value = "915000")]
-        freq: u32,
-
-        /// Channel number
-        #[arg(short = 'c', long, default_value = "0")]
-        channel: u32,
-
-        /// TX power in dBm
-        #[arg(short = 'p', long, default_value = "14")]
-        tx_power: u32,
-
-        /// OFDM MCS (0-6)
-        #[arg(long, default_value = "3")]
-        mcs: u32,
-
-        /// OFDM option (1-4)
-        #[arg(long, default_value = "1")]
-        opt: u32,
-    },
-}
-
-#[derive(Debug, Default)]
-struct Statistics {
-    packets_sent: u64,
-    packets_received: u64,
-    bytes_sent: u64,
-    bytes_received: u64,
-    latencies_ms: Vec<u32>,
-    start_time: Option<Instant>,
-    end_time: Option<Instant>,
-}
-
-impl Statistics {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn start(&mut self) {
-        self.start_time = Some(Instant::now());
-    }
-
-    fn stop(&mut self) {
-        self.end_time = Some(Instant::now());
-    }
-
-    fn add_sent(&mut self, bytes: u64) {
-        self.packets_sent += 1;
-        self.bytes_sent += bytes;
-    }
-
-    fn add_received(&mut self, bytes: u64, latency_ms: u32) {
-        self.packets_received += 1;
-        self.bytes_received += bytes;
-        self.latencies_ms.push(latency_ms);
-    }
-
-    fn duration(&self) -> Duration {
-        match (self.start_time, self.end_time) {
-            (Some(start), Some(end)) => end.duration_since(start),
-            (Some(start), None) => Instant::now().duration_since(start),
-            _ => Duration::ZERO,
-        }
-    }
-
-    fn throughput_bps(&self) -> f64 {
-        let duration_secs = self.duration().as_secs_f64();
-        if duration_secs > 0.0 {
-            (self.bytes_sent as f64 * 8.0) / duration_secs
-        } else {
-            0.0
-        }
-    }
-
-    fn rx_throughput_bps(&self) -> f64 {
-        let duration_secs = self.duration().as_secs_f64();
-        if duration_secs > 0.0 {
-            (self.bytes_received as f64 * 8.0) / duration_secs
-        } else {
-            0.0
-        }
-    }
-
-    fn avg_latency_ms(&self) -> f64 {
-        if self.latencies_ms.is_empty() {
-            0.0
-        } else {
-            self.latencies_ms.iter().map(|&l| l as f64).sum::<f64>()
-                / self.latencies_ms.len() as f64
-        }
-    }
-
-    fn min_latency_ms(&self) -> u32 {
-        self.latencies_ms.iter().copied().min().unwrap_or(0)
-    }
-
-    fn max_latency_ms(&self) -> u32 {
-        self.latencies_ms.iter().copied().max().unwrap_or(0)
-    }
-
-    fn jitter_ms(&self) -> f64 {
-        if self.latencies_ms.len() < 2 {
-            return 0.0;
-        }
-        let avg = self.avg_latency_ms();
-        let variance: f64 = self
-            .latencies_ms
-            .iter()
-            .map(|&l| {
-                let diff = l as f64 - avg;
-                diff * diff
-            })
-            .sum::<f64>()
-            / self.latencies_ms.len() as f64;
-        variance.sqrt()
-    }
-
-    fn packet_loss_percent(&self) -> f64 {
-        if self.packets_sent == 0 {
-            0.0
-        } else {
-            ((self.packets_sent - self.packets_received) as f64 / self.packets_sent as f64) * 100.0
-        }
-    }
-
-    fn print_summary(&self, mode: &str) {
-        println!("\n========================================");
-        println!("  Kaonic iPerf {} Summary", mode);
-        println!("========================================");
-        println!("Duration:        {:.2} s", self.duration().as_secs_f64());
-        println!("Packets sent:    {}", self.packets_sent);
-        println!("Packets recv:    {}", self.packets_received);
-        println!("Bytes sent:      {} ({:.2} KB)", self.bytes_sent, self.bytes_sent as f64 / 1024.0);
-        println!("Bytes recv:      {} ({:.2} KB)", self.bytes_received, self.bytes_received as f64 / 1024.0);
-        println!("----------------------------------------");
-        println!("TX Throughput:   {}", format_throughput(self.throughput_bps()));
-        println!("RX Throughput:   {}", format_throughput(self.rx_throughput_bps()));
-        println!("----------------------------------------");
-
-        if !self.latencies_ms.is_empty() {
-            println!("Latency (min):   {} ms", self.min_latency_ms());
-            println!("Latency (avg):   {:.2} ms", self.avg_latency_ms());
-            println!("Latency (max):   {} ms", self.max_latency_ms());
-            println!("Jitter:          {:.2} ms", self.jitter_ms());
-        }
-
-        if self.packets_sent > 0 && self.packets_received < self.packets_sent {
-            println!("Packet loss:     {:.2}%", self.packet_loss_percent());
-        }
-        println!("========================================\n");
-    }
-}
-
-fn format_throughput(bps: f64) -> String {
-    if bps >= 1_000_000.0 {
-        format!("{:.2} Mbps", bps / 1_000_000.0)
-    } else if bps >= 1_000.0 {
-        format!("{:.2} Kbps", bps / 1_000.0)
-    } else {
-        format!("{:.2} bps", bps)
-    }
+fn compute_crc(data: &[u8]) -> u32 {
+    let mut hasher = Hasher::new();
+    hasher.update(data);
+    hasher.finalize()
 }
 
 fn encode_frame(buffer: &[u8]) -> RadioFrame {
@@ -293,102 +85,94 @@ fn decode_frame(frame: &RadioFrame) -> Vec<u8> {
     buffer
 }
 
-const MAGIC_HEADER: [u8; 4] = [0x4B, 0x49, 0x50, 0x46]; // "KIPF" - Kaonic IPerf
-
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum PacketType {
-    Data = 0x01,
-    Ack = 0x02,
-    Ping = 0x03,
-    Pong = 0x04,
-}
-
-impl TryFrom<u8> for PacketType {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x01 => Ok(PacketType::Data),
-            0x02 => Ok(PacketType::Ack),
-            0x03 => Ok(PacketType::Ping),
-            0x04 => Ok(PacketType::Pong),
-            _ => Err(()),
-        }
-    }
-}
-
-fn create_test_packet(packet_type: PacketType, seq: u32, payload_size: usize) -> Vec<u8> {
-    let mut packet = Vec::with_capacity(payload_size);
-
-    // Header (12 bytes)
-    packet.extend_from_slice(&MAGIC_HEADER);
-    packet.push(packet_type as u8);
-    packet.push(0); // reserved
-    packet.push(0); // reserved
-    packet.push(0); // reserved
-    packet.extend_from_slice(&seq.to_le_bytes());
-
-    // Timestamp (8 bytes)
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_millis() as u64;
-    packet.extend_from_slice(&timestamp.to_le_bytes());
+        .as_millis() as u64
+}
 
-    // Padding to reach payload_size
-    while packet.len() < payload_size {
+fn create_packet(seq: u32, size: usize) -> Vec<u8> {
+    let size = size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
+    let mut packet = Vec::with_capacity(size);
+
+    // Header: MAGIC + SEQ + TIMESTAMP (16 bytes)
+    packet.extend_from_slice(&MAGIC);
+    packet.extend_from_slice(&seq.to_le_bytes());
+    packet.extend_from_slice(&now_ms().to_le_bytes());
+
+    // Padding (fill to size - 4 bytes for CRC)
+    while packet.len() < size - 4 {
         packet.push((packet.len() & 0xFF) as u8);
     }
 
-    packet.truncate(payload_size);
+    // CRC32 of everything before it
+    let crc = compute_crc(&packet);
+    packet.extend_from_slice(&crc.to_le_bytes());
+
     packet
 }
 
-fn parse_test_packet(data: &[u8]) -> Option<(PacketType, u32, u64)> {
-    if data.len() < 20 {
-        return None;
-    }
-
-    if data[0..4] != MAGIC_HEADER {
-        return None;
-    }
-
-    let packet_type = PacketType::try_from(data[4]).ok()?;
-    let seq = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
-    let timestamp = u64::from_le_bytes([
-        data[12], data[13], data[14], data[15],
-        data[16], data[17], data[18], data[19],
-    ]);
-
-    Some((packet_type, seq, timestamp))
+#[derive(Debug)]
+enum ParseError {
+    TooShort,
+    BadMagic,
+    CrcMismatch { expected: u32, actual: u32 },
 }
 
-async fn run_server(
-    address: &str,
-    module: Module,
-    recv_timeout: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting server mode on module {:?}", module);
+/// Returns (seq, timestamp) if packet is valid
+fn parse_packet(data: &[u8]) -> Result<(u32, u64), ParseError> {
+    if data.len() < MIN_PACKET_SIZE {
+        return Err(ParseError::TooShort);
+    }
+
+    // Check magic
+    if data[0..4] != MAGIC {
+        return Err(ParseError::BadMagic);
+    }
+
+    // Verify CRC (last 4 bytes)
+    let payload_end = data.len() - 4;
+    let expected_crc = u32::from_le_bytes([
+        data[payload_end],
+        data[payload_end + 1],
+        data[payload_end + 2],
+        data[payload_end + 3],
+    ]);
+    let actual_crc = compute_crc(&data[..payload_end]);
+
+    if expected_crc != actual_crc {
+        return Err(ParseError::CrcMismatch {
+            expected: expected_crc,
+            actual: actual_crc,
+        });
+    }
+
+    // Parse header
+    let seq = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+    let timestamp = u64::from_le_bytes([
+        data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
+    ]);
+
+    Ok((seq, timestamp))
+}
+
+async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== Kaonic RTT Server ===");
+    println!("Connecting to {}...", address);
 
     let mut client = RadioClient::connect(address.to_string()).await?;
-    info!("Connected to kaonic-commd at {}", address);
-
-    let mut stats = Statistics::new();
-    stats.start();
+    println!("Connected. Waiting for packets...\n");
 
     let request = ReceiveRequest {
-        module: module.into(),
-        timeout: recv_timeout,
+        module: RadioModule::ModuleA as i32,
+        timeout: 0,
     };
 
     let mut stream = client.receive_stream(request).await?.into_inner();
-
-    println!("\n========================================");
-    println!("  Kaonic iPerf Server");
-    println!("========================================");
-    println!("Listening on module {:?}...", module);
-    println!("Press Ctrl+C to stop\n");
+    let mut count: u64 = 0;
+    let mut ignored: u64 = 0;
+    let mut crc_errors: u64 = 0;
 
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
@@ -396,272 +180,189 @@ async fn run_server(
     loop {
         tokio::select! {
             _ = &mut shutdown => {
-                info!("Shutdown signal received");
+                println!("\nShutting down...");
                 break;
             }
             result = stream.next() => {
                 match result {
                     Some(Ok(response)) => {
-                        let frame_data = decode_frame(&response.frame.unwrap_or_default());
-                        let frame_len = frame_data.len();
+                        let frame = response.frame.unwrap_or_default();
+                        let data = decode_frame(&frame);
 
-                        if let Some((packet_type, seq, timestamp)) = parse_test_packet(&frame_data) {
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis() as u64;
-                            let latency = (now_ms.saturating_sub(timestamp)) as u32;
-
-                            stats.add_received(frame_len as u64, latency);
-
-                            println!(
-                                "[{}] Received {:?} seq={} size={} rssi={} dBm latency={} ms",
-                                stats.packets_received,
-                                packet_type,
-                                seq,
-                                frame_len,
-                                response.rssi,
-                                latency
-                            );
-
-                            // For ping packets, send pong response
-                            if packet_type == PacketType::Ping {
-                                let pong = create_test_packet(PacketType::Pong, seq, frame_len);
+                        match parse_packet(&data) {
+                            Ok((seq, _ts)) => {
+                                // Echo back the same packet (preserving timestamp and CRC)
                                 let tx_request = TransmitRequest {
-                                    module: module.into(),
-                                    frame: Some(encode_frame(&pong)),
+                                    module: RadioModule::ModuleA as i32,
+                                    frame: Some(frame),
                                 };
 
                                 match client.transmit(tx_request).await {
-                                    Ok(resp) => {
-                                        stats.add_sent(frame_len as u64);
-                                        info!("Sent pong response seq={} latency={} ms", seq, resp.into_inner().latency);
+                                    Ok(_) => {
+                                        count += 1;
+                                        println!("[{}] Echo seq={} size={} rssi={} dBm", count, seq, data.len(), response.rssi);
                                     }
-                                    Err(e) => {
-                                        warn!("Failed to send pong: {}", e);
-                                    }
+                                    Err(e) => warn!("Transmit error: {}", e),
                                 }
                             }
-                        } else {
-                            stats.add_received(frame_len as u64, response.latency);
-                            println!(
-                                "[{}] Received raw frame size={} rssi={} dBm",
-                                stats.packets_received,
-                                frame_len,
-                                response.rssi
-                            );
+                            Err(ParseError::TooShort) => {
+                                ignored += 1;
+                            }
+                            Err(ParseError::BadMagic) => {
+                                ignored += 1;
+                            }
+                            Err(ParseError::CrcMismatch { expected, actual }) => {
+                                crc_errors += 1;
+                                warn!(
+                                    "CRC mismatch: expected={:#010x} actual={:#010x} size={}",
+                                    expected, actual, data.len()
+                                );
+                            }
                         }
                     }
-                    Some(Err(e)) => {
-                        error!("Receive error: {}", e);
-                    }
-                    None => {
-                        info!("Stream ended");
-                        break;
-                    }
+                    Some(Err(e)) => error!("Receive error: {}", e),
+                    None => break,
                 }
             }
         }
     }
 
-    stats.stop();
-    stats.print_summary("Server");
-
+    println!("\nTotal packets echoed: {}", count);
+    if ignored > 0 {
+        println!("Ignored (non-iperf): {}", ignored);
+    }
+    if crc_errors > 0 {
+        println!("CRC errors: {}", crc_errors);
+    }
     Ok(())
 }
 
 async fn run_client(
     address: &str,
-    module: Module,
-    mode: TestMode,
-    packet_size: usize,
     duration_secs: u64,
-    interval_ms: u64,
-    packet_count: Option<u64>,
-    bidirectional: bool,
+    packet_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting client mode on module {:?}", module);
+    let packet_size = packet_size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
 
-    let packet_size = packet_size.min(MAX_PAYLOAD_SIZE);
+    println!("=== Kaonic RTT Client ===");
+    println!("Connecting to {}...", address);
 
     let mut client = RadioClient::connect(address.to_string()).await?;
-    info!("Connected to kaonic-commd at {}", address);
+    println!("Connected.");
+    println!("Packet size: {} bytes", packet_size);
+    println!("Duration: {} seconds\n", duration_secs);
 
-    let mut stats = Statistics::new();
-
-    println!("\n========================================");
-    println!("  Kaonic iPerf Client");
-    println!("========================================");
-    println!("Mode:            {:?}", mode);
-    println!("Module:          {:?}", module);
-    println!("Packet size:     {} bytes", packet_size);
-    if let Some(count) = packet_count {
-        println!("Packet count:    {}", count);
-    } else {
-        println!("Duration:        {} s", duration_secs);
-    }
-    if bidirectional {
-        println!("Bidirectional:   yes");
-    }
-    println!("----------------------------------------\n");
-
-    // Start receive stream if bidirectional
-    let mut rx_stream = if bidirectional {
-        let request = ReceiveRequest {
-            module: module.into(),
-            timeout: 5000, // 5 second timeout for responses
-        };
-        Some(client.receive_stream(request).await?.into_inner())
-    } else {
-        None
+    // Start receive stream
+    let request = ReceiveRequest {
+        module: RadioModule::ModuleA as i32,
+        timeout: RESPONSE_TIMEOUT_MS as u32,
     };
+    let mut stream = client.receive_stream(request).await?.into_inner();
 
-    stats.start();
-
-    let end_time = Instant::now() + Duration::from_secs(duration_secs);
+    let start = Instant::now();
+    let test_duration = Duration::from_secs(duration_secs);
     let mut seq: u32 = 0;
-    let interval = Duration::from_millis(interval_ms);
+    let mut rtts: Vec<u64> = Vec::new();
+    let mut bytes_transferred: u64 = 0;
+    let mut timeouts: u64 = 0;
+    let mut crc_errors: u64 = 0;
 
-    let packet_type = match mode {
-        TestMode::Bandwidth => PacketType::Data,
-        TestMode::Latency => PacketType::Ping,
-    };
+    while start.elapsed() < test_duration {
+        // Send request packet
+        let packet = create_packet(seq, packet_size);
+        let send_time = Instant::now();
 
-    loop {
-        // Check termination conditions
-        if let Some(count) = packet_count {
-            if stats.packets_sent >= count {
-                break;
-            }
-        } else if Instant::now() >= end_time {
-            break;
-        }
-
-        // Create and send test packet
-        let packet = create_test_packet(packet_type, seq, packet_size);
         let tx_request = TransmitRequest {
-            module: module.into(),
+            module: RadioModule::ModuleA as i32,
             frame: Some(encode_frame(&packet)),
         };
 
-        match client.transmit(tx_request).await {
-            Ok(response) => {
-                let tx_latency = response.into_inner().latency;
-                stats.add_sent(packet_size as u64);
-
-                match mode {
-                    TestMode::Bandwidth => {
-                        if stats.packets_sent % 10 == 0 {
-                            println!(
-                                "[{}] Sent {} bytes, tx_latency={} ms, throughput={}",
-                                stats.packets_sent,
-                                packet_size,
-                                tx_latency,
-                                format_throughput(stats.throughput_bps())
-                            );
-                        }
-                    }
-                    TestMode::Latency => {
-                        println!(
-                            "[{}] Sent ping seq={} size={} tx_latency={} ms",
-                            stats.packets_sent, seq, packet_size, tx_latency
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Transmit error: {}", e);
-            }
+        if let Err(e) = client.transmit(tx_request).await {
+            error!("Transmit error: {}", e);
+            seq = seq.wrapping_add(1);
+            continue;
         }
 
-        // Wait for response if bidirectional/latency mode
-        if bidirectional || matches!(mode, TestMode::Latency) {
-            if let Some(ref mut stream) = rx_stream {
-                match timeout(Duration::from_millis(2000), stream.next()).await {
-                    Ok(Some(Ok(response))) => {
-                        let frame_data = decode_frame(&response.frame.unwrap_or_default());
+        // Wait for response
+        match timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS), stream.next()).await {
+            Ok(Some(Ok(response))) => {
+                let rtt = send_time.elapsed().as_millis() as u64;
+                let frame_data = decode_frame(&response.frame.unwrap_or_default());
 
-                        if let Some((pkt_type, pkt_seq, timestamp)) = parse_test_packet(&frame_data) {
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis() as u64;
-                            let rtt = (now_ms.saturating_sub(timestamp)) as u32;
-
-                            stats.add_received(frame_data.len() as u64, rtt);
+                match parse_packet(&frame_data) {
+                    Ok((resp_seq, _)) => {
+                        if resp_seq == seq {
+                            rtts.push(rtt);
+                            bytes_transferred += (packet_size * 2) as u64; // req + resp
 
                             println!(
-                                "  <- Received {:?} seq={} rtt={} ms rssi={} dBm",
-                                pkt_type, pkt_seq, rtt, response.rssi
+                                "seq={:<6} rtt={:<4} ms  rssi={:<4} dBm  size={}",
+                                seq, rtt, response.rssi, frame_data.len()
                             );
                         }
                     }
-                    Ok(Some(Err(e))) => {
-                        warn!("Receive error: {}", e);
-                    }
-                    Ok(None) => {
-                        info!("Receive stream ended");
+                    Err(ParseError::CrcMismatch { expected, actual }) => {
+                        crc_errors += 1;
+                        println!(
+                            "seq={:<6} CRC ERROR (expected={:#010x} actual={:#010x})",
+                            seq, expected, actual
+                        );
                     }
                     Err(_) => {
-                        if matches!(mode, TestMode::Latency) {
-                            warn!("Timeout waiting for pong response");
-                        }
+                        // Ignore non-iperf packets
                     }
                 }
+            }
+            Ok(Some(Err(e))) => {
+                warn!("Receive error: {}", e);
+                timeouts += 1;
+            }
+            Ok(None) => {
+                warn!("Stream ended");
+                break;
+            }
+            Err(_) => {
+                println!("seq={:<6} TIMEOUT", seq);
+                timeouts += 1;
             }
         }
 
         seq = seq.wrapping_add(1);
-
-        // Apply interval delay
-        tokio::time::sleep(interval).await;
     }
 
-    stats.stop();
-    stats.print_summary("Client");
+    // Print results
+    let elapsed = start.elapsed().as_secs_f64();
+    let packets_sent = seq as u64;
+    let packets_received = rtts.len() as u64;
 
-    Ok(())
-}
+    println!("\n=== Results ===");
+    println!("Duration:     {:.2} s", elapsed);
+    println!("Packet size:  {} bytes", packet_size);
+    println!(
+        "Packets:      {} sent, {} received, {} timeouts, {} CRC errors",
+        packets_sent, packets_received, timeouts, crc_errors
+    );
 
-async fn run_configure(
-    address: &str,
-    module: Module,
-    freq: u32,
-    channel: u32,
-    tx_power: u32,
-    mcs: u32,
-    opt: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Configuring radio module {:?}", module);
+    if !rtts.is_empty() {
+        let min_rtt = *rtts.iter().min().unwrap();
+        let max_rtt = *rtts.iter().max().unwrap();
+        let avg_rtt = rtts.iter().sum::<u64>() as f64 / rtts.len() as f64;
 
-    let mut client = RadioClient::connect(address.to_string()).await?;
-    info!("Connected to kaonic-commd at {}", address);
+        println!(
+            "RTT:          min={} ms, avg={:.1} ms, max={} ms",
+            min_rtt, avg_rtt, max_rtt
+        );
+    }
 
-    let request = ConfigurationRequest {
-        module: module.into(),
-        freq,
-        channel,
-        channel_spacing: 200, // 200 kHz default
-        tx_power,
-        phy_config: Some(kaonic::configuration_request::PhyConfig::Ofdm(
-            RadioPhyConfigOfdm { mcs, opt },
-        )),
-        qos: None,
-        bandwidth_filter: 0,
-    };
+    if elapsed > 0.0 {
+        let speed_kbps = (bytes_transferred as f64 * 8.0) / elapsed / 1000.0;
+        println!("Speed:        {:.2} kb/s", speed_kbps);
+    }
 
-    client.configure(request).await?;
-
-    println!("\n========================================");
-    println!("  Radio Configuration");
-    println!("========================================");
-    println!("Module:          {:?}", module);
-    println!("Frequency:       {} kHz ({:.3} MHz)", freq, freq as f64 / 1000.0);
-    println!("Channel:         {}", channel);
-    println!("TX Power:        {} dBm", tx_power);
-    println!("PHY:             OFDM MCS={} OPT={}", mcs, opt);
-    println!("========================================\n");
-    println!("Configuration applied successfully.");
+    if packets_sent > 0 {
+        let loss = ((packets_sent - packets_received) as f64 / packets_sent as f64) * 100.0;
+        println!("Packet loss:  {:.1}%", loss);
+    }
 
     Ok(())
 }
@@ -672,39 +373,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
 
-    match args.command {
-        Commands::Server { timeout } => {
-            run_server(&args.address, args.module, timeout).await?;
-        }
-        Commands::Client {
-            mode,
-            size,
-            duration,
-            interval,
-            count,
-            bidirectional,
-        } => {
-            run_client(
-                &args.address,
-                args.module,
-                mode,
-                size,
-                duration,
-                interval,
-                count,
-                bidirectional,
-            )
-            .await?;
-        }
-        Commands::Configure {
-            freq,
-            channel,
-            tx_power,
-            mcs,
-            opt,
-        } => {
-            run_configure(&args.address, args.module, freq, channel, tx_power, mcs, opt).await?;
-        }
+    if !args.server && !args.client {
+        eprintln!("Error: specify --server or --client");
+        std::process::exit(1);
+    }
+
+    if args.server {
+        run_server(&args.address).await?;
+    } else {
+        run_client(&args.address, args.duration, args.size).await?;
     }
 
     Ok(())
