@@ -13,7 +13,7 @@ pub enum BusError {
 }
 
 pub trait BusInterrupt {
-    fn wait_on_interrupt(&mut self, timeout: Duration) -> bool;
+    fn wait_on_interrupt(&mut self, timeout: Option<Duration>) -> bool;
 }
 
 pub trait BusReset {
@@ -81,7 +81,7 @@ pub trait Bus {
     ) -> Result<(), BusError>;
 
     /// Helper method for waiting on event interrupt with timeout
-    fn wait_interrupt(&mut self, timeout: Duration) -> bool;
+    fn wait_interrupt(&mut self, timeout: Option<Duration>) -> bool;
 
     /// Helper method to delay for a specific duration
     fn delay(&mut self, timeout: Duration);
@@ -162,7 +162,7 @@ where
             .map_err(|_| BusError::Timeout)
     }
 
-    fn wait_interrupt(&mut self, timeout: Duration) -> bool {
+    fn wait_interrupt(&mut self, timeout: Option<Duration>) -> bool {
         self.interrupt.wait_on_interrupt(timeout)
     }
 

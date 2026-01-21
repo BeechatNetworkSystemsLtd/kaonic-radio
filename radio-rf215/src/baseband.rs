@@ -274,7 +274,7 @@ where
 
             if self
                 .bus
-                .wait_interrupt(core::time::Duration::from_micros(100))
+                .wait_interrupt(Some(core::time::Duration::from_micros(100)))
             {
                 if let Ok(irqs) = self.read_irqs() {
                     if irqs.has_irqs(irq_mask) {

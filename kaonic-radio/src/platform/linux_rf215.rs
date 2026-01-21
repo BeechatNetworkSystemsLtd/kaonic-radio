@@ -34,7 +34,7 @@ impl<T: Bus> Bus for SharedBus<T> {
     }
 
     #[inline]
-    fn wait_interrupt(&mut self, timeout: std::time::Duration) -> bool {
+    fn wait_interrupt(&mut self, timeout: Option<std::time::Duration>) -> bool {
         let mut bus = self.bus.lock().unwrap();
         bus.wait_interrupt(timeout)
     }
@@ -59,8 +59,8 @@ impl<T: Bus> Bus for SharedBus<T> {
 }
 
 impl BusInterrupt for LinuxGpioInterrupt {
-    fn wait_on_interrupt(&mut self, timeout: core::time::Duration) -> bool {
-        if let Ok(status) = self.request.wait_edge_events(Some(timeout)) {
+    fn wait_on_interrupt(&mut self, timeout: Option<core::time::Duration>) -> bool {
+        if let Ok(status) = self.request.wait_edge_events(timeout) {
             if status {
                 let _ = self.request.read_edge_events(&mut self.buffer);
             }

@@ -459,7 +459,7 @@ where
         Ok(state)
     }
 
-    pub fn wait_interrupt(&mut self, timeout: core::time::Duration) -> bool {
+    pub fn wait_interrupt(&mut self, timeout: Option<core::time::Duration>) -> bool {
         self.bus.wait_interrupt(timeout)
     }
 
@@ -600,7 +600,7 @@ where
 
             if self
                 .bus
-                .wait_interrupt(core::time::Duration::from_micros(500))
+                .wait_interrupt(Some(core::time::Duration::from_micros(500)))
             {
                 if let Ok(irqs) = self.read_irqs() {
                     if irqs.has_irqs(irq_mask) {
@@ -627,7 +627,7 @@ where
 
             if self
                 .bus
-                .wait_interrupt(core::time::Duration::from_micros(500))
+                .wait_interrupt(Some(core::time::Duration::from_micros(500)))
             {
                 if let Ok(irqs) = self.read_irqs() {
                     if irqs.has_any_irqs(irq_mask) {

@@ -94,6 +94,10 @@ impl<I: Bus + Clone> Rf215<I> {
         })
     }
 
+    pub fn bus(&self) -> I {
+        self.bus.clone()
+    }
+
     pub fn set_iq_loopback(&mut self, enabled: bool) -> Result<(), RadioError> {
         let ext_loopback: u8 = if enabled { 0b1000_0000 } else { 0 };
 
