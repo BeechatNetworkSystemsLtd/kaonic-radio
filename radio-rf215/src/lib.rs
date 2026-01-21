@@ -158,7 +158,14 @@ impl<I: Bus + Clone> Rf215<I> {
         Ok(self)
     }
 
+    pub fn update_irqs(&mut self) -> Result<&mut Self, RadioError> {
+        self.trx_09.update_irqs()?;
+        self.trx_24.update_irqs()?;
+        Ok(self)
+    }
+
     pub fn start_receive(&mut self) -> Result<&mut Self, RadioError> {
+
         self.trx_09.start_receive()?;
         self.trx_24.start_receive()?;
 

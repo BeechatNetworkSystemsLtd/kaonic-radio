@@ -244,10 +244,6 @@ fn decode_frame(
     Ok(())
 }
 
-fn kaonic_err(_e: KaonicError) -> Status {
-    Status::internal("kaonic error")
-}
-
 fn phy_to_modulation(
     phy: &super::kaonic::configuration_request::PhyConfig,
     tx_power: u8,

@@ -77,6 +77,10 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
     ) -> Result<(), RadioError> {
         self.radio.setup_irq(radio_irq)?;
         self.baseband.setup_irq(baseband_irq)?;
+
+        let _ = self.radio.clear_irqs()?;
+        let _ = self.baseband.clear_irqs()?;
+
         Ok(())
     }
 
@@ -85,16 +89,10 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         self.baseband
             .setup_irq(BasebandInterruptMask::new().build())?;
 
-        let _ = self.read_irqs()?;
+        let _ = self.radio.clear_irqs()?;
+        let _ = self.baseband.clear_irqs()?;
 
         Ok(())
-    }
-
-    pub fn read_irqs(&mut self) -> Result<(RadioInterruptMask, BasebandInterruptMask), RadioError> {
-        let rf_irqs = self.radio.read_irqs()?;
-        let bb_irqs = self.baseband.read_irqs()?;
-
-        Ok((rf_irqs, bb_irqs))
     }
 
     pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
@@ -151,12 +149,14 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         self.radio
             .set_ed_mode(crate::radio::EnergyDetectionMode::Single)?;
 
+        let mut transmitted = false;
+
         if let Some(irqs) = self.radio.wait_any_irq(
             RadioInterruptMask::new()
                 .add_irq(regs::RadioInterrupt::TransceiverReady)
                 .add_irq(regs::RadioInterrupt::TransceiverError)
                 .build(),
-            core::time::Duration::from_millis(100),
+            core::time::Duration::from_millis(500),
         ) {
             if irqs.has_irq(regs::RadioInterrupt::TransceiverError) {
                 // NOTE: If the baseband has been disabled for the measurement period and the
@@ -165,11 +165,19 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
                 self.baseband.enable()?;
                 return Err(RadioError::Timeout);
             }
+
+            if irqs.has_irq(regs::RadioInterrupt::TransceiverReady) {
+                transmitted = true;
+            }
         }
 
         self.radio.receive()?;
 
-        Ok(())
+        if transmitted {
+            Ok(())
+        } else {
+            Err(RadioError::Timeout)
+        }
     }
 
     pub fn bb_receive(
@@ -177,8 +185,6 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         frame: &mut BasebandFrame,
         timeout: core::time::Duration,
     ) -> Result<(), RadioError> {
-        self.radio.receive()?;
-
         if self
             .baseband
             .wait_irq(BasebandInterrupt::ReceiverFrameEnd, timeout)
@@ -192,6 +198,13 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
     pub fn start_receive(&mut self) -> Result<(), RadioError> {
         self.radio.receive()
+    }
+
+    pub fn update_irqs(&mut self) -> Result<(), RadioError> {
+        self.radio.update_irqs()?;
+        self.baseband.update_irqs()?;
+
+        Ok(())
     }
 
     pub fn configure(

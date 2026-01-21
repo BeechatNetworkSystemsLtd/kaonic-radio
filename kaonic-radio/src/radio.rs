@@ -121,6 +121,8 @@ pub trait Radio {
     type TxFrame;
     type RxFrame;
 
+    fn update_event(&mut self) -> Result<(), KaonicError>;
+
     fn configure(&mut self, config: &RadioConfig) -> Result<(), KaonicError>;
 
     fn set_modulation(&mut self, modulation: &Modulation) -> Result<(), KaonicError>;

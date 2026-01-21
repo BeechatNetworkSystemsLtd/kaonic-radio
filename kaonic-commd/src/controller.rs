@@ -11,12 +11,12 @@ use kaonic_net::{
 use kaonic_radio::{
     error::KaonicError,
     frame::{Frame, FrameSegment},
-    modulation::Modulation,
-    platform::{create_machine, PlatformRadio},
-    radio::{Radio, RadioConfig},
+    modulation::{Modulation, OfdmModulation},
+    platform::{create_machine, kaonic1s::Kaonic1SRadioEvent, PlatformRadio},
+    radio::{Hertz, Radio, RadioConfig, RadioConfigBuilder},
 };
 use rand::rngs::OsRng;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio::task::block_in_place;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -123,19 +123,31 @@ impl RadioController {
                 break;
             }
 
+            let (event_send, event_recv) = watch::channel(false);
+
             let radio = Arc::new(std::sync::Mutex::new(radio.unwrap()));
+
+            let event = radio.lock().unwrap().event();
+            std::thread::Builder::new()
+                .name("radio-event".to_string())
+                .spawn(move || {
+                    radio_event_thread(event, event_send);
+                })
+                .unwrap();
 
             let handle = tokio::spawn(manage_radio(
                 radio_index,
                 radio,
                 command_send.subscribe(),
                 module_send.clone(),
+                event_recv,
                 shutdown.clone(),
             ));
 
             worker_handles.push(handle);
 
             radio_index += 1;
+            break;
         }
 
         Ok(Self {
@@ -269,51 +281,60 @@ async fn manage_tx_network(
     }
 }
 
+fn radio_event_thread(
+    event: Arc<std::sync::Mutex<Kaonic1SRadioEvent>>,
+    notify: tokio::sync::watch::Sender<bool>,
+) {
+    loop {
+        if event.lock().unwrap().wait_for_event(None) {
+            let _ = notify.send(true);
+        }
+    }
+}
+
 async fn manage_radio(
     module: usize,
     radio: Arc<std::sync::Mutex<PlatformRadio>>,
     mut command_recv: broadcast::Receiver<RadioCommand>,
     module_send: broadcast::Sender<ModuleReceive>,
+    mut event_recv: watch::Receiver<bool>,
     mut shutdown: CancellationToken,
 ) {
     let mut rx_frame = RadioFrame::new();
 
+    radio
+        .lock()
+        .unwrap()
+        .configure(
+            &RadioConfigBuilder::new()
+                .freq(Hertz::new(2_400_000_000))
+                .channel(11)
+                .build(),
+        )
+        .unwrap();
+
+    radio
+        .lock()
+        .unwrap()
+        .set_modulation(&Modulation::Ofdm(OfdmModulation {
+            mcs: kaonic_radio::modulation::OfdmMcs::Mcs6,
+            opt: kaonic_radio::modulation::OfdmOption::Option1,
+            tx_power: 10,
+        }))
+        .unwrap();
+
     loop {
-        if shutdown.is_cancelled() {
-            log::info!("Radio module {} received cancellation", module);
-            break;
-        }
-        match command_recv.try_recv() {
-            Ok(RadioCommand::Transmit(command)) => {
-                if command.module == module {
-                    let _ = radio.lock().unwrap().transmit(&command.frame);
-                }
-            }
-            Ok(RadioCommand::Configure(command)) => {
-                if command.module == module {
-                    let _ = radio.lock().unwrap().configure(&command.config);
-                }
-            }
-            Ok(RadioCommand::SetModulation(command)) => {
-                if command.module == module {
-                    let _ = radio.lock().unwrap().set_modulation(&command.modulation);
-                }
-            }
-            Ok(RadioCommand::Shutdown) => {}
-            Err(_) => {}
-        }
+        tokio::select! {
+            biased;
 
-        {
-            let module = module;
-            let module_send = module_send.clone();
-            let radio = radio.clone();
+            _ = event_recv.changed() => {
 
-            let _ = tokio::task::spawn_blocking(move || {
-                rx_frame.clear();
+                let _ = radio.lock().unwrap().update_event();
+
                 match radio
                     .lock()
                     .unwrap()
-                    .receive(&mut rx_frame, core::time::Duration::from_millis(10))
+                    .receive(rx_frame.clear(), core::time::Duration::from_millis(10))
                 {
                     Ok(rr) => {
                         match module_send.send(ModuleReceive {
@@ -329,8 +350,34 @@ async fn manage_radio(
                     }
                     Err(_) => {}
                 }
-            })
-            .await;
-        }
+            },
+            cmd = command_recv.recv() => {
+                match cmd {
+                    Ok(RadioCommand::Transmit(command)) => {
+                        if command.module == module {
+                            let _ = radio.lock().unwrap().transmit(&command.frame);
+                        }
+                    }
+                    Ok(RadioCommand::Configure(command)) => {
+                        if command.module == module {
+                            let _ = radio.lock().unwrap().configure(&command.config);
+                        }
+                    }
+                    Ok(RadioCommand::SetModulation(command)) => {
+                        if command.module == module {
+                            let _ = radio.lock().unwrap().set_modulation(&command.modulation);
+                        }
+                    }
+                    Ok(RadioCommand::Shutdown) => {}
+                    Err(_) => {}
+                }
+            }
+
+            _ = shutdown.cancelled() => {
+                log::info!("Radio module {} received cancellation", module);
+                break;
+            }
+
+        };
     }
 }

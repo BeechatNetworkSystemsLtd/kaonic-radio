@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use libgpiod::line::Bias;
 use libgpiod::line::Offset;
 use libgpiod::line::Value;
 
@@ -52,7 +53,9 @@ impl LinuxGpioInterrupt {
     pub fn new(line_name: &str, name: &str) -> Result<Self, KaonicError> {
         let gpio = create_gpio_by_name(&format!("{}-rf215-irq", name), line_name, {
             let mut settings = libgpiod::line::Settings::new()?;
-            settings.set_edge_detection(Some(libgpiod::line::Edge::Falling))?;
+            settings.set_bias(Some(Bias::PullDown))?;
+            settings.set_edge_detection(Some(libgpiod::line::Edge::Rising))?;
+            settings.set_event_clock(libgpiod::line::EventClock::Realtime)?;
             settings
         })?;
 

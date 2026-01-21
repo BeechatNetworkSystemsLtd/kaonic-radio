@@ -64,8 +64,9 @@ impl<const S: usize, const R: usize> FrameSegment<S, R> {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) -> &mut Self {
         self.len = 0;
+        self
     }
 
     pub fn len(&self) -> usize {

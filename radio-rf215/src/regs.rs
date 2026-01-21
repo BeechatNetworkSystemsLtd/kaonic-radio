@@ -253,17 +253,53 @@ impl<I: Into<u8>> InterruptMask<I> {
         (self.mask & irq.into()) != 0
     }
 
-    pub fn has_irqs(&self, irqs: InterruptMask<I>) -> bool {
+    pub fn has_irqs(&self, irqs: &InterruptMask<I>) -> bool {
         (self.mask & irqs.mask) == irqs.mask
     }
 
-    pub fn has_any_irqs(&self, irqs: InterruptMask<I>) -> bool {
+    pub fn has_any_irqs(&self, irqs: &InterruptMask<I>) -> bool {
         (self.mask & irqs.mask) != 0
     }
 
     pub fn clear_irq(&mut self, irq: I) -> &mut Self {
         self.mask = self.mask & (!(irq.into()));
         self
+    }
+
+    pub fn clear_irqs(&mut self, mask: &InterruptMask<I>) -> &mut Self {
+        self.mask = self.mask & (!(mask.mask));
+        self
+    }
+
+    pub fn combine(&mut self, mask: &InterruptMask<I>) -> &mut Self {
+        self.mask = self.mask | mask.mask;
+        self
+    }
+
+    pub fn retrieve(&mut self, mask: &InterruptMask<I>) -> Option<InterruptMask<I>> {
+        if self.has_irqs(mask) {
+            // Save current irq mask value
+            let irqs = self.mask;
+
+            self.clear_irqs(mask);
+
+            return Some(InterruptMask::new_from_mask(irqs));
+        }
+
+        None
+    }
+
+    pub fn retrieve_any(&mut self, mask: &InterruptMask<I>) -> Option<InterruptMask<I>> {
+        if self.has_any_irqs(mask) {
+            // Save current irq mask value
+            let irqs = self.mask;
+
+            self.clear_irqs(mask);
+
+            return Some(InterruptMask::new_from_mask(irqs));
+        }
+
+        None
     }
 
     pub fn reset(&mut self) -> &mut Self {

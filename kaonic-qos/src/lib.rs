@@ -1,4 +1,3 @@
-use crate::profile::Profile;
 
 pub mod profile;
 
@@ -6,10 +5,6 @@ use kaonic_radio::modulation::{
     Modulation, OfdmMcs, OfdmModulation, OfdmOption, QpskChipFrequency, QpskModulation,
     QpskRateMode,
 };
-
-pub struct QoS<const S: usize, T> {
-    profiles: [Profile<T>; S],
-}
 
 /// Modulation scheme with specific parameters
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,7 +121,7 @@ impl ChannelQuality {
     pub fn recommended_ofdm(&self, base_power: u8) -> OfdmModulation {
         match self {
             ChannelQuality::Excellent => OfdmModulation {
-                mcs: OfdmMcs::Mcs6, // Highest data rate (BPSK 1/2)
+                mcs: OfdmMcs::Mcs6,       // Highest data rate (BPSK 1/2)
                 opt: OfdmOption::Option1, // Smallest interleaving, fastest
                 tx_power: base_power,
             },
@@ -136,17 +131,17 @@ impl ChannelQuality {
                 tx_power: base_power,
             },
             ChannelQuality::Fair => OfdmModulation {
-                mcs: OfdmMcs::Mcs2, // Medium data rate (QPSK 1/2)
+                mcs: OfdmMcs::Mcs2,       // Medium data rate (QPSK 1/2)
                 opt: OfdmOption::Option3, // More interleaving for robustness
                 tx_power: base_power + 2,
             },
             ChannelQuality::Poor => OfdmModulation {
-                mcs: OfdmMcs::Mcs1, // Low data rate, more robust
+                mcs: OfdmMcs::Mcs1,       // Low data rate, more robust
                 opt: OfdmOption::Option4, // Maximum interleaving
                 tx_power: base_power + 4,
             },
             ChannelQuality::Bad => OfdmModulation {
-                mcs: OfdmMcs::Mcs0, // Lowest data rate, most robust
+                mcs: OfdmMcs::Mcs0,       // Lowest data rate, most robust
                 opt: OfdmOption::Option4, // Maximum interleaving
                 tx_power: base_power + 6,
             },
@@ -158,7 +153,7 @@ impl ChannelQuality {
         match self {
             ChannelQuality::Excellent => QpskModulation {
                 chip_freq: QpskChipFrequency::Freq2000, // Highest chip rate
-                mode: QpskRateMode::Mode3, // Highest data rate
+                mode: QpskRateMode::Mode3,              // Highest data rate
                 tx_power: base_power,
             },
             ChannelQuality::Good => QpskModulation {
@@ -178,14 +173,18 @@ impl ChannelQuality {
             },
             ChannelQuality::Bad => QpskModulation {
                 chip_freq: QpskChipFrequency::Freq100, // Lowest chip rate, most robust
-                mode: QpskRateMode::Mode0, // Lowest data rate
+                mode: QpskRateMode::Mode0,             // Lowest data rate
                 tx_power: base_power + 6,
             },
         }
     }
 
     /// Get recommended modulation based on preferred modulation type
-    pub fn recommended_modulation(&self, modulation_type: ModulationType, base_power: u8) -> ModulationScheme {
+    pub fn recommended_modulation(
+        &self,
+        modulation_type: ModulationType,
+        base_power: u8,
+    ) -> ModulationScheme {
         match modulation_type {
             ModulationType::Ofdm => ModulationScheme::Ofdm(self.recommended_ofdm(base_power)),
             ModulationType::Qpsk => ModulationScheme::Qpsk(self.recommended_qpsk(base_power)),
@@ -229,7 +228,11 @@ impl ChannelAssessment {
         if self.sample_count == 1 {
             self.idle_edv = edv;
             self.noise_floor = edv;
-            log::debug!("QoS: Initial idle EDV = {} dBm, noise floor = {} dBm", edv, self.noise_floor);
+            log::debug!(
+                "QoS: Initial idle EDV = {} dBm, noise floor = {} dBm",
+                edv,
+                self.noise_floor
+            );
         } else {
             // EMA with alpha = 0.2
             self.idle_edv = ((self.idle_edv as i32 * 4 + edv as i32) / 5) as i8;
@@ -237,21 +240,24 @@ impl ChannelAssessment {
         }
 
         self.update_quality();
-        
+
         if old_quality != self.quality {
             log::info!(
                 "QoS: Channel quality changed {:?} -> {:?} (idle EDV: {} dBm, noise floor: {} dBm)",
-                old_quality, self.quality, self.idle_edv, self.noise_floor
+                old_quality,
+                self.quality,
+                self.idle_edv,
+                self.noise_floor
             );
         }
     }
 
     pub fn update_rx(&mut self, edv: i8) {
         let old_quality = self.quality;
-        
+
         // Update last RX time
         self.last_rx_time = Some(std::time::Instant::now());
-        
+
         // Use exponential moving average
         if self.sample_count == 0 {
             self.rx_edv = edv;
@@ -264,16 +270,20 @@ impl ChannelAssessment {
         self.interference_level = self.rx_edv.saturating_sub(self.noise_floor);
 
         self.update_quality();
-        
+
         if old_quality != self.quality {
             log::info!(
                 "QoS: Channel quality changed {:?} -> {:?} (RX EDV: {} dBm, interference: {} dB)",
-                old_quality, self.quality, self.rx_edv, self.interference_level
+                old_quality,
+                self.quality,
+                self.rx_edv,
+                self.interference_level
             );
         } else if self.interference_level > 20 {
             log::debug!(
                 "QoS: High interference detected (RX EDV: {} dBm, interference: {} dB)",
-                self.rx_edv, self.interference_level
+                self.rx_edv,
+                self.interference_level
             );
         }
     }
@@ -301,14 +311,14 @@ impl ChannelAssessment {
             let elapsed = last_rx.elapsed();
             if elapsed > self.no_rx_timeout {
                 let old_quality = self.quality;
-                
+
                 // If we haven't received anything, the interference might have cleared
                 // Reset RX EDV to be closer to idle EDV
                 self.rx_edv = ((self.rx_edv as i32 + self.idle_edv as i32 * 3) / 4) as i8;
                 self.interference_level = self.rx_edv.saturating_sub(self.noise_floor);
-                
+
                 self.update_quality();
-                
+
                 if old_quality != self.quality {
                     log::info!(
                         "QoS: Channel quality recovered {:?} -> {:?} after {} s without RX (adjusted RX EDV: {} dBm)",
@@ -324,7 +334,10 @@ impl ChannelAssessment {
     /// Set the timeout duration for no-RX quality recovery
     pub fn set_no_rx_timeout(&mut self, timeout: std::time::Duration) {
         self.no_rx_timeout = timeout;
-        log::debug!("QoS: No-RX recovery timeout set to {} seconds", timeout.as_secs());
+        log::debug!(
+            "QoS: No-RX recovery timeout set to {} seconds",
+            timeout.as_secs()
+        );
     }
 }
 
@@ -372,19 +385,28 @@ impl QoSManager {
     }
 
     pub fn enable_adaptive_tx_power(mut self, enabled: bool) -> Self {
-        log::debug!("QoS: Adaptive TX power: {}", if enabled { "enabled" } else { "disabled" });
+        log::debug!(
+            "QoS: Adaptive TX power: {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
         self.adaptive_tx_power = enabled;
         self
     }
 
     pub fn enable_adaptive_backoff(mut self, enabled: bool) -> Self {
-        log::debug!("QoS: Adaptive backoff: {}", if enabled { "enabled" } else { "disabled" });
+        log::debug!(
+            "QoS: Adaptive backoff: {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
         self.adaptive_backoff = enabled;
         self
     }
 
     pub fn enable_adaptive_modulation(mut self, enabled: bool) -> Self {
-        log::debug!("QoS: Adaptive modulation: {}", if enabled { "enabled" } else { "disabled" });
+        log::debug!(
+            "QoS: Adaptive modulation: {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
         self.adaptive_modulation = enabled;
         self
     }
@@ -419,7 +441,7 @@ impl QoSManager {
     /// Update with EDV reading during idle state
     pub fn update_idle_edv(&mut self, edv: i8) {
         self.assessment.update_idle(edv);
-        
+
         // Check if we should recover quality due to no RX activity
         self.assessment.check_no_rx_recovery();
     }
@@ -460,7 +482,8 @@ impl QoSManager {
     /// Get recommended modulation based on current channel quality
     pub fn get_recommended_modulation(&self) -> ModulationScheme {
         if self.adaptive_modulation {
-            let modulation = self.assessment
+            let modulation = self
+                .assessment
                 .quality
                 .recommended_modulation(self.modulation_type, self.base_tx_power);
             log::trace!(

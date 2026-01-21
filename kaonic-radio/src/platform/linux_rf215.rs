@@ -6,6 +6,11 @@ use radio_rf215::bus::BusInterrupt;
 use radio_rf215::bus::BusReset;
 use radio_rf215::error::RadioError;
 
+use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Instant;
+
 use super::linux::LinuxClock;
 use super::linux::LinuxGpioReset;
 use super::linux::SharedBus;
@@ -65,7 +70,7 @@ impl BusInterrupt for LinuxGpioInterrupt {
                 let _ = self.request.read_edge_events(&mut self.buffer);
             }
 
-            return true;
+            return status;
         }
 
         return false;
@@ -97,6 +102,43 @@ impl BusClock for LinuxClock {
 
     fn current_time(&mut self) -> u64 {
         self.start_time.elapsed().as_millis() as u64
+    }
+}
+
+pub struct AtomicInterrupt {
+    counter: Arc<AtomicUsize>,
+    prev_count: usize,
+}
+
+impl AtomicInterrupt {
+    pub fn new(counter: Arc<AtomicUsize>) -> Self {
+        Self {
+            counter,
+            prev_count: 0,
+        }
+    }
+}
+
+impl BusInterrupt for AtomicInterrupt {
+    fn wait_on_interrupt(&mut self, timeout: Option<core::time::Duration>) -> bool {
+        let deadline = timeout.map(|t| Instant::now() + t);
+
+        loop {
+            let current = self.counter.load(Ordering::Acquire);
+
+            if current != self.prev_count {
+                self.prev_count = current;
+                return true;
+            }
+
+            if let Some(deadline) = deadline {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+            }
+
+            std::thread::yield_now();
+        }
     }
 }
 

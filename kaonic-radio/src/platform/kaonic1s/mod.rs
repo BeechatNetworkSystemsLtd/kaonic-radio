@@ -1,4 +1,11 @@
-use radio_rf215::{baseband::BasebandFrame, bus::SpiBus, radio::RadioFrequencyBuilder, Rf215};
+use std::sync::{atomic::AtomicUsize, Arc, Mutex};
+
+use radio_rf215::{
+    baseband::BasebandFrame,
+    bus::{BusInterrupt, SpiBus},
+    radio::RadioFrequencyBuilder,
+    Rf215,
+};
 
 use crate::{
     error::KaonicError,
@@ -9,6 +16,7 @@ use crate::{
         linux::{
             LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
         },
+        linux_rf215::AtomicInterrupt,
         platform_impl::rf215::map_modulation,
     },
     radio::{BandwidthFilter, Hertz, Radio, RadioConfig, ReceiveResult, ScanResult},
@@ -18,7 +26,7 @@ mod machine;
 
 pub const FRAME_SIZE: usize = 2048usize;
 
-pub type Kaonic1SBus = SpiBus<LinuxSpi, LinuxGpioInterrupt, LinuxClock, LinuxGpioReset>;
+pub type Kaonic1SBus = SpiBus<LinuxSpi, AtomicInterrupt, LinuxClock, LinuxGpioReset>;
 
 pub struct Kaonic1SRadioFem {
     flt_v1: LinuxOutputPin,
@@ -101,31 +109,61 @@ impl Kaonic1SRadioFem {
 pub type Kaonic1SFrame = Frame<FRAME_SIZE>;
 pub type Kaonic1SRf215 = Rf215<SharedBus<Kaonic1SBus>>;
 
+pub struct Kaonic1SRadioEvent {
+    counter: Arc<AtomicUsize>,
+    irq: LinuxGpioInterrupt,
+}
+
+impl Kaonic1SRadioEvent {
+    pub fn new(counter: Arc<AtomicUsize>, irq: LinuxGpioInterrupt) -> Self {
+        Self { counter, irq }
+    }
+
+    pub fn wait_for_event(&mut self, timeout: Option<core::time::Duration>) -> bool {
+        if self.irq.wait_on_interrupt(timeout) {
+            self.counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            return true;
+        }
+
+        false
+    }
+}
+
 pub struct Kaonic1SRadio {
     fem: Kaonic1SRadioFem,
     radio: Kaonic1SRf215,
+    event: Arc<Mutex<Kaonic1SRadioEvent>>,
     bb_frame: BasebandFrame,
 
     modulation: Modulation,
 
-    snr: i8,
     noise_dbm: i8,
 }
 
 impl Kaonic1SRadio {
-    pub fn new(radio: Rf215<SharedBus<Kaonic1SBus>>, fem: Kaonic1SRadioFem) -> Self {
+    pub fn new(
+        radio: Rf215<SharedBus<Kaonic1SBus>>,
+        event: Kaonic1SRadioEvent,
+        fem: Kaonic1SRadioFem,
+    ) -> Self {
         Self {
             radio,
+            event: Arc::new(Mutex::new(event)),
             fem,
             bb_frame: BasebandFrame::new(),
             modulation: Modulation::Ofdm(OfdmModulation::default()),
-            snr: 0,
             noise_dbm: -127,
         }
     }
 
     pub fn radio(&mut self) -> &mut Kaonic1SRf215 {
         &mut self.radio
+    }
+
+    pub fn event(&self) -> Arc<Mutex<Kaonic1SRadioEvent>> {
+        self.event.clone()
     }
 }
 
@@ -161,14 +199,31 @@ impl Radio for Kaonic1SRadio {
         Ok(())
     }
 
-    fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
-        log::trace!("TX ({}): {} Bytes", self.radio.name(), frame.len());
-
+    fn update_event(&mut self) -> Result<(), KaonicError> {
         self.radio
-            .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
-            .map_err(|_| KaonicError::HardwareError)?;
+            .update_irqs()
+            .map_err(|_| KaonicError::HardwareError);
 
         Ok(())
+    }
+
+    fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
+        log::trace!(
+            "tx [{}] -))) |o| {:>4} bytes",
+            self.radio.name(),
+            frame.len(),
+        );
+
+        let result = self
+            .radio
+            .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
+            .map_err(|_| KaonicError::HardwareError);
+
+        if result.is_err() {
+            log::error!("tx [{}] error", self.radio.name());
+        }
+
+        result
     }
 
     fn receive<'a>(
@@ -182,12 +237,13 @@ impl Radio for Kaonic1SRadio {
 
         match result {
             Ok(_) => {
+                let _ = self.radio.start_receive();
+
                 log::trace!(
-                    "RX ({}): {}B RSSI:{}dBm {}dBm ",
+                    "rx [{}] (((- |o| {:>4} bytes {:>3}dBm",
                     self.radio.name(),
                     self.bb_frame.len(),
                     edv,
-                    self.noise_dbm
                 );
 
                 frame.copy_from_slice(self.bb_frame.as_slice());

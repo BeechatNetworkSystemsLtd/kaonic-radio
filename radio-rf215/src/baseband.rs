@@ -47,6 +47,7 @@ where
 {
     _band: PhantomData<B>,
     bus: I,
+    irqs: BasebandInterruptMask,
 }
 
 impl<B, I> Baseband<B, I>
@@ -58,6 +59,7 @@ where
         Self {
             _band: PhantomData::default(),
             bus,
+            irqs: BasebandInterruptMask::new(),
         }
     }
 
@@ -246,14 +248,21 @@ where
         Ok(())
     }
 
-    pub fn read_irqs(&mut self) -> Result<BasebandInterruptMask, RadioError> {
+    pub fn update_irqs(&mut self) -> Result<&mut Self, RadioError> {
+        let irqs = self.read_irqs()?;
+        self.irqs.combine(&irqs);
+        Ok(self)
+    }
+
+    fn read_irqs(&mut self) -> Result<BasebandInterruptMask, RadioError> {
         let irq_status = self.bus.read_reg_u8(B::BASEBAND_IRQ_ADDRESS)?;
         Ok(BasebandInterruptMask::new_from_mask(irq_status))
     }
 
-    pub fn clear_irqs(&mut self) -> Result<(), RadioError> {
+    pub fn clear_irqs(&mut self) -> Result<&mut Self, RadioError> {
         let _ = self.read_irqs()?;
-        Ok(())
+        self.irqs.reset();
+        Ok(self)
     }
 
     pub fn wait_irq(&mut self, irq: BasebandInterrupt, timeout: core::time::Duration) -> bool {
@@ -272,16 +281,14 @@ where
                 break;
             }
 
-            if self
-                .bus
-                .wait_interrupt(Some(core::time::Duration::from_micros(100)))
-            {
-                if let Ok(irqs) = self.read_irqs() {
-                    if irqs.has_irqs(irq_mask) {
-                        return true;
-                    }
+            if let Ok(_) = self.update_irqs() {
+                if let Some(_irqs) = self.irqs.retrieve(&irq_mask) {
+                    return true;
                 }
             }
+
+            self.bus
+                .wait_interrupt(Some(core::time::Duration::from_micros(100)));
         }
 
         return false;
