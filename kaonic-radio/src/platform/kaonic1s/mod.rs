@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicUsize, Arc, Mutex};
+use std::{
+    sync::{atomic::AtomicUsize, Arc, Mutex},
+    time::Instant,
+};
 
 use radio_rf215::{
     baseband::BasebandFrame,
@@ -208,11 +211,7 @@ impl Radio for Kaonic1SRadio {
     }
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
-        log::trace!(
-            "tx [{}] -))) |o| {:>4} bytes",
-            self.radio.name(),
-            frame.len(),
-        );
+        let start = Instant::now();
 
         let result = self
             .radio
@@ -222,6 +221,15 @@ impl Radio for Kaonic1SRadio {
         if result.is_err() {
             log::error!("tx [{}] error", self.radio.name());
         }
+
+        log::trace!(
+            "tx [{}] -))) |o| {:>4} bytes {:>4}us",
+            self.radio.name(),
+            frame.len(),
+            start.elapsed().as_micros(),
+        );
+
+        let _ = self.radio.start_receive();
 
         result
     }
@@ -233,7 +241,7 @@ impl Radio for Kaonic1SRadio {
     ) -> Result<ReceiveResult, KaonicError> {
         let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
 
-        let edv = self.radio.read_edv().unwrap_or(127);
+        let edv = 0; //self.radio.read_edv().unwrap_or(127);
 
         match result {
             Ok(_) => {

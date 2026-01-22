@@ -9,9 +9,7 @@ pub mod kaonic {
     tonic::include_proto!("kaonic");
 }
 
-use kaonic::{
-    radio_client::RadioClient, RadioFrame, RadioModule, ReceiveRequest, TransmitRequest,
-};
+use kaonic::{radio_client::RadioClient, RadioFrame, RadioModule, ReceiveRequest, TransmitRequest};
 
 const DEFAULT_COMMD_ADDR: &str = "http://127.0.0.1:8080";
 const DEFAULT_DURATION_SECS: u64 = 10;
@@ -48,7 +46,7 @@ struct Args {
 // Packet structure:
 // MAGIC (4) + SEQ (4) + TIMESTAMP (8) + PADDING (N) + CRC32 (4)
 // Minimum size: 24 bytes
-const MAGIC: [u8; 4] = [0x4B, 0x52, 0x54, 0x54]; // "KRTT"
+const MAGIC: [u8; 4] = [0x8B, 0x52, 0x54, 0x54];
 
 fn compute_crc(data: &[u8]) -> u32 {
     let mut hasher = Hasher::new();
@@ -173,6 +171,8 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut count: u64 = 0;
     let mut ignored: u64 = 0;
     let mut crc_errors: u64 = 0;
+    let mut bytes_received: u64 = 0;
+    let mut start_time: Option<Instant> = None;
 
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
@@ -191,6 +191,25 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
 
                         match parse_packet(&data) {
                             Ok((seq, _ts)) => {
+                                // Track receive stats
+                                let packet_size = data.len() as u64;
+                                if start_time.is_none() {
+                                    start_time = Some(Instant::now());
+                                }
+                                bytes_received += packet_size;
+
+                                // Calculate current receive speed
+                                let speed_kbps = start_time
+                                    .map(|t| {
+                                        let elapsed = t.elapsed().as_secs_f64();
+                                        if elapsed > 0.0 {
+                                            (bytes_received as f64 * 8.0) / elapsed / 1000.0
+                                        } else {
+                                            0.0
+                                        }
+                                    })
+                                    .unwrap_or(0.0);
+
                                 // Echo back the same packet (preserving timestamp and CRC)
                                 let tx_request = TransmitRequest {
                                     module: RadioModule::ModuleA as i32,
@@ -200,7 +219,10 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
                                 match client.transmit(tx_request).await {
                                     Ok(_) => {
                                         count += 1;
-                                        println!("[{}] Echo seq={} size={} rssi={} dBm", count, seq, data.len(), response.rssi);
+                                        println!(
+                                            "[{}] Echo seq={} size={} rssi={} dBm  rx={:.2} kb/s",
+                                            count, seq, data.len(), response.rssi, speed_kbps
+                                        );
                                     }
                                     Err(e) => warn!("Transmit error: {}", e),
                                 }
@@ -233,6 +255,14 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
     if crc_errors > 0 {
         println!("CRC errors: {}", crc_errors);
+    }
+    if let Some(start) = start_time {
+        let elapsed = start.elapsed().as_secs_f64();
+        if elapsed > 0.0 {
+            let avg_speed_kbps = (bytes_received as f64 * 8.0) / elapsed / 1000.0;
+            println!("Bytes received: {}", bytes_received);
+            println!("Avg receive speed: {:.2} kb/s", avg_speed_kbps);
+        }
     }
     Ok(())
 }
@@ -297,7 +327,10 @@ async fn run_client(
 
                             println!(
                                 "seq={:<6} rtt={:<4} ms  rssi={:<4} dBm  size={}",
-                                seq, rtt, response.rssi, frame_data.len()
+                                seq,
+                                rtt,
+                                response.rssi,
+                                frame_data.len()
                             );
                         }
                     }

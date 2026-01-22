@@ -466,16 +466,19 @@ where
     }
 
     pub fn receive(&mut self) -> Result<(), RadioError> {
+        let mut already_in_rx = false;
+
         loop {
             let state = self.wait_on_state(core::time::Duration::from_millis(100), |s| {
-                (s == RadioState::TrxOff) || (s == RadioState::TrxPrep)
+                (s == RadioState::TrxOff) || (s == RadioState::TrxPrep) || (s == RadioState::Rx)
             });
 
             let mut should_change_state = false;
             if let Err(_) = state {
                 should_change_state = true;
             } else if let Ok(state) = state {
-                should_change_state = state != RadioState::TrxPrep;
+                should_change_state = state != RadioState::TrxPrep && state != RadioState::Rx;
+                already_in_rx = state == RadioState::Rx;
             }
 
             if should_change_state {
@@ -485,13 +488,15 @@ where
             }
         }
 
-        self.bus.delay(core::time::Duration::from_micros(100));
+        if !already_in_rx {
+            self.bus.delay(core::time::Duration::from_micros(100));
 
-        self.set_state(RadioState::Rx)?;
+            self.set_state(RadioState::Rx)?;
 
-        self.wait_on_state(core::time::Duration::from_millis(100), |s| {
-            s == RadioState::Rx
-        })?;
+            self.wait_on_state(core::time::Duration::from_millis(100), |s| {
+                s == RadioState::Rx
+            })?;
+        }
 
         Ok(())
     }

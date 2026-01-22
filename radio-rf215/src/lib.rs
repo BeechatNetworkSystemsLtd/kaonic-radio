@@ -165,7 +165,6 @@ impl<I: Bus + Clone> Rf215<I> {
     }
 
     pub fn start_receive(&mut self) -> Result<&mut Self, RadioError> {
-
         self.trx_09.start_receive()?;
         self.trx_24.start_receive()?;
 

@@ -103,6 +103,16 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
         self.radio.send_command(crate::radio::RadioCommand::Tx)?;
 
+        if let Some(irqs) = self.radio.wait_any_irq(
+            RadioInterruptMask::new()
+                .add_irq(regs::RadioInterrupt::TransceiverReady)
+                .add_irq(regs::RadioInterrupt::TransceiverError)
+                .build(),
+            core::time::Duration::from_millis(500),
+        ) {
+            if irqs.has_irq(regs::RadioInterrupt::TransceiverReady) {}
+        }
+
         Ok(())
     }
 
@@ -163,15 +173,12 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
                 // channel has assessed as busy, the baseband needs to be enabled again by setting
                 // PC.BBEN to 1.
                 self.baseband.enable()?;
-                return Err(RadioError::Timeout);
             }
 
             if irqs.has_irq(regs::RadioInterrupt::TransceiverReady) {
                 transmitted = true;
             }
         }
-
-        self.radio.receive()?;
 
         if transmitted {
             Ok(())
