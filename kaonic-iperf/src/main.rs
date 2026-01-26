@@ -16,7 +16,59 @@ const DEFAULT_DURATION_SECS: u64 = 10;
 const DEFAULT_PACKET_SIZE: usize = 256;
 const MIN_PACKET_SIZE: usize = 24; // MAGIC(4) + SEQ(4) + TIMESTAMP(8) + padding(4) + CRC(4)
 const MAX_PACKET_SIZE: usize = 2048;
-const RESPONSE_TIMEOUT_MS: u64 = 2000;
+const MAX_WORDS: usize = MAX_PACKET_SIZE / 4;
+
+/// 4-byte aligned buffer for zero-copy u8 <-> u32 conversion
+#[repr(C, align(4))]
+struct AlignedBuffer {
+    data: [u8; MAX_PACKET_SIZE],
+    len: usize,
+}
+
+impl AlignedBuffer {
+    fn new() -> Self {
+        Self {
+            data: [0u8; MAX_PACKET_SIZE],
+            len: 0,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.data[..self.len]
+    }
+
+    fn as_words(&self) -> &[u32] {
+        let word_len = (self.len + 3) / 4;
+        // SAFETY: buffer is aligned to 4 bytes, and we're on little-endian
+        unsafe { std::slice::from_raw_parts(self.data.as_ptr() as *const u32, word_len) }
+    }
+
+    fn set_len(&mut self, len: usize) {
+        self.len = len.min(MAX_PACKET_SIZE);
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    fn push(&mut self, byte: u8) {
+        if self.len < MAX_PACKET_SIZE {
+            self.data[self.len] = byte;
+            self.len += 1;
+        }
+    }
+
+    fn extend_from_slice(&mut self, slice: &[u8]) {
+        let copy_len = slice.len().min(MAX_PACKET_SIZE - self.len);
+        self.data[self.len..self.len + copy_len].copy_from_slice(&slice[..copy_len]);
+        self.len += copy_len;
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+const RESPONSE_TIMEOUT_MS: u64 = 500;
 
 #[derive(Parser, Debug)]
 #[command(name = "kaonic-iperf")]
@@ -54,33 +106,25 @@ fn compute_crc(data: &[u8]) -> u32 {
     hasher.finalize()
 }
 
-fn encode_frame(buffer: &[u8]) -> RadioFrame {
-    let words = buffer
-        .chunks(4)
-        .map(|chunk| {
-            let mut word = 0u32;
-            for (i, &byte) in chunk.iter().enumerate() {
-                word |= (byte as u32) << (i * 8);
-            }
-            word
-        })
-        .collect::<Vec<_>>();
-
+fn encode_frame(buffer: &AlignedBuffer) -> RadioFrame {
     RadioFrame {
-        data: words,
+        data: buffer.as_words().to_vec(),
         length: buffer.len() as u32,
     }
 }
 
-fn decode_frame(frame: &RadioFrame) -> Vec<u8> {
-    let mut buffer = Vec::with_capacity(frame.length as usize);
-    for word in &frame.data {
-        for i in 0..4 {
-            buffer.push(((word >> (i * 8)) & 0xFF) as u8);
-        }
+fn decode_frame_into(frame: &RadioFrame, buffer: &mut AlignedBuffer) {
+    let byte_len = frame.length as usize;
+    let word_len = frame.data.len().min(MAX_WORDS);
+
+    // SAFETY: we're copying u32 words directly into aligned buffer as bytes (little-endian)
+    unsafe {
+        let src = frame.data.as_ptr() as *const u8;
+        let dst = buffer.data.as_mut_ptr();
+        std::ptr::copy_nonoverlapping(src, dst, word_len * 4);
     }
-    buffer.truncate(frame.length as usize);
-    buffer
+
+    buffer.set_len(byte_len);
 }
 
 fn now_ms() -> u64 {
@@ -90,9 +134,9 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn create_packet(seq: u32, size: usize) -> Vec<u8> {
+fn fill_packet(packet: &mut AlignedBuffer, seq: u32, size: usize) {
     let size = size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
-    let mut packet = Vec::with_capacity(size);
+    packet.clear();
 
     // Header: MAGIC + SEQ + TIMESTAMP (16 bytes)
     packet.extend_from_slice(&MAGIC);
@@ -105,10 +149,8 @@ fn create_packet(seq: u32, size: usize) -> Vec<u8> {
     }
 
     // CRC32 of everything before it
-    let crc = compute_crc(&packet);
+    let crc = compute_crc(packet.as_bytes());
     packet.extend_from_slice(&crc.to_le_bytes());
-
-    packet
 }
 
 #[derive(Debug)]
@@ -174,6 +216,9 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes_received: u64 = 0;
     let mut start_time: Option<Instant> = None;
 
+    // Pre-allocate reusable aligned buffer
+    let mut rx_buf = AlignedBuffer::new();
+
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
 
@@ -187,12 +232,12 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
                 match result {
                     Some(Ok(response)) => {
                         let frame = response.frame.unwrap_or_default();
-                        let data = decode_frame(&frame);
+                        decode_frame_into(&frame, &mut rx_buf);
 
-                        match parse_packet(&data) {
+                        match parse_packet(rx_buf.as_bytes()) {
                             Ok((seq, _ts)) => {
                                 // Track receive stats
-                                let packet_size = data.len() as u64;
+                                let packet_size = rx_buf.len() as u64;
                                 if start_time.is_none() {
                                     start_time = Some(Instant::now());
                                 }
@@ -221,7 +266,7 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
                                         count += 1;
                                         println!(
                                             "[{}] Echo seq={} size={} rssi={} dBm  rx={:.2} kb/s",
-                                            count, seq, data.len(), response.rssi, speed_kbps
+                                            count, seq, rx_buf.len(), response.rssi, speed_kbps
                                         );
                                     }
                                     Err(e) => warn!("Transmit error: {}", e),
@@ -237,7 +282,7 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
                                 crc_errors += 1;
                                 warn!(
                                     "CRC mismatch: expected={:#010x} actual={:#010x} size={}",
-                                    expected, actual, data.len()
+                                    expected, actual, rx_buf.len()
                                 );
                             }
                         }
@@ -292,19 +337,26 @@ async fn run_client(
     let start = Instant::now();
     let test_duration = Duration::from_secs(duration_secs);
     let mut seq: u32 = 0;
-    let mut rtts: Vec<u64> = Vec::new();
+    let mut rtt_min: u64 = u64::MAX;
+    let mut rtt_max: u64 = 0;
+    let mut rtt_sum: u64 = 0;
+    let mut rtt_count: u64 = 0;
     let mut bytes_transferred: u64 = 0;
     let mut timeouts: u64 = 0;
     let mut crc_errors: u64 = 0;
 
+    // Pre-allocate reusable aligned buffers
+    let mut packet_buf = AlignedBuffer::new();
+    let mut rx_buf = AlignedBuffer::new();
+
     while start.elapsed() < test_duration {
         // Send request packet
-        let packet = create_packet(seq, packet_size);
+        fill_packet(&mut packet_buf, seq, packet_size);
         let send_time = Instant::now();
 
         let tx_request = TransmitRequest {
             module: RadioModule::ModuleA as i32,
-            frame: Some(encode_frame(&packet)),
+            frame: Some(encode_frame(&packet_buf)),
         };
 
         if let Err(e) = client.transmit(tx_request).await {
@@ -317,12 +369,15 @@ async fn run_client(
         match timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS), stream.next()).await {
             Ok(Some(Ok(response))) => {
                 let rtt = send_time.elapsed().as_millis() as u64;
-                let frame_data = decode_frame(&response.frame.unwrap_or_default());
+                decode_frame_into(&response.frame.unwrap_or_default(), &mut rx_buf);
 
-                match parse_packet(&frame_data) {
+                match parse_packet(rx_buf.as_bytes()) {
                     Ok((resp_seq, _)) => {
                         if resp_seq == seq {
-                            rtts.push(rtt);
+                            rtt_min = rtt_min.min(rtt);
+                            rtt_max = rtt_max.max(rtt);
+                            rtt_sum += rtt;
+                            rtt_count += 1;
                             bytes_transferred += (packet_size * 2) as u64; // req + resp
 
                             println!(
@@ -330,7 +385,7 @@ async fn run_client(
                                 seq,
                                 rtt,
                                 response.rssi,
-                                frame_data.len()
+                                rx_buf.len()
                             );
                         }
                     }
@@ -366,24 +421,21 @@ async fn run_client(
     // Print results
     let elapsed = start.elapsed().as_secs_f64();
     let packets_sent = seq as u64;
-    let packets_received = rtts.len() as u64;
 
     println!("\n=== Results ===");
     println!("Duration:     {:.2} s", elapsed);
     println!("Packet size:  {} bytes", packet_size);
     println!(
         "Packets:      {} sent, {} received, {} timeouts, {} CRC errors",
-        packets_sent, packets_received, timeouts, crc_errors
+        packets_sent, rtt_count, timeouts, crc_errors
     );
 
-    if !rtts.is_empty() {
-        let min_rtt = *rtts.iter().min().unwrap();
-        let max_rtt = *rtts.iter().max().unwrap();
-        let avg_rtt = rtts.iter().sum::<u64>() as f64 / rtts.len() as f64;
+    if rtt_count > 0 {
+        let avg_rtt = rtt_sum as f64 / rtt_count as f64;
 
         println!(
             "RTT:          min={} ms, avg={:.1} ms, max={} ms",
-            min_rtt, avg_rtt, max_rtt
+            rtt_min, avg_rtt, rtt_max
         );
     }
 
@@ -393,7 +445,7 @@ async fn run_client(
     }
 
     if packets_sent > 0 {
-        let loss = ((packets_sent - packets_received) as f64 / packets_sent as f64) * 100.0;
+        let loss = ((packets_sent - rtt_count) as f64 / packets_sent as f64) * 100.0;
         println!("Packet loss:  {:.1}%", loss);
     }
 
