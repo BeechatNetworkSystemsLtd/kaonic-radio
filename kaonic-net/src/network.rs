@@ -2,7 +2,7 @@ use kaonic_radio::{
     error::KaonicError,
     frame::{Frame, FrameSegment},
 };
-use rand::TryCryptoRng;
+use rand::{CryptoRng, RngCore};
 
 use crate::{
     demuxer::Demuxer,
@@ -59,7 +59,7 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
         }
     }
 
-    pub fn transmit<'a, RNG: TryCryptoRng + Copy, F>(
+    pub fn transmit<'a, RNG: CryptoRng + RngCore + Copy, F>(
         &mut self,
         data: &[u8],
         rng: RNG,
