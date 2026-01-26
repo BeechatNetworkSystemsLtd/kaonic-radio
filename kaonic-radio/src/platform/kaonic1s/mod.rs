@@ -97,7 +97,7 @@ impl Kaonic1SRadioFem {
 
     pub fn adjust(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
         if let Some(ant_24) = &mut self.ant_24 {
-            ant_24.set_high()?;
+            ant_24.set_low()?;
         }
 
         self.set_bandwidth_filter(config.bandwidth_filter, config.freq)?;
@@ -211,23 +211,29 @@ impl Radio for Kaonic1SRadio {
     }
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
-        let start = Instant::now();
+        let mut result = Ok(());
+        for i in 0..4 {
+            let start = Instant::now();
 
-        let result = self
-            .radio
-            .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
-            .map_err(|_| KaonicError::HardwareError);
+            result = self
+                .radio
+                .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
+                .map_err(|_| KaonicError::HardwareError);
 
-        if result.is_err() {
-            log::error!("tx [{}] error", self.radio.name());
+            if result.is_err() {
+                log::error!("tx [{}] error", self.radio.name());
+                std::thread::sleep(core::time::Duration::from_millis(4));
+            } else {
+                log::trace!(
+                    "tx [{}] -))) |o| {:>4} bytes {:>4}us",
+                    self.radio.name(),
+                    frame.len(),
+                    start.elapsed().as_micros(),
+                );
+
+                break;
+            }
         }
-
-        log::trace!(
-            "tx [{}] -))) |o| {:>4} bytes {:>4}us",
-            self.radio.name(),
-            frame.len(),
-            start.elapsed().as_micros(),
-        );
 
         let _ = self.radio.start_receive();
 
@@ -243,10 +249,10 @@ impl Radio for Kaonic1SRadio {
 
         let edv = 0; //self.radio.read_edv().unwrap_or(127);
 
+        let _ = self.radio.start_receive();
+
         match result {
             Ok(_) => {
-                let _ = self.radio.start_receive();
-
                 log::trace!(
                     "rx [{}] (((- |o| {:>4} bytes {:>3}dBm",
                     self.radio.name(),

@@ -429,7 +429,7 @@ where
                 return Err(RadioError::CommunicationFailure);
             }
 
-            self.bus.delay(core::time::Duration::from_micros(100));
+            self.bus.delay(core::time::Duration::from_micros(200));
         }
     }
 
@@ -489,7 +489,7 @@ where
         }
 
         if !already_in_rx {
-            self.bus.delay(core::time::Duration::from_micros(100));
+            self.bus.delay(core::time::Duration::from_micros(200));
 
             self.set_state(RadioState::Rx)?;
 

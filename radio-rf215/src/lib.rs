@@ -50,6 +50,32 @@ pub enum ChipMode {
     BasebasendRadio24 = 0x05, // RF enabled, baseband (BBC1) disabled and (BBC0) enabled, I/Q IF for 2.4GHz Transceiver enabled
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
+pub enum PadOutputDrive {
+    Drive2mA = 0x00,
+    Drive4mA = 0x01,
+    Drive6mA = 0x02,
+    Drive8mA = 0x03,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct RfConfig {
+    pub output_drive: PadOutputDrive,
+    pub irq_active_low: bool,
+    pub irq_invert: bool,
+}
+
+impl Default for RfConfig {
+    fn default() -> Self {
+        Self {
+            output_drive: PadOutputDrive::Drive4mA,
+            irq_active_low: false,
+            irq_invert: false,
+        }
+    }
+}
+
 pub struct Rf215<I: Bus + Clone> {
     name: &'static str,
     part_number: PartNumber,
@@ -112,6 +138,23 @@ impl<I: Bus + Clone> Rf215<I> {
 
         self.bus
             .modify_reg_u8(regs::RG_RF_IQIFC1, 0b0111_0000, chip_mode)?;
+
+        Ok(())
+    }
+
+    pub fn set_config(&mut self, config: &RfConfig) -> Result<(), RadioError> {
+        let mut config_value = config.output_drive as u8;
+
+        if config.irq_active_low {
+            config_value = config_value | 0b0000_0100;
+        }
+
+        if !config.irq_invert {
+            config_value = config_value | 0b0000_1000;
+        }
+
+        self.bus
+            .modify_reg_u8(regs::RG_RF_CFG, 0b0000_1111, config_value)?;
 
         Ok(())
     }

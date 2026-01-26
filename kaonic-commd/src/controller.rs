@@ -125,9 +125,11 @@ impl RadioController {
 
             let (event_send, event_recv) = watch::channel(false);
 
-            let radio = Arc::new(std::sync::Mutex::new(radio.unwrap()));
+            let radio = radio.unwrap();
+            let event = radio.event();
 
-            let event = radio.lock().unwrap().event();
+            let radio = Arc::new(Mutex::new(radio));
+
             std::thread::Builder::new()
                 .name("radio-event".to_string())
                 .spawn(move || {
@@ -147,7 +149,6 @@ impl RadioController {
             worker_handles.push(handle);
 
             radio_index += 1;
-            break;
         }
 
         Ok(Self {
@@ -285,8 +286,10 @@ fn radio_event_thread(
     event: Arc<std::sync::Mutex<Kaonic1SRadioEvent>>,
     notify: tokio::sync::watch::Sender<bool>,
 ) {
+    let mut irq_trigger = false;
     loop {
         if event.lock().unwrap().wait_for_event(None) {
+            // irq_trigger = !irq_trigger;
             let _ = notify.send(true);
         }
     }
@@ -294,7 +297,7 @@ fn radio_event_thread(
 
 async fn manage_radio(
     module: usize,
-    radio: Arc<std::sync::Mutex<PlatformRadio>>,
+    radio: Arc<Mutex<PlatformRadio>>,
     mut command_recv: broadcast::Receiver<RadioCommand>,
     module_send: broadcast::Sender<ModuleReceive>,
     mut event_recv: watch::Receiver<bool>,
@@ -302,38 +305,15 @@ async fn manage_radio(
 ) {
     let mut rx_frame = RadioFrame::new();
 
-    radio
-        .lock()
-        .unwrap()
-        .configure(
-            &RadioConfigBuilder::new()
-                .freq(Hertz::new(2_400_000_000))
-                .channel(11)
-                .build(),
-        )
-        .unwrap();
-
-    radio
-        .lock()
-        .unwrap()
-        .set_modulation(&Modulation::Ofdm(OfdmModulation {
-            mcs: kaonic_radio::modulation::OfdmMcs::Mcs6,
-            opt: kaonic_radio::modulation::OfdmOption::Option1,
-            tx_power: 10,
-        }))
-        .unwrap();
-
     loop {
         tokio::select! {
             biased;
 
             _ = event_recv.changed() => {
 
-                let _ = radio.lock().unwrap().update_event();
+                let _ = radio.lock().await.update_event();
 
-                match radio
-                    .lock()
-                    .unwrap()
+                match radio.lock().await
                     .receive(rx_frame.clear(), core::time::Duration::from_millis(10))
                 {
                     Ok(rr) => {
@@ -355,17 +335,17 @@ async fn manage_radio(
                 match cmd {
                     Ok(RadioCommand::Transmit(command)) => {
                         if command.module == module {
-                            let _ = radio.lock().unwrap().transmit(&command.frame);
+                            let _ = radio.lock().await.transmit(&command.frame);
                         }
                     }
                     Ok(RadioCommand::Configure(command)) => {
                         if command.module == module {
-                            let _ = radio.lock().unwrap().configure(&command.config);
+                            let _ = radio.lock().await.configure(&command.config);
                         }
                     }
                     Ok(RadioCommand::SetModulation(command)) => {
                         if command.module == module {
-                            let _ = radio.lock().unwrap().set_modulation(&command.modulation);
+                            let _ = radio.lock().await.set_modulation(&command.modulation);
                         }
                     }
                     Ok(RadioCommand::Shutdown) => {}

@@ -8,7 +8,7 @@ use radio_rf215::{
     radio::{AgcGainMap, AuxiliarySettings, FrontendPinConfig, PaVol},
     regs::{BasebandInterrupt, BasebandInterruptMask, RadioInterrupt, RadioInterruptMask},
     transceiver::{Band09, Band24, Transreceiver},
-    Rf215,
+    PadOutputDrive, Rf215,
 };
 
 use crate::platform::{
@@ -85,7 +85,7 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
         irq_gpio: LinuxGpioConfig { line_name: "PD9" },
         spi: LinuxSpiConfig {
             path: "/dev/spidev6.0",
-            max_speed: 12_000_000,
+            max_speed: 10_000_000,
         },
         flt_v1_gpio: LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
@@ -110,7 +110,7 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
         irq_gpio: LinuxGpioConfig { line_name: "PE15" },
         spi: LinuxSpiConfig {
             path: "/dev/spidev3.0",
-            max_speed: 12_000_000,
+            max_speed: 10_000_000,
         },
         flt_v1_gpio: LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
@@ -221,6 +221,12 @@ fn configure_radio_24<I: Bus + Clone>(
 }
 
 fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>) -> Result<(), RadioError> {
+    rf.set_config(&radio_rf215::RfConfig {
+        output_drive: PadOutputDrive::Drive8mA,
+        irq_active_low: false,
+        irq_invert: false,
+    })?;
+
     rf.setup_irq(
         RadioInterruptMask::new()
             .add_irq(RadioInterrupt::TransceiverError)
@@ -236,8 +242,11 @@ fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>) -> Result<(), RadioError> 
     configure_radio_09(rf.trx_09())?;
     configure_radio_24(rf.trx_24())?;
 
-    rf.configure(&Modulation::Ofdm(OfdmModulation::default()))?
-        .start_receive()?;
+    rf.configure(&Modulation::Ofdm(OfdmModulation {
+        tx_power: 22,
+        ..Default::default()
+    }))?
+    .start_receive()?;
 
     Ok(())
 }

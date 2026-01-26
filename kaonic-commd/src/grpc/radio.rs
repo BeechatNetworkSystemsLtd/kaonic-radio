@@ -193,21 +193,18 @@ fn module_index(module: i32) -> Result<usize, Status> {
 }
 
 fn encode_frame(buffer: &[u8]) -> RadioFrame {
-    // Convert the packet bytes to a list of words
-    // TODO: Optimize dynamic allocation
-    let words = buffer
-        .chunks(4)
-        .map(|chunk| {
-            let mut work = 0u32;
-            let chunk = chunk.iter().as_slice();
+    let word_len = (buffer.len() + 3) / 4;
+    let mut words = vec![0u32; word_len];
 
-            for i in 0..chunk.len() {
-                work |= (chunk[i] as u32) << (i * 8);
-            }
-
-            work
-        })
-        .collect::<Vec<_>>();
+    // Copy bytes directly into words buffer (little-endian)
+    // SAFETY: u32 slice can receive bytes, we just need to handle length
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            buffer.as_ptr(),
+            words.as_mut_ptr() as *mut u8,
+            buffer.len(),
+        );
+    }
 
     RadioFrame {
         data: words,
@@ -219,26 +216,22 @@ fn decode_frame(
     frame: &RadioFrame,
     output_frame: &mut controller::RadioFrame,
 ) -> Result<(), KaonicError> {
-    if output_frame.capacity() < (frame.length as usize) {
+    let length = frame.length as usize;
+
+    if output_frame.capacity() < length {
         return Err(KaonicError::OutOfMemory);
     }
 
-    let length = frame.length as usize;
-    let mut index = 0usize;
-    for word in &frame.data {
-        for i in 0..4 {
-            let _ = output_frame.push_data(&[((word >> i * 8) & 0xFF) as u8]);
+    // Allocate buffer in output frame and copy directly from words (little-endian)
+    let dest = output_frame.clear().alloc_buffer(length);
 
-            index += 1;
-
-            if index >= length {
-                break;
-            }
-        }
-
-        if index >= length {
-            break;
-        }
+    // SAFETY: words can be read as bytes on little-endian systems
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            frame.data.as_ptr() as *const u8,
+            dest.as_mut_ptr(),
+            length,
+        );
     }
 
     Ok(())
