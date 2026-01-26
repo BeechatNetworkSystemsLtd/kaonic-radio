@@ -15,7 +15,7 @@ kaonic-qos = { path="../kaonic-qos/" }
 rand = { version = "0.9.2" }
 
 # Logging
-simple_logger = { version = "=5.0.0", features = ["colors"] }
+simple_logger = { version = "=4.3.3", features = ["colors"] }
 log = "0.4"
 
 # Protobuf and gRPC
