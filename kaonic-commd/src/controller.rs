@@ -11,9 +11,9 @@ use kaonic_net::{
 use kaonic_radio::{
     error::KaonicError,
     frame::{Frame, FrameSegment},
-    modulation::{Modulation, OfdmModulation},
+    modulation::Modulation,
     platform::{create_machine, kaonic1s::Kaonic1SRadioEvent, PlatformRadio},
-    radio::{Hertz, Radio, RadioConfig, RadioConfigBuilder},
+    radio::{Radio, RadioConfig},
 };
 use rand::rngs::OsRng;
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
@@ -128,7 +128,7 @@ impl RadioController {
             let radio = radio.unwrap();
             let event = radio.event();
 
-            let radio = Arc::new(Mutex::new(radio));
+            let radio = Arc::new(std::sync::Mutex::new(radio));
 
             std::thread::Builder::new()
                 .name("radio-event".to_string())
@@ -188,6 +188,10 @@ impl RadioController {
 
     pub fn module_receive(&self, _module: usize) -> broadcast::Receiver<ModuleReceive> {
         self.module_send.subscribe()
+    }
+
+    pub fn command(&self) -> broadcast::Sender<RadioCommand> {
+        self.command_send.clone()
     }
 }
 
@@ -286,10 +290,8 @@ fn radio_event_thread(
     event: Arc<std::sync::Mutex<Kaonic1SRadioEvent>>,
     notify: tokio::sync::watch::Sender<bool>,
 ) {
-    let mut irq_trigger = false;
     loop {
         if event.lock().unwrap().wait_for_event(None) {
-            // irq_trigger = !irq_trigger;
             let _ = notify.send(true);
         }
     }
@@ -297,7 +299,7 @@ fn radio_event_thread(
 
 async fn manage_radio(
     module: usize,
-    radio: Arc<Mutex<PlatformRadio>>,
+    radio: Arc<std::sync::Mutex<PlatformRadio>>,
     mut command_recv: broadcast::Receiver<RadioCommand>,
     module_send: broadcast::Sender<ModuleReceive>,
     mut event_recv: watch::Receiver<bool>,
@@ -311,10 +313,10 @@ async fn manage_radio(
 
             _ = event_recv.changed() => {
 
-                let _ = radio.lock().await.update_event();
+                let _ = radio.lock().unwrap().update_event();
 
-                match radio.lock().await
-                    .receive(rx_frame.clear(), core::time::Duration::from_millis(10))
+                match radio.lock().unwrap()
+                    .receive(rx_frame.clear(), core::time::Duration::from_millis(2))
                 {
                     Ok(rr) => {
                         match module_send.send(ModuleReceive {
@@ -322,7 +324,7 @@ async fn manage_radio(
                             frame: rx_frame,
                             rssi: rr.rssi,
                         }) {
-                            Ok(subs) => {}
+                            Ok(_subs) => {}
                             Err(e) => {
                                 log::warn!("manage_radio: module_send error sending: {:?}", e)
                             }
@@ -335,17 +337,17 @@ async fn manage_radio(
                 match cmd {
                     Ok(RadioCommand::Transmit(command)) => {
                         if command.module == module {
-                            let _ = radio.lock().await.transmit(&command.frame);
+                            let _ = radio.lock().unwrap().transmit(&command.frame);
                         }
                     }
                     Ok(RadioCommand::Configure(command)) => {
                         if command.module == module {
-                            let _ = radio.lock().await.configure(&command.config);
+                            let _ = radio.lock().unwrap().configure(&command.config);
                         }
                     }
                     Ok(RadioCommand::SetModulation(command)) => {
                         if command.module == module {
-                            let _ = radio.lock().await.set_modulation(&command.modulation);
+                            let _ = radio.lock().unwrap().set_modulation(&command.modulation);
                         }
                     }
                     Ok(RadioCommand::Shutdown) => {}
@@ -357,7 +359,6 @@ async fn manage_radio(
                 log::info!("Radio module {} received cancellation", module);
                 break;
             }
-
         };
     }
 }

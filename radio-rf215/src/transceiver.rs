@@ -139,7 +139,6 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         // baseband decodes/receives any frame during the ED measurement.
         self.baseband.disable()?;
 
-        self.baseband.load_tx(frame)?;
 
         self.radio
             .change_state(CHANGE_STATE_DURATION, RadioState::Rx)?;
@@ -158,6 +157,8 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
         self.radio
             .set_ed_mode(crate::radio::EnergyDetectionMode::Single)?;
+
+        self.baseband.load_tx(frame)?;
 
         let mut transmitted = false;
 

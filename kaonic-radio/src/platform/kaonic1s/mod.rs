@@ -205,7 +205,7 @@ impl Radio for Kaonic1SRadio {
     fn update_event(&mut self) -> Result<(), KaonicError> {
         self.radio
             .update_irqs()
-            .map_err(|_| KaonicError::HardwareError);
+            .map_err(|_| KaonicError::HardwareError)?;
 
         Ok(())
     }
@@ -245,6 +245,8 @@ impl Radio for Kaonic1SRadio {
         frame: &'a mut Self::RxFrame,
         timeout: core::time::Duration,
     ) -> Result<ReceiveResult, KaonicError> {
+        let start = Instant::now();
+
         let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
 
         let edv = 0; //self.radio.read_edv().unwrap_or(127);
@@ -254,10 +256,10 @@ impl Radio for Kaonic1SRadio {
         match result {
             Ok(_) => {
                 log::trace!(
-                    "rx [{}] (((- |o| {:>4} bytes {:>3}dBm",
+                    "rx [{}] (((- |o| {:>4} bytes {:>3}us",
                     self.radio.name(),
                     self.bb_frame.len(),
-                    edv,
+                    start.elapsed().as_micros(),
                 );
 
                 frame.copy_from_slice(self.bb_frame.as_slice());

@@ -10,7 +10,7 @@ radio-rf215 = { path="../radio-rf215/" }
 simple_logger = "=5.0.0"
 log = "0.4"
 
-crc = "3.3.0"
+crc = "=3.3.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libgpiod = "0.2.2"
