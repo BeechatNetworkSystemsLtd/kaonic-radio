@@ -1,0 +1,32 @@
+[iperf]
+module = 0
+duration = 10
+payload_size = 2047
+timeout = 10
+
+# Radio Modules
+[radio-0]
+freq = 2400000000
+channel = 8
+channel_spacing = 200000
+tx_power = 10
+modulation = "ofdm"
+
+[radio-1]
+freq = 2400000000
+channel = 12
+channel_spacing = 200000
+tx_power = 18
+modulation = "ofdm"
+
+# List of modulation presets
+[modulation.ofdm]
+type = "ofdm"
+opt = 0 # Option [0;3]
+mcs = 6 # MCS [0;6]
+
+[modulation.qpsk]
+type = "qpsk"
+chip_freq = 1
+rate = 1
+

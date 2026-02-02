@@ -9,11 +9,11 @@ pub mod kaonic {
     tonic::include_proto!("kaonic");
 }
 
-use kaonic::{radio_client::RadioClient, RadioFrame, RadioModule, ReceiveRequest, TransmitRequest};
+mod config;
+
+use kaonic::{radio_client::RadioClient, RadioFrame, ReceiveRequest, TransmitRequest};
 
 const DEFAULT_COMMD_ADDR: &str = "http://127.0.0.1:8080";
-const DEFAULT_DURATION_SECS: u64 = 10;
-const DEFAULT_PACKET_SIZE: usize = 256;
 const MIN_PACKET_SIZE: usize = 24; // MAGIC(4) + SEQ(4) + TIMESTAMP(8) + padding(4) + CRC(4)
 const MAX_PACKET_SIZE: usize = 2048;
 const MAX_WORDS: usize = MAX_PACKET_SIZE / 4;
@@ -74,9 +74,13 @@ const RESPONSE_TIMEOUT_MS: u64 = 500;
 #[command(name = "kaonic-iperf")]
 #[command(about = "Simple RTT and throughput measurement for Kaonic radio")]
 struct Args {
-    /// kaonic-commd gRPC address
-    #[arg(default_value = DEFAULT_COMMD_ADDR)]
-    address: String,
+    /// Path to kaonic-config.toml
+    #[arg(long, short = 'c', default_value = "kaonic-config.toml")]
+    config: String,
+
+    /// kaonic-commd gRPC address (overrides config file)
+    #[arg(long, short = 'a')]
+    address: Option<String>,
 
     /// Run as server (responder)
     #[arg(long, conflicts_with = "client")]
@@ -85,14 +89,6 @@ struct Args {
     /// Run as client (initiator)
     #[arg(long, conflicts_with = "server")]
     client: bool,
-
-    /// Test duration in seconds
-    #[arg(long, default_value_t = DEFAULT_DURATION_SECS)]
-    duration: u64,
-
-    /// Packet payload size in bytes (24-2048)
-    #[arg(long, short = 's', default_value_t = DEFAULT_PACKET_SIZE)]
-    size: usize,
 }
 
 // Packet structure:
@@ -197,15 +193,24 @@ fn parse_packet(data: &[u8]) -> Result<(u32, u64), ParseError> {
     Ok((seq, timestamp))
 }
 
-async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Kaonic RTT Server ===");
     println!("Connecting to {}...", address);
 
     let mut client = RadioClient::connect(address.to_string()).await?;
-    println!("Connected. Waiting for packets...\n");
+    println!("Connected.");
+    
+    // Apply radio configuration for the target module only
+    if let Some(radio_cfg) = cfg.radios.iter().find(|r| r.module == cfg.iperf.module) {
+        println!("Configuring radio module {}...", cfg.iperf.module);
+        client.configure(radio_cfg.clone()).await?;
+        println!("Radio configuration applied.\n");
+    } else {
+        println!("Warning: no radio config found for module {}\n", cfg.iperf.module);
+    }
 
     let request = ReceiveRequest {
-        module: RadioModule::ModuleA as i32,
+        module: cfg.iperf.module,
         timeout: 0,
     };
 
@@ -257,7 +262,7 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Echo back the same packet (preserving timestamp and CRC)
                                 let tx_request = TransmitRequest {
-                                    module: RadioModule::ModuleA as i32,
+                                    module: cfg.iperf.module,
                                     frame: Some(frame),
                                 };
 
@@ -314,28 +319,37 @@ async fn run_server(address: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_client(
     address: &str,
-    duration_secs: u64,
-    packet_size: usize,
+    cfg: &config::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let packet_size = packet_size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
+    let packet_size = cfg.iperf.payload_size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
 
     println!("=== Kaonic RTT Client ===");
     println!("Connecting to {}...", address);
 
     let mut client = RadioClient::connect(address.to_string()).await?;
     println!("Connected.");
+    
+    // Apply radio configuration for the target module only
+    if let Some(radio_cfg) = cfg.radios.iter().find(|r| r.module == cfg.iperf.module) {
+        println!("Configuring radio module {}...", cfg.iperf.module);
+        client.configure(radio_cfg.clone()).await?;
+        println!("Radio configuration applied.");
+    } else {
+        println!("Warning: no radio config found for module {}", cfg.iperf.module);
+    }
+    
     println!("Packet size: {} bytes", packet_size);
-    println!("Duration: {} seconds\n", duration_secs);
+    println!("Duration: {} seconds\n", cfg.iperf.duration);
 
     // Start receive stream
     let request = ReceiveRequest {
-        module: RadioModule::ModuleA as i32,
+        module: cfg.iperf.module,
         timeout: RESPONSE_TIMEOUT_MS as u32,
     };
     let mut stream = client.receive_stream(request).await?.into_inner();
 
     let start = Instant::now();
-    let test_duration = Duration::from_secs(duration_secs);
+    let test_duration = Duration::from_secs(cfg.iperf.duration);
     let mut seq: u32 = 0;
     let mut rtt_min: u64 = u64::MAX;
     let mut rtt_max: u64 = 0;
@@ -355,7 +369,7 @@ async fn run_client(
         let send_time = Instant::now();
 
         let tx_request = TransmitRequest {
-            module: RadioModule::ModuleA as i32,
+            module: cfg.iperf.module,
             frame: Some(encode_frame(&packet_buf)),
         };
 
@@ -458,15 +472,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
 
+    // Load config from specified path (required)
+    let cfg = match config::load_config(&args.config) {
+        Ok(c) => {
+            println!("Loaded config from {} with {} radio(s)", args.config, c.radios.len());
+            c
+        }
+        Err(e) => {
+            eprintln!("Error: could not load config file '{}': {}", args.config, e);
+            std::process::exit(1);
+        }
+    };
+
     if !args.server && !args.client {
         eprintln!("Error: specify --server or --client");
         std::process::exit(1);
     }
 
-    if args.server {
-        run_server(&args.address).await?;
+    // Determine address: CLI arg takes precedence over config
+    let address = if let Some(addr) = &args.address {
+        // Wrap with http:// and :8080 if not already formatted
+        if addr.starts_with("http://") || addr.starts_with("https://") {
+            addr.clone()
+        } else {
+            format!("http://{}:8080", addr)
+        }
+    } else if let Some(ip) = &cfg.iperf.ip {
+        format!("http://{}:8080", ip)
     } else {
-        run_client(&args.address, args.duration, args.size).await?;
+        DEFAULT_COMMD_ADDR.to_string()
+    };
+
+    if args.server {
+        run_server(&address, &cfg).await?;
+    } else {
+        run_client(&address, &cfg).await?;
     }
 
     Ok(())
