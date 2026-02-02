@@ -139,9 +139,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         // baseband decodes/receives any frame during the ED measurement.
         self.baseband.disable()?;
 
-
-        self.radio
-            .change_state(CHANGE_STATE_DURATION, RadioState::Rx)?;
+        self.start_receive()?;
 
         // NOTE: Do not use procedure CCATX together with procedure Transmit and Switch to Receive (TX2RX)
         self.baseband.set_auto_mode(BasebandAutoMode {

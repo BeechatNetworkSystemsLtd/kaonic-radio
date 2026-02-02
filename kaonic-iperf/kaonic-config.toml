@@ -1,4 +1,12 @@
+# Kaonic iperf configuration file
+# subGHz Range: [ 389500 - 1020000]
+# 2.4GHz Range: [2400000 - 2483500]
+# Maximum payload size: 2047 Bytes
+
+# Iperf settings
 [iperf]
+# Module A = 0
+# Module B = 1
 module = 0
 duration = 10
 payload_size = 2047
@@ -6,16 +14,16 @@ timeout = 10
 
 # Radio Modules
 [radio-0]
-freq = 2400000000
+freq = 869535
 channel = 8
-channel_spacing = 200000
-tx_power = 10
+channel_spacing = 200
+tx_power = 14
 modulation = "ofdm"
 
 [radio-1]
-freq = 2400000000
+freq = 2400000
 channel = 12
-channel_spacing = 200000
+channel_spacing = 200
 tx_power = 18
 modulation = "ofdm"
 
