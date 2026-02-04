@@ -39,7 +39,7 @@ jobs:
           brew install protobuf
           rustup target add x86_64-unknown-linux-gnu
           rustup target add aarch64-apple-darwin
-          rustup target add x86_64-pc-windows-msvc
+          rustup target add x86_64-pc-windows-gnu
 
       - name: Add tools to Cargo workspace
         run: |
@@ -49,11 +49,12 @@ jobs:
         working-directory: ${{ github.workspace }}/kaonic-iperf
         run: |
           cargo build --release -p kaonic-iperf --target aarch64-apple-darwin
-          cargo build --release -p kaonic-iperf --target x86_64-pc-windows-msvc
+          cargo build --release -p kaonic-iperf --target x86_64-pc-windows-gnu
 
-      - name: Build 'kaonic-gui'
-        working-directory: ${{ github.workspace }}/kaonic-gui
-        run: |
-          cargo build --release -p kaonic-gui --target aarch64-apple-darwin
-          cargo build --release -p kaonic-gui --target x86_64-pc-windows-msvc
+      - name: Upload "kaonic-iperf" artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaonic-iperf
+          path: target/*/release/kaonic-iperf*
+
 
