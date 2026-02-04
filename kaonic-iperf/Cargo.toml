@@ -6,6 +6,11 @@ rust-version = "1.75"
 description = "Network performance testing tool for Kaonic radio"
 repository = "https://github.com/BeechatNetworkSystemsLtd/kaonic-radio"
 
+[features]
+default = []
+machine-kaonic1s = []
+machine-host = []
+
 [dependencies]
 # Logging
 simple_logger = "=5.0.0"
