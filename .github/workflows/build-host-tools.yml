@@ -52,10 +52,25 @@ jobs:
           cargo build --release -p kaonic-iperf --target aarch64-apple-darwin
           cargo build --release -p kaonic-iperf --target x86_64-pc-windows-gnu
 
-      - name: Upload "kaonic-iperf" artifacts
+      - name: Prepare deploy package
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "Make deploy directories"
+          mkdir -p deploy/host-tools/
+          mkdir -p deploy/host-tools/macos/
+          mkdir -p deploy/host-tools/linux/
+          mkdir -p deploy/host-tools/windows/
+          echo "Copy artifacts"
+          cp ${{ github.workspace }}/kaonic-iperf/target/release/aarch64-apple-darwin/kaonic-iperf deploy/host-tools/macos/
+          cp ${{ github.workspace }}/kaonic-iperf/target/release/x86_64-pc-windows-gnu/kaonic-iperf.exe deploy/host-tools/windows/
+          echo "Copy libraries"
+          ls -l $(brew --prefix mingw-w64)/bin
+          
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kaonic-iperf
-          path: kaonic-iperf/target/*/release/kaonic-iperf*
+          name: kaonic-host-tools
+          path: ${{ github.workspace }}/deploy/host-tools
 
 
