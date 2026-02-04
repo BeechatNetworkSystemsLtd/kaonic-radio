@@ -36,6 +36,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          brew install protobuf
           rustup target add x86_64-unknown-linux-gnu
           rustup target add aarch64-apple-darwin
           rustup target add x86_64-pc-windows-msvc
@@ -49,4 +50,10 @@ jobs:
         run: |
           cargo build --release -p kaonic-iperf --target aarch64-apple-darwin
           cargo build --release -p kaonic-iperf --target x86_64-pc-windows-msvc
+
+      - name: Build 'kaonic-gui'
+        working-directory: ${{ github.workspace }}/kaonic-gui
+        run: |
+          cargo build --release -p kaonic-gui --target aarch64-apple-darwin
+          cargo build --release -p kaonic-gui --target x86_64-pc-windows-msvc
 
