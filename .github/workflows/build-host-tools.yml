@@ -2,7 +2,7 @@ name: Build Kaonic Host Tools
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
 
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: "recursive"
+          submodules: 'recursive'
 
       - name: Install build dependencies
         run: brew install protobuf
@@ -29,11 +29,12 @@ jobs:
           mkdir -p deploy/macos
           cp kaonic-iperf/target/aarch64-apple-darwin/release/kaonic-iperf deploy/macos/
 
-      - name: Upload macOS artifacts
+      - name: Upload macOS artifacts (temporary)
         uses: actions/upload-artifact@v4
         with:
           name: kaonic-iperf-macos
           path: deploy/macos
+          retention-days: 1
 
   build-linux:
     runs-on: ubuntu-latest
@@ -41,7 +42,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: "recursive"
+          submodules: 'recursive'
 
       - name: Install build dependencies
         run: |
@@ -59,11 +60,12 @@ jobs:
           mkdir -p deploy/linux
           cp kaonic-iperf/target/x86_64-unknown-linux-gnu/release/kaonic-iperf deploy/linux/
 
-      - name: Upload Linux artifacts
+      - name: Upload Linux artifacts (temporary)
         uses: actions/upload-artifact@v4
         with:
           name: kaonic-iperf-linux
           path: deploy/linux
+          retention-days: 1
 
   build-windows:
     runs-on: macos-latest
@@ -71,7 +73,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: "recursive"
+          submodules: 'recursive'
 
       - name: Install build dependencies
         run: |
@@ -95,11 +97,12 @@ jobs:
           cp "$SYSROOT/lib/libatomic-1.dll" deploy/windows/ || true
           cp "$SYSROOT/lib/libstdc++-6.dll" deploy/windows/ || true
 
-      - name: Upload Windows artifacts
+      - name: Upload Windows artifacts (temporary)
         uses: actions/upload-artifact@v4
         with:
           name: kaonic-iperf-windows
           path: deploy/windows
+          retention-days: 1
 
   combine-artifacts:
     needs: [build-macos, build-linux, build-windows]
