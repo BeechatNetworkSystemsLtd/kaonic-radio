@@ -61,11 +61,12 @@ jobs:
           mkdir -p deploy/host-tools/linux/
           mkdir -p deploy/host-tools/windows/
           echo "Copy artifacts"
-          cp ${{ github.workspace }}/kaonic-iperf/target/release/aarch64-apple-darwin/kaonic-iperf deploy/host-tools/macos/
-          cp ${{ github.workspace }}/kaonic-iperf/target/release/x86_64-pc-windows-gnu/kaonic-iperf.exe deploy/host-tools/windows/
+          cp ${{ github.workspace }}/kaonic-iperf/target/aarch64-apple-darwin/release/kaonic-iperf deploy/host-tools/macos/
+          cp ${{ github.workspace }}/kaonic-iperf/target/x86_64-pc-windows-gnu/release/kaonic-iperf.exe deploy/host-tools/windows/
           echo "Copy libraries"
-          ls -l $(brew --prefix mingw-w64)/bin
-          
+          SYSROOT="$(x86_64-w64-mingw32-gcc -print-sysroot)/x86_64-w64-mingw32/"
+          cp "$SYSROOT/bin/*.dll" deploy/host-tools/windows/
+          cp "$SYSROOT/lib/*.dll" deploy/host-tools/windows/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
