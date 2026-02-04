@@ -1,0 +1,47 @@
+name: Build Kaonic Host Tools
+
+on:
+  push:
+    branches: [ main ]
+
+  workflow_dispatch:
+
+jobs:
+  build-host-tools:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-tags: true
+          fetch-depth: 0
+
+      - name: Cache APT packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-cache-${{ runner.os }}-${{ hashFiles('.github/workflows/build-host-tools.yml') }}
+          restore-keys: |
+            apt-cache-${{ runner.os }}-
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          rustup target add x86_64-unknown-linux-gnu
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Build 'kaonic-iperf'
+        run: |
+          cargo build --release -p kaonic-iperf
+
