@@ -1,14 +1,14 @@
-#[cfg(target_os = "linux")]
+#[cfg(feature = "machine-kaonic1s")]
 #[path = "platform_kaonic1s.rs"]
 mod platform_impl;
 
-#[cfg(target_os = "linux")]
+#[cfg(feature = "machine-kaonic1s")]
 pub mod linux;
 
-#[cfg(target_os = "linux")]
+#[cfg(feature = "machine-kaonic1s")]
 pub mod linux_rf215;
 
-#[cfg(target_os = "macos")]
+#[cfg(feature = "machine-host")]
 #[path = "platform_dummy.rs"]
 mod platform_impl;
 

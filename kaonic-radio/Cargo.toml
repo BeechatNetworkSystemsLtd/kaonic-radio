@@ -3,6 +3,11 @@ name = "kaonic-radio"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["machine-kaonic1s"]
+machine-kaonic1s = []
+machine-host = []
+
 [dependencies]
 radio-rf215 = { path="../radio-rf215/" }
 
@@ -12,7 +17,7 @@ log = "0.4"
 
 crc = "=3.3.0"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(feature = "machine-kaonic1s")'.dependencies]
 libgpiod = "0.2.2"
 linux-embedded-hal = { version = "0.4.0", default-features = false, features = [ "spi" ] }
 
