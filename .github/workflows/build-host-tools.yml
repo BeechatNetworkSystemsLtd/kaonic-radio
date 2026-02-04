@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-macos:
+  build-host-tools-macos:
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -18,25 +18,29 @@ jobs:
       - name: Install build dependencies
         run: brew install protobuf
 
-      - name: Build kaonic-iperf for macOS
-        working-directory: ${{ github.workspace }}/kaonic-iperf
+      - name: Build Host-Tools for macOS
+        working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> ../Cargo.toml
-          cargo build --release --target aarch64-apple-darwin
+          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          cd ./kaonic-iperf
+          cargo build --release --target aarch64-apple-darwin --no-default-features --features machine-host
+          cd ../kaonic-gui
+          cargo build --release --target aarch64-apple-darwin --no-default-features --features machine-host
 
       - name: Prepare macOS artifacts
         run: |
           mkdir -p deploy/macos
           cp kaonic-iperf/target/aarch64-apple-darwin/release/kaonic-iperf deploy/macos/
+          cp kaonic-gui/target/aarch64-apple-darwin/release/kaonic-gui deploy/macos/
 
       - name: Upload macOS artifacts (temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: kaonic-iperf-macos
+          name: host-tools-macos
           path: deploy/macos
           retention-days: 1
 
-  build-linux:
+  build-host-tools-linux:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -49,25 +53,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
 
-      - name: Build kaonic-iperf for Linux
-        working-directory: ${{ github.workspace }}/kaonic-iperf
+      - name: Build Host-Tools for Linux
+        working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> ../Cargo.toml
+          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          cd ./kaonic-iperf
+          cargo build --release --target x86_64-unknown-linux-gnu --no-default-features --features machine-host
+          cd ../kaonic-gui
           cargo build --release --target x86_64-unknown-linux-gnu
 
       - name: Prepare Linux artifacts
         run: |
           mkdir -p deploy/linux
           cp kaonic-iperf/target/x86_64-unknown-linux-gnu/release/kaonic-iperf deploy/linux/
+          cp kaonic-gui/target/x86_64-unknown-linux-gnu/release/kaonic-gui deploy/linux/
 
       - name: Upload Linux artifacts (temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: kaonic-iperf-linux
+          name: host-tools-linux
           path: deploy/linux
           retention-days: 1
 
-  build-windows:
+  build-host-tools-windows:
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -81,16 +89,20 @@ jobs:
           brew install mingw-w64
           rustup target add x86_64-pc-windows-gnu
 
-      - name: Build kaonic-iperf for Windows
-        working-directory: ${{ github.workspace }}/kaonic-iperf
+      - name: Build Host-Tools for Windows
+        working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> ../Cargo.toml
+          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          cd ./kaonic-iperf
+          cargo build --release --target x86_64-pc-windows-gnu --no-default-features --features machine-host
+          cd ../kaonic-gui
           cargo build --release --target x86_64-pc-windows-gnu
 
       - name: Prepare Windows artifacts
         run: |
           mkdir -p deploy/windows
           cp kaonic-iperf/target/x86_64-pc-windows-gnu/release/kaonic-iperf.exe deploy/windows/
+          cp kaonic-gui/target/x86_64-pc-windows-gnu/release/kaonic-gui.exe deploy/windows/
           # Copy required DLLs
           SYSROOT="$(x86_64-w64-mingw32-gcc -print-sysroot)/mingw"
           cp "$SYSROOT/bin/libwinpthread-1.dll" deploy/windows/ || true
@@ -100,11 +112,11 @@ jobs:
       - name: Upload Windows artifacts (temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: kaonic-iperf-windows
+          name: host-tools-windows
           path: deploy/windows
           retention-days: 1
 
-  build-kaonic-comm-ota:
+  build-kaonic1s-apps:
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -185,33 +197,41 @@ jobs:
           path: deploy/kaonic-comm-ota/*
           retention-days: 1
 
-  combine-artifacts:
-    needs: [build-macos, build-linux, build-windows, build-kaonic-comm-ota]
+  pack-artifacts:
+    needs: [build-host-tools-macos, build-host-tools-linux, build-host-tools-windows, build-kaonic1s-apps]
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
-          name: kaonic-iperf-macos
+          name: host-tools-macos
           path: package/host-tools/macos
 
       - name: Download Linux artifacts
         uses: actions/download-artifact@v4
         with:
-          name: kaonic-iperf-linux
+          name: host-tools-linux
           path: package/host-tools/linux
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          name: kaonic-iperf-windows
+          name: host-tools-windows
           path: package/host-tools/windows
 
       - name: Download OTA package
         uses: actions/download-artifact@v4
         with:
           name: kaonic-comm-ota
-          path: package/kaonic1s/kaonic-commd-ota
+          path: temp-ota
+
+      - name: Create OTA zip and organize structure
+        run: |
+          mkdir -p package/kaonic1s
+          cd temp-ota
+          zip -r ../package/kaonic1s/kaonic-commd-ota.zip .
+          cd ..
+          rm -rf temp-ota
 
       - name: Create zip archive
         run: |
@@ -219,12 +239,6 @@ jobs:
           ls -lh kaonic-radio.zip
           echo "Archive contents:"
           unzip -l kaonic-radio.zip | head -20
-
-      - name: Upload combined artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: kaonic-radio
-          path: package/
 
       - name: Upload zip archive
         uses: actions/upload-artifact@v4
