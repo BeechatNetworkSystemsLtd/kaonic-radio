@@ -13,7 +13,7 @@ mod config;
 
 use kaonic::{radio_client::RadioClient, RadioFrame, ReceiveRequest, TransmitRequest};
 
-const DEFAULT_COMMD_ADDR: &str = "http://127.0.0.1:8080";
+const DEFAULT_COMMD_ADDR: &str = "http://192.168.10.1:8080";
 const MIN_PACKET_SIZE: usize = 24; // MAGIC(4) + SEQ(4) + TIMESTAMP(8) + padding(4) + CRC(4)
 const MAX_PACKET_SIZE: usize = 2048;
 const MAX_WORDS: usize = MAX_PACKET_SIZE / 4;

@@ -104,7 +104,7 @@ impl GrpcClient {
     pub fn new(runtime: Arc<Runtime>) -> Self {
         let (tx_sender, mut tx_recv) = mpsc::channel::<TxRequest>(1024);
         let (rx_broadcast, _) = broadcast::channel::<ReceiveEvent>(1024);
-        let server_addr = Arc::new(StdMutex::new("http://127.0.0.1:8080".to_string()));
+        let server_addr = Arc::new(StdMutex::new("http://192.168.10.1:8080".to_string()));
         let server_addr_worker = server_addr.clone();
         let runtime_clone = runtime.clone();
 
