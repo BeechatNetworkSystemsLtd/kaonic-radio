@@ -56,6 +56,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kaonic-iperf
-          path: target/*/release/kaonic-iperf*
+          path: kaonic-iperf/target/*/release/kaonic-iperf*
 
 
