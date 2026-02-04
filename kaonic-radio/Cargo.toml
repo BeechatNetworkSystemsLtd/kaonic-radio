@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["machine-kaonic1s"]
-machine-kaonic1s = []
+default = ["machine-host"]
+machine-kaonic1s = ["dep:libgpiod", "dep:linux-embedded-hal"]
 machine-host = []
 
 [dependencies]
@@ -17,7 +17,7 @@ log = "0.4"
 
 crc = "=3.3.0"
 
-[target.'cfg(feature = "machine-kaonic1s")'.dependencies]
-libgpiod = "0.2.2"
-linux-embedded-hal = { version = "0.4.0", default-features = false, features = [ "spi" ] }
+# Optional dependencies for kaonic1s hardware
+libgpiod = { version = "0.2.2", optional = true }
+linux-embedded-hal = { version = "0.4.0", default-features = false, features = [ "spi" ], optional = true }
 
