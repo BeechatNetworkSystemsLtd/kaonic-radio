@@ -32,6 +32,7 @@ jobs:
           mkdir -p deploy/macos
           cp kaonic-iperf/target/aarch64-apple-darwin/release/kaonic-iperf deploy/macos/
           cp kaonic-gui/target/aarch64-apple-darwin/release/kaonic-gui deploy/macos/
+          cp kaonic-iperf/kaonic-config.toml deploy/macos/
 
       - name: Upload macOS artifacts (temporary)
         uses: actions/upload-artifact@v4
@@ -67,6 +68,7 @@ jobs:
           mkdir -p deploy/linux
           cp kaonic-iperf/target/x86_64-unknown-linux-gnu/release/kaonic-iperf deploy/linux/
           cp kaonic-gui/target/x86_64-unknown-linux-gnu/release/kaonic-gui deploy/linux/
+          cp kaonic-iperf/kaonic-config.toml deploy/linux/
 
       - name: Upload Linux artifacts (temporary)
         uses: actions/upload-artifact@v4
@@ -103,6 +105,7 @@ jobs:
           mkdir -p deploy/windows
           cp kaonic-iperf/target/x86_64-pc-windows-gnu/release/kaonic-iperf.exe deploy/windows/
           cp kaonic-gui/target/x86_64-pc-windows-gnu/release/kaonic-gui.exe deploy/windows/
+          cp kaonic-iperf/kaonic-config.toml deploy/windows/
           # Copy required DLLs
           SYSROOT="$(x86_64-w64-mingw32-gcc -print-sysroot)/mingw"
           cp "$SYSROOT/bin/libwinpthread-1.dll" deploy/windows/ || true
