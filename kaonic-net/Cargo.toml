@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 
+[features]
+default = []
+machine-kaonic1s = ["kaonic-radio/machine-kaonic1s"]
+machine-host = ["kaonic-radio/machine-host"]
+
 [dependencies]
 
 labrador-ldpc = "1.2.1"
@@ -14,6 +19,6 @@ rand = { version = "=0.8.5", default-features = false }
 log = "0.4"
 
 # Kaonic
-kaonic-radio = { path="../kaonic-radio/" }
+kaonic-radio = { path="../kaonic-radio/", default-features = false }
 kaonic-qos = { path="../kaonic-qos/" }
 

@@ -25,7 +25,7 @@ jobs:
           cd ./kaonic-iperf
           cargo build --release --target aarch64-apple-darwin --no-default-features --features machine-host
           cd ../kaonic-gui
-          cargo build --release --target aarch64-apple-darwin --no-default-features --features machine-host --no-default-features --features machine-host
+          cargo build --release --target aarch64-apple-darwin --no-default-features --features machine-host 
 
       - name: Prepare macOS artifacts
         run: |

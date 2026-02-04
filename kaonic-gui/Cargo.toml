@@ -6,8 +6,8 @@ rust-version = "1.75"
 
 [features]
 default = []
-machine-kaonic1s = []
-machine-host = []
+machine-kaonic1s = ["kaonic-net/machine-kaonic1s"]
+machine-host = ["kaonic-net/machine-host"]
 
 [dependencies]
 # GUI
