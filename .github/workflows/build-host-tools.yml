@@ -40,7 +40,13 @@ jobs:
           rustup target add aarch64-apple-darwin
           rustup target add x86_64-pc-windows-msvc
 
-      - name: Build 'kaonic-iperf'
+      - name: Add tools to Cargo workspace
         run: |
-          cargo build --release -p kaonic-iperf
+          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> ${{ github.workspace }}/Cargo.toml
+
+      - name: Build 'kaonic-iperf'
+        working-directory: ${{ github.workspace }}/kaonic-iperf
+        run: |
+          cargo build --release -p kaonic-iperf --target aarch64-apple-darwin
+          cargo build --release -p kaonic-iperf --target x86_64-pc-windows-msvc
 
