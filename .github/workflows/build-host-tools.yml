@@ -50,7 +50,7 @@ jobs:
 
       - name: Build kaonic-iperf for Linux
         working-directory: ${{ github.workspace }}/kaonic-iperf
-        run: 
+        run: |
           echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> ../Cargo.toml
           cargo build --release --target x86_64-unknown-linux-gnu
 
@@ -81,7 +81,7 @@ jobs:
 
       - name: Build kaonic-iperf for Windows
         working-directory: ${{ github.workspace }}/kaonic-iperf
-        run: 
+        run: |
           echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> ../Cargo.toml
           cargo build --release --target x86_64-pc-windows-gnu
 
