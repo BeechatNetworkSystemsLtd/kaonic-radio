@@ -7,73 +7,129 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-host-tools:
+  build-macos:
     runs-on: macos-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-          fetch-tags: true
-          fetch-depth: 0
 
-      - name: Cache APT packages
-        uses: actions/cache@v4
+      - name: Install build dependencies
+        run: brew install protobuf
+
+      - name: Build kaonic-iperf for macOS
+        working-directory: ${{ github.workspace }}/kaonic-iperf
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Prepare macOS artifacts
+        run: |
+          mkdir -p deploy/macos
+          cp kaonic-iperf/target/aarch64-apple-darwin/release/kaonic-iperf deploy/macos/
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
         with:
-          path: /var/cache/apt/archives
-          key: apt-cache-${{ runner.os }}-${{ hashFiles('.github/workflows/build-host-tools.yml') }}
-          restore-keys: |
-            apt-cache-${{ runner.os }}-
-      - name: Cache Cargo
-        uses: actions/cache@v4
+          name: kaonic-iperf-macos
+          path: deploy/macos
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          submodules: 'recursive'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Build kaonic-iperf for Linux
+        working-directory: ${{ github.workspace }}/kaonic-iperf
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Prepare Linux artifacts
+        run: |
+          mkdir -p deploy/linux
+          cp kaonic-iperf/target/x86_64-unknown-linux-gnu/release/kaonic-iperf deploy/linux/
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaonic-iperf-linux
+          path: deploy/linux
+
+  build-windows:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
 
       - name: Install build dependencies
         run: |
           brew install protobuf
           brew install mingw-w64
-          rustup target add x86_64-unknown-linux-gnu
-          rustup target add aarch64-apple-darwin
           rustup target add x86_64-pc-windows-gnu
 
-      - name: Add tools to Cargo workspace
-        run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> ${{ github.workspace }}/Cargo.toml
-
-      - name: Build 'kaonic-iperf'
+      - name: Build kaonic-iperf for Windows
         working-directory: ${{ github.workspace }}/kaonic-iperf
-        run: |
-          cargo build --release -p kaonic-iperf --target aarch64-apple-darwin
-          cargo build --release -p kaonic-iperf --target x86_64-pc-windows-gnu
+        run: cargo build --release --target x86_64-pc-windows-gnu
 
-      - name: Prepare deploy package
-        working-directory: ${{ github.workspace }}
+      - name: Prepare Windows artifacts
         run: |
-          echo "Make deploy directories"
-          mkdir -p deploy/host-tools/
-          mkdir -p deploy/host-tools/macos/
-          mkdir -p deploy/host-tools/linux/
-          mkdir -p deploy/host-tools/windows/
-          echo "Copy artifacts"
-          cp ${{ github.workspace }}/kaonic-iperf/target/aarch64-apple-darwin/release/kaonic-iperf deploy/host-tools/macos/
-          cp ${{ github.workspace }}/kaonic-iperf/target/x86_64-pc-windows-gnu/release/kaonic-iperf.exe deploy/host-tools/windows/
-          echo "Copy libraries"
+          mkdir -p deploy/windows
+          cp kaonic-iperf/target/x86_64-pc-windows-gnu/release/kaonic-iperf.exe deploy/windows/
+          # Copy required DLLs
           SYSROOT="$(x86_64-w64-mingw32-gcc -print-sysroot)/mingw"
-          ls -la $SYSROOT/bin
-          ls -la $SYSROOT/lib
-          cp "$SYSROOT/bin/*.dll" deploy/host-tools/windows/
-          cp "$SYSROOT/lib/*.dll" deploy/host-tools/windows/
+          cp "$SYSROOT/bin/libwinpthread-1.dll" deploy/windows/ || true
+          cp "$SYSROOT/lib/libatomic-1.dll" deploy/windows/ || true
+          cp "$SYSROOT/lib/libstdc++-6.dll" deploy/windows/ || true
 
-      - name: Upload artifacts
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaonic-iperf-windows
+          path: deploy/windows
+
+  combine-artifacts:
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: kaonic-iperf-macos
+          path: host-tools/macos
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: kaonic-iperf-linux
+          path: host-tools/linux
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: kaonic-iperf-windows
+          path: host-tools/windows
+
+      - name: Create zip archive
+        run: |
+          zip -r kaonic-host-tools.zip host-tools/
+          ls -lh kaonic-host-tools.zip
+
+      - name: Upload combined artifacts
         uses: actions/upload-artifact@v4
         with:
           name: kaonic-host-tools
-          path: ${{ github.workspace }}/deploy/host-tools
+          path: host-tools/
 
-
+      - name: Upload zip archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaonic-host-tools-zip
+          path: kaonic-host-tools.zip
