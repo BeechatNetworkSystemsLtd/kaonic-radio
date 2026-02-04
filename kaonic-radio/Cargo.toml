@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["machine-host"]
+default = ["machine-kaonic1s"]
 machine-kaonic1s = ["dep:libgpiod", "dep:linux-embedded-hal"]
 machine-host = []
 

@@ -161,11 +161,11 @@ jobs:
           echo "Installing Yocto SDK..."
           ./yocto-sdk.sh -y -d /opt/yocto-sdk
 
-      - name: Build 'kaonic-commd'
+      - name: Build 'kaonic-commd' with machine-kaonic1s feature
         run: |
           unset LD_LIBRARY_PATH
           source /opt/yocto-sdk/environment-setup
-          cargo build --release -p kaonic-commd
+          cargo build --release -p kaonic-commd --features machine-kaonic1s
 
       - name: Create Kaonic OTA package
         run: |
@@ -193,41 +193,41 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: kaonic-iperf-macos
-          path: host-tools/macos
+          path: package/host-tools/macos
 
       - name: Download Linux artifacts
         uses: actions/download-artifact@v4
         with:
           name: kaonic-iperf-linux
-          path: host-tools/linux
+          path: package/host-tools/linux
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           name: kaonic-iperf-windows
-          path: host-tools/windows
+          path: package/host-tools/windows
 
       - name: Download OTA package
         uses: actions/download-artifact@v4
         with:
           name: kaonic-comm-ota
-          path: host-tools/ota
+          path: package/kaonic1s/kaonic-commd-ota
 
       - name: Create zip archive
         run: |
-          zip -r kaonic-host-tools.zip host-tools/
-          ls -lh kaonic-host-tools.zip
+          zip -r kaonic-radio.zip package/
+          ls -lh kaonic-radio.zip
           echo "Archive contents:"
-          unzip -l kaonic-host-tools.zip | head -20
+          unzip -l kaonic-radio.zip | head -20
 
       - name: Upload combined artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kaonic-host-tools
-          path: host-tools/
+          name: kaonic-radio
+          path: package/
 
       - name: Upload zip archive
         uses: actions/upload-artifact@v4
         with:
-          name: kaonic-host-tools-zip
-          path: kaonic-host-tools.zip
+          name: kaonic-radio-zip
+          path: kaonic-radio.zip

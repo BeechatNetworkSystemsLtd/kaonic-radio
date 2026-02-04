@@ -4,11 +4,16 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 
+[features]
+default = ["machine-kaonic1s"]
+machine-kaonic1s = ["kaonic-radio/machine-kaonic1s"]
+machine-host = ["kaonic-radio/machine-host"]
+
 [dependencies]
 
 # Kaonic
 radio-rf215 = { path="../radio-rf215/" }
-kaonic-radio = { path="../kaonic-radio/" }
+kaonic-radio = { path="../kaonic-radio/", default-features = false }
 kaonic-net = { path="../kaonic-net/" }
 kaonic-qos = { path="../kaonic-qos/" }
 
