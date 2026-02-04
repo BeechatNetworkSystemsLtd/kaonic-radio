@@ -6,8 +6,8 @@ rust-version = "1.75"
 
 [features]
 default = []
-machine-kaonic1s = ["kaonic-radio/machine-kaonic1s"]
-machine-host = ["kaonic-radio/machine-host"]
+machine-kaonic1s = ["kaonic-radio/machine-kaonic1s", "kaonic-qos/machine-kaonic1s"]
+machine-host = ["kaonic-radio/machine-host", "kaonic-qos/machine-host"]
 
 [dependencies]
 
@@ -20,5 +20,5 @@ log = "0.4"
 
 # Kaonic
 kaonic-radio = { path="../kaonic-radio/", default-features = false }
-kaonic-qos = { path="../kaonic-qos/" }
+kaonic-qos = { path="../kaonic-qos/", default-features = false }
 
