@@ -1,8 +1,9 @@
 use core::fmt;
 
+use kaonic_frame::frame::Frame;
 use labrador_ldpc::LDPCCode;
 
-use kaonic_radio::{error::KaonicError, frame::Frame};
+use crate::error::NetworkError;
 
 pub const HEADER_SIZE: usize = 16;
 
@@ -153,16 +154,16 @@ impl Header {
         return buffer;
     }
 
-    pub fn unpack(&mut self, data: &[u8]) -> Result<usize, KaonicError> {
+    pub fn unpack(&mut self, data: &[u8]) -> Result<usize, NetworkError> {
         if data.len() < HEADER_SIZE {
-            return Err(KaonicError::IncorrectSettings);
+            return Err(NetworkError::OutOfMemory);
         }
 
         let mut offset = 0usize;
 
         self.packet_type = match data[offset] {
             0xBA => PacketType::Payload,
-            _ => return Err(KaonicError::IncorrectSettings),
+            _ => return Err(NetworkError::NotSupported),
         };
         offset += 1;
 
@@ -273,9 +274,9 @@ impl<const S: usize> Packet<S> {
 pub trait PacketCoder<const S: usize> {
     const MAX_PAYLOAD_SIZE: usize;
 
-    fn encode(&mut self, input: &Packet<S>, output: &mut Frame<S>) -> Result<(), KaonicError>;
+    fn encode(&mut self, input: &Packet<S>, output: &mut Frame<S>) -> Result<(), NetworkError>;
 
-    fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), KaonicError>;
+    fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), NetworkError>;
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -298,7 +299,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
     const MAX_PAYLOAD_SIZE: usize = (Self::MAX_ENCODED_PAYLOAD_SIZE / (PAYLOAD_LDPC_CODE.n() / 8))
         * (PAYLOAD_LDPC_CODE.k() / 8);
 
-    fn encode(&mut self, input: &Packet<S>, output: &mut Frame<S>) -> Result<(), KaonicError> {
+    fn encode(&mut self, input: &Packet<S>, output: &mut Frame<S>) -> Result<(), NetworkError> {
         // Reset output frame
         output.clear();
 
@@ -309,7 +310,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
 
             let codeword_len = code.n() / 8;
             if codeword_len > S {
-                return Err(KaonicError::OutOfMemory);
+                return Err(NetworkError::OutOfMemory);
             }
 
             let _ = code.copy_encode(&header_data[..], output.alloc_buffer(codeword_len));
@@ -340,7 +341,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
 
                 let buffer = output.alloc_buffer(code_block_size);
                 if buffer.len() < code_block_size {
-                    return Err(KaonicError::OutOfMemory);
+                    return Err(NetworkError::OutOfMemory);
                 }
 
                 code.copy_encode(&self.output_buffer[..block_size], buffer);
@@ -352,7 +353,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
         Ok(())
     }
 
-    fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), KaonicError> {
+    fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), NetworkError> {
         output.reset();
 
         // Decode header
@@ -361,7 +362,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
             let codeword_len = code.n() / 8;
 
             if input.len() < codeword_len {
-                return Err(KaonicError::OutOfMemory);
+                return Err(NetworkError::OutOfMemory);
             }
 
             let (check, _) = code.decode_bf(
@@ -372,7 +373,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
             );
 
             if !check {
-                return Err(KaonicError::DataCorruption);
+                return Err(NetworkError::CorruptedData);
             }
 
             output
@@ -401,7 +402,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
                 );
 
                 if !check {
-                    return Err(KaonicError::DataCorruption);
+                    return Err(NetworkError::CorruptedData);
                 }
 
                 output
@@ -410,6 +411,61 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
 
                 offset += codeword_len;
             }
+        }
+
+        // Resize to original payload length
+        output.frame.resize(output.header.len as usize);
+
+        Ok(())
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct BinaryPacketCoder<const S: usize> {}
+
+impl<const S: usize> BinaryPacketCoder<S> {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl<const S: usize> PacketCoder<S> for BinaryPacketCoder<S> {
+    const MAX_PAYLOAD_SIZE: usize = S - HEADER_SIZE;
+
+    fn encode(&mut self, input: &Packet<S>, output: &mut Frame<S>) -> Result<(), NetworkError> {
+        // Reset output frame
+        output.clear();
+
+        // Encode header
+        {
+            let header_data = input.header.pack();
+            output.push_data(&header_data)?;
+        }
+
+        // Encode payload
+        {
+            let payload_data = input.frame.as_slice();
+            output.push_data(&payload_data)?;
+        }
+
+        Ok(())
+    }
+
+    fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), NetworkError> {
+        output.reset();
+
+        let input = input.as_slice();
+
+        // Decode header
+        {
+            output.header.unpack(&input[..HEADER_SIZE])?;
+        }
+
+        output.frame.clear();
+
+        // Decode payload
+        {
+            output.frame.push_data(&input[..HEADER_SIZE])?;
         }
 
         // Resize to original payload length

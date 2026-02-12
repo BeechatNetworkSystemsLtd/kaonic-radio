@@ -1,14 +1,13 @@
-use kaonic_radio::error::KaonicError;
 use rand::{CryptoRng, RngCore};
 
-use crate::packet::PacketId;
+use crate::{error::NetworkError, packet::PacketId};
 
 pub struct Generator {}
 
 impl Generator {
     pub fn generate_packet_id<R: CryptoRng + RngCore + Copy>(
         rng: R,
-    ) -> Result<PacketId, KaonicError> {
+    ) -> Result<PacketId, NetworkError> {
         let mut bytes = {
             let packet_id: PacketId = 0;
             packet_id.to_ne_bytes()
@@ -22,7 +21,7 @@ impl Generator {
     pub fn generate_payload<R: CryptoRng + RngCore + Copy>(
         mut rng: R,
         output: &mut [u8],
-    ) -> Result<(), KaonicError> {
+    ) -> Result<(), NetworkError> {
         rng.fill_bytes(output);
 
         Ok(())

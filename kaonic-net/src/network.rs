@@ -1,11 +1,9 @@
-use kaonic_radio::{
-    error::KaonicError,
-    frame::{Frame, FrameSegment},
-};
+use kaonic_frame::frame::{Frame, FrameSegment};
 use rand::{CryptoRng, RngCore};
 
 use crate::{
     demuxer::Demuxer,
+    error::NetworkError,
     generator::Generator,
     muxer::{CurrentTime, Muxer},
     packet::{Packet, PacketCoder},
@@ -42,7 +40,7 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
         &mut self,
         current_time: CurrentTime,
         frame: &Frame<S>,
-    ) -> Result<(), KaonicError> {
+    ) -> Result<(), NetworkError> {
         self.coder.decode(&frame, &mut self.packets[0])?;
 
         let _ = self.muxer.multiplex(current_time, &self.packets[0]);
@@ -65,9 +63,9 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
         rng: RNG,
         output_frames: &'a mut [Frame<S>],
         transmit_func: F,
-    ) -> Result<(), KaonicError>
+    ) -> Result<(), NetworkError>
     where
-        F: FnOnce(&[&[u8]]) -> Result<(), KaonicError>,
+        F: FnOnce(&[&[u8]]) -> Result<(), NetworkError>,
     {
         let packet_id = Generator::generate_packet_id(rng)?;
 
@@ -76,7 +74,7 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
             .demultiplex(packet_id, data, &mut self.packets[..])?;
 
         if output_frames.len() < packets.len() {
-            return Err(KaonicError::PayloadTooBig);
+            return Err(NetworkError::PayloadTooBig);
         }
 
         let mut frames_data: [&[u8]; R] = [&[]; R];

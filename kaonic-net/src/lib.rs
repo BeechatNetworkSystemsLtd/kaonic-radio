@@ -1,4 +1,5 @@
 pub mod demuxer;
+pub mod error;
 pub mod generator;
 pub mod muxer;
 pub mod network;
@@ -7,14 +8,14 @@ pub mod packet;
 #[cfg(test)]
 mod tests {
 
-    use kaonic_radio::frame::{Frame, FrameSegment};
+    use kaonic_frame::frame::{Frame, FrameSegment};
     use rand::rngs::OsRng;
 
     use crate::{
         demuxer::Demuxer,
         generator::Generator,
         muxer::Muxer,
-        network::{Network, NetworkReceiver, NetworkTransmitter},
+        network::Network,
         packet::{LdpcPacketCoder, Packet, PacketCoder},
     };
 

@@ -3,9 +3,10 @@ use core::{
     ops::{Add, Div, Rem},
 };
 
-use kaonic_radio::error::KaonicError;
-
-use crate::packet::{Packet, PacketFlag, PacketId};
+use crate::{
+    error::NetworkError,
+    packet::{Packet, PacketFlag, PacketId},
+};
 
 pub struct Demuxer<const S: usize, const R: usize, const P: usize> {}
 
@@ -30,28 +31,28 @@ impl<const S: usize, const R: usize, const P: usize> Demuxer<S, R, P> {
         id: PacketId,
         payload_data: &[u8],
         packets: &'a mut [Packet<S>],
-    ) -> Result<&'a [Packet<S>], KaonicError> {
+    ) -> Result<&'a [Packet<S>], NetworkError> {
         // Check if payload can fit into overall demux process
         let total_len = payload_data.len();
         if total_len > Self::MAX_PAYLOAD_SIZE {
-            return Err(KaonicError::PayloadTooBig);
+            return Err(NetworkError::PayloadTooBig);
         }
 
         let segment_size = Self::MAX_PACKET_PAYLOAD_SIZE;
         if segment_size > (u16::max_value() as usize) {
-            return Err(KaonicError::PayloadTooBig);
+            return Err(NetworkError::PayloadTooBig);
         }
 
         let seq_count = div_round_up(total_len, segment_size);
         if seq_count > packets.len() {
-            return Err(KaonicError::PayloadTooBig);
+            return Err(NetworkError::PayloadTooBig);
         }
 
         let mut seq = 0;
         let mut offset = 0usize;
         while offset < total_len {
             if seq > packets.len() {
-                return Err(KaonicError::PayloadTooBig);
+                return Err(NetworkError::PayloadTooBig);
             }
 
             let chunk_len = if offset + segment_size < total_len {
