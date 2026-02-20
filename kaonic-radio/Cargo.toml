@@ -9,7 +9,9 @@ machine-kaonic1s = ["dep:libgpiod", "dep:linux-embedded-hal"]
 machine-host = []
 
 [dependencies]
+radio-common = { path="../radio-common/" }
 radio-rf215 = { path="../radio-rf215/" }
+kaonic-frame = { path="../kaonic-frame/" }
 
 # Logging
 simple_logger = "=5.0.0"

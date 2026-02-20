@@ -1,3 +1,5 @@
+use kaonic_frame::error::FrameError;
+
 #[derive(Debug, Clone, Copy)]
 pub enum KaonicError {
     HardwareError,
@@ -9,4 +11,10 @@ pub enum KaonicError {
     NotSupported,
     DataCorruption,
     TryAgain,
+}
+
+impl From<FrameError> for KaonicError {
+    fn from(value: FrameError) -> Self {
+        KaonicError::OutOfMemory
+    }
 }

@@ -3,6 +3,7 @@ use std::{
     time::Instant,
 };
 
+use kaonic_frame::frame::Frame;
 use radio_rf215::{
     baseband::BasebandFrame,
     bus::{BusInterrupt, SpiBus},
@@ -12,7 +13,6 @@ use radio_rf215::{
 
 use crate::{
     error::KaonicError,
-    frame::Frame,
     modulation::{Modulation, OfdmModulation},
     platform::{
         kaonic1s::machine::create_radios,
