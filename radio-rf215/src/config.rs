@@ -1,6 +1,10 @@
+use radio_common::{
+    modulation::{OfdmBandwidthOption, QpskChipFrequency},
+    Modulation,
+};
+
 use crate::{
     bus::Bus,
-    modulation::{self, Modulation},
     radio::{
         AgcAverageTime, AgcTargetLevel, FrequencySampleRate, PaCur, PaRampTime,
         RadioTransreceiverConfig, ReceiverBandwidth, RelativeCutOff, TransmitterCutOff,
@@ -31,7 +35,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
                 agc_control.agc_input = false;
 
                 match ofdm.opt {
-                    modulation::OfdmBandwidthOption::Option1 => {
+                    OfdmBandwidthOption::Option1 => {
                         tx_config.sr = FrequencySampleRate::SampleRate1333kHz;
                         tx_config.rcut = RelativeCutOff::Fcut1_000;
                         tx_config.lpfcut = TransmitterCutOff::Flc800kHz;
@@ -40,7 +44,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
                         rx_config.bw = ReceiverBandwidth::Bw1250kHzIf2000kHz;
                         rx_config.if_shift = true;
                     }
-                    modulation::OfdmBandwidthOption::Option2 => {
+                    OfdmBandwidthOption::Option2 => {
                         tx_config.sr = FrequencySampleRate::SampleRate1333kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc500kHz;
@@ -49,7 +53,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
                         rx_config.bw = ReceiverBandwidth::Bw800kHzIf1000kHz;
                         rx_config.if_shift = true;
                     }
-                    modulation::OfdmBandwidthOption::Option3 => {
+                    OfdmBandwidthOption::Option3 => {
                         tx_config.sr = FrequencySampleRate::SampleRate666kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc250kHz;
@@ -58,7 +62,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
                         rx_config.bw = ReceiverBandwidth::Bw400kHzIf500kHz;
                         rx_config.if_shift = false;
                     }
-                    modulation::OfdmBandwidthOption::Option4 => {
+                    OfdmBandwidthOption::Option4 => {
                         tx_config.sr = FrequencySampleRate::SampleRate666kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_500;
                         tx_config.lpfcut = TransmitterCutOff::Flc160kHz;
@@ -78,7 +82,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
                 agc_gain.target_level = AgcTargetLevel::TargetN30dB;
 
                 match qpsk.fchip {
-                    modulation::QpskChipFrequency::Fchip100 => {
+                    QpskChipFrequency::Fchip100 => {
                         agc_control.average_time = AgcAverageTime::Samples32;
 
                         tx_config.sr = FrequencySampleRate::SampleRate400kHz;
@@ -93,7 +97,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
 
                         trx_config.edd = core::time::Duration::from_micros(10 * 128);
                     }
-                    modulation::QpskChipFrequency::Fchip200 => {
+                    QpskChipFrequency::Fchip200 => {
                         agc_control.average_time = AgcAverageTime::Samples32;
 
                         tx_config.paramp = PaRampTime::Paramp16;
@@ -108,7 +112,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
 
                         trx_config.edd = core::time::Duration::from_micros(5 * 128);
                     }
-                    modulation::QpskChipFrequency::Fchip1000 => {
+                    QpskChipFrequency::Fchip1000 => {
                         agc_control.average_time = AgcAverageTime::Samples8;
 
                         tx_config.paramp = PaRampTime::Paramp4;
@@ -123,7 +127,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
 
                         trx_config.edd = core::time::Duration::from_micros(4 * 128);
                     }
-                    modulation::QpskChipFrequency::Fchip2000 => {
+                    QpskChipFrequency::Fchip2000 => {
                         agc_control.average_time = AgcAverageTime::Samples8;
 
                         tx_config.paramp = PaRampTime::Paramp4;
@@ -173,7 +177,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
                 let ofdm_lfo = false;
 
                 match ofdm.opt {
-                    modulation::OfdmBandwidthOption::Option1 => {
+                    OfdmBandwidthOption::Option1 => {
                         tx_config.sr = FrequencySampleRate::SampleRate1333kHz;
                         tx_config.rcut = RelativeCutOff::Fcut1_000;
                         tx_config.lpfcut = TransmitterCutOff::Flc800kHz;
@@ -188,7 +192,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
                             rx_config.if_shift = true;
                         }
                     }
-                    modulation::OfdmBandwidthOption::Option2 => {
+                    OfdmBandwidthOption::Option2 => {
                         tx_config.sr = FrequencySampleRate::SampleRate1333kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc500kHz;
@@ -203,7 +207,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
                             rx_config.if_shift = true;
                         }
                     }
-                    modulation::OfdmBandwidthOption::Option3 => {
+                    OfdmBandwidthOption::Option3 => {
                         tx_config.sr = FrequencySampleRate::SampleRate666kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc250kHz;
@@ -218,7 +222,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
                             rx_config.if_shift = false;
                         }
                     }
-                    modulation::OfdmBandwidthOption::Option4 => {
+                    OfdmBandwidthOption::Option4 => {
                         tx_config.sr = FrequencySampleRate::SampleRate666kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_500;
                         tx_config.lpfcut = TransmitterCutOff::Flc160kHz;
@@ -244,7 +248,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
                 agc_gain.target_level = AgcTargetLevel::TargetN30dB;
 
                 match qpsk.fchip {
-                    modulation::QpskChipFrequency::Fchip100 => {
+                    QpskChipFrequency::Fchip100 => {
                         agc_control.average_time = AgcAverageTime::Samples32;
 
                         tx_config.sr = FrequencySampleRate::SampleRate400kHz;
@@ -259,7 +263,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
 
                         trx_config.edd = core::time::Duration::from_micros(10 * 128);
                     }
-                    modulation::QpskChipFrequency::Fchip200 => {
+                    QpskChipFrequency::Fchip200 => {
                         agc_control.average_time = AgcAverageTime::Samples32;
 
                         tx_config.paramp = PaRampTime::Paramp16;
@@ -274,7 +278,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
 
                         trx_config.edd = core::time::Duration::from_micros(5 * 128);
                     }
-                    modulation::QpskChipFrequency::Fchip1000 => {
+                    QpskChipFrequency::Fchip1000 => {
                         agc_control.average_time = AgcAverageTime::Samples8;
 
                         tx_config.paramp = PaRampTime::Paramp4;
@@ -289,7 +293,7 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
 
                         trx_config.edd = core::time::Duration::from_micros(4 * 128);
                     }
-                    modulation::QpskChipFrequency::Fchip2000 => {
+                    QpskChipFrequency::Fchip2000 => {
                         agc_control.average_time = AgcAverageTime::Samples8;
 
                         tx_config.paramp = PaRampTime::Paramp4;

@@ -2,12 +2,12 @@ use core::fmt;
 
 use bus::{Bus, BusError};
 use error::RadioError;
+use radio_common::Modulation;
 use transceiver::{Band09, Band24, Transreceiver};
 
 use crate::{
     baseband::BasebandFrame,
     config::TransreceiverConfigurator,
-    modulation::Modulation,
     radio::{RadioFrequencyBuilder, RadioFrequencyConfig},
     regs::{BasebandInterruptMask, RadioInterruptMask},
 };
@@ -16,7 +16,6 @@ pub mod baseband;
 pub mod bus;
 pub mod error;
 pub mod frame;
-pub mod modulation;
 pub mod radio;
 pub mod regs;
 pub mod transceiver;

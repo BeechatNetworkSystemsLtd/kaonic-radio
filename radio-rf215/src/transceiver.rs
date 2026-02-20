@@ -1,7 +1,8 @@
+use radio_common::Modulation;
+
 use crate::baseband::{Baseband, BasebandAutoMode, BasebandFrame};
 use crate::bus::Bus;
 use crate::error::RadioError;
-use crate::modulation::{self};
 use crate::radio::{
     Band, Radio, RadioChannel, RadioFrequency, RadioFrequencyConfig, RadioState,
     RadioTransreceiverConfig,
@@ -215,7 +216,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
     pub fn configure(
         &mut self,
-        modulation: &modulation::Modulation,
+        modulation: &Modulation,
         trx_config: &RadioTransreceiverConfig,
     ) -> Result<(), RadioError> {
         self.radio
