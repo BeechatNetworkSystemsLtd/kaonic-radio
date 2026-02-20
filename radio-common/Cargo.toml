@@ -1,0 +1,10 @@
+[package]
+name = "radio-common"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[dependencies]
+
+serde = { version = "1.0", features = ["derive"] }
+
