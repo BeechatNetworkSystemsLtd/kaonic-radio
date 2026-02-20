@@ -8,6 +8,7 @@ pub enum NetworkError {
     TryAgain,
     IncorrectSequence,
     NotSupported,
+    Busy,
 }
 
 impl From<FrameError> for NetworkError {

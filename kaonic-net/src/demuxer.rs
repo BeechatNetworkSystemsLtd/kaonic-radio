@@ -8,6 +8,12 @@ use crate::{
     packet::{Packet, PacketFlag, PacketId},
 };
 
+/// Splits a payload into packet-sized segments.
+///
+/// Const generic parameters:
+/// - `S`: Frame payload size in bytes for each [`Packet`].
+/// - `R`: Maximum number of packet segments handled per demultiplex operation.
+/// - `P`: Maximum payload size in bytes per packet segment.
 pub struct Demuxer<const S: usize, const R: usize, const P: usize> {}
 
 impl<const S: usize, const R: usize, const P: usize> Demuxer<S, R, P> {

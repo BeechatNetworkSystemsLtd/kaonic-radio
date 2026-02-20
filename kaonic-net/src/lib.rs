@@ -1,9 +1,22 @@
+pub mod coder;
 pub mod demuxer;
 pub mod error;
 pub mod generator;
 pub mod muxer;
 pub mod network;
 pub mod packet;
+pub mod request;
+
+pub type NetworkTime = u128;
+
+pub fn network_time_elapsed(
+    start_time: NetworkTime,
+    current_time: NetworkTime,
+    duration: core::time::Duration,
+) -> bool {
+    let interval_time = start_time + duration.as_millis();
+    current_time > interval_time
+}
 
 #[cfg(test)]
 mod tests {
@@ -12,11 +25,8 @@ mod tests {
     use rand::rngs::OsRng;
 
     use crate::{
-        demuxer::Demuxer,
-        generator::Generator,
-        muxer::Muxer,
-        network::Network,
-        packet::{LdpcPacketCoder, Packet, PacketCoder},
+        coder::LdpcPacketCoder, demuxer::Demuxer, generator::Generator, muxer::Muxer,
+        network::Network, packet::Packet,
     };
 
     const FRAME_SIZE: usize = 2048;
