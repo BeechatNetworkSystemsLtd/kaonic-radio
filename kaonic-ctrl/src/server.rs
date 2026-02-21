@@ -33,6 +33,7 @@ impl<T: PeerMessage> ServerRequest<T> {
 }
 
 pub struct Server<T: PeerMessage> {
+    peer_send: PeerSender<T>,
     req_recv: mpsc::Receiver<ServerRequest<T>>,
     cancel: CancellationToken,
 }
@@ -66,13 +67,17 @@ impl<T: PeerMessage + Send + 'static> Server<T> {
         }
 
         tokio::spawn(Self::manage_requests(
-            peer_send,
+            peer_send.clone(),
             peer_recv,
             req_send.clone(),
             cancel.clone(),
         ));
 
-        Ok(Self { req_recv, cancel })
+        Ok(Self {
+            peer_send,
+            req_recv,
+            cancel,
+        })
     }
 
     /// Wait of a next request
@@ -80,6 +85,19 @@ impl<T: PeerMessage + Send + 'static> Server<T> {
         match self.req_recv.recv().await {
             Some(r) => Ok(r),
             None => Err(ControllerError::SocketError),
+        }
+    }
+
+    pub async fn broadcast(&mut self, message: T) {
+        if let Err(_) = self
+            .peer_send
+            .send(PeerTx {
+                addr: None,
+                message,
+            })
+            .await
+        {
+            log::error!("server can't send broadcast");
         }
     }
 
@@ -103,7 +121,7 @@ impl<T: PeerMessage + Send + 'static> Server<T> {
                     if let Ok(_) = req_send.send(ServerRequest::new(rx.message, res_send)).await {
                         let request = AsyncRequest::new(res_recv, core::time::Duration::from_secs(30));
                         if let Ok(res) = request.response().await {
-                            let _ = peer_send.send(PeerTx { addr: rx.addr, message: res }).await;
+                            let _ = peer_send.send(PeerTx { addr: Some(rx.addr), message: res }).await;
                         } else {
                             log::error!("request wasn't handled");
                         }

@@ -42,30 +42,30 @@ impl RadioFrame {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct TransmitModule {
-    pub module: u16,
+    pub module: usize,
     pub frame: RadioFrame,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ReceiveModule {
-    pub module: u16,
+    pub module: usize,
     pub frame: RadioFrame,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct GetInfoResponse {
-    pub module_count: u16,
+    pub module_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SetModulationRequest {
-    pub module: u16,
+    pub module: usize,
     pub modulation: Modulation,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SetRadioConfigRequest {
-    pub module: u16,
+    pub module: usize,
     pub config: RadioConfig,
 }
 
@@ -75,7 +75,8 @@ pub struct SetRadioConfigRequest {
 pub enum Payload {
     Ping,
     Pong,
-    TransmitModule(TransmitModule),
+    TransmitModuleRequest(TransmitModule),
+    TransmitModuleResponse,
     ReceiveModule(ReceiveModule),
     ScanRequest,
     SetRadioConfigRequest(SetRadioConfigRequest),
@@ -84,6 +85,8 @@ pub enum Payload {
     SetModulationResponse,
     GetInfoRequest,
     GetInfoResponse(GetInfoResponse),
+    NotImplemented,
+    Error,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

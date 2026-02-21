@@ -1,7 +1,7 @@
 use std::sync::{atomic::AtomicUsize, Arc};
 
 use linux_embedded_hal::spidev::SpidevOptions;
-use radio_common::{Modulation, RadioConfigBuilder, modulation::OfdmModulation};
+use radio_common::{Hertz, Modulation, RadioConfigBuilder, modulation::OfdmModulation};
 use radio_rf215::{
     bus::{Bus, BusError, SpiBus},
     error::RadioError,
@@ -244,7 +244,7 @@ fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>, index: usize) -> Result<()
 
     rf.set_frequency(
         &RadioConfigBuilder::new()
-            .freq(869_535_000)
+            .freq(Hertz::new(869_535_000))
             .channel((index as u16 + 1) * 5)
             .build(),
     )?;

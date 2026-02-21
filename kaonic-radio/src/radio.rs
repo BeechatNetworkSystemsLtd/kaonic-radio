@@ -1,7 +1,6 @@
-use radio_common::{Hertz, Modulation, RadioConfig};
+use radio_common::{Modulation, RadioConfig};
 
 use crate::error::KaonicError;
-use core::fmt;
 
 pub struct ReceiveResult {
     pub rssi: i8,

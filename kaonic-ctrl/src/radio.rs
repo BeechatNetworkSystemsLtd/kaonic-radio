@@ -1,5 +1,5 @@
 use kaonic_frame::frame::Frame;
-use radio_common::Modulation;
+use radio_common::{Modulation, RadioConfig};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
@@ -45,17 +45,19 @@ impl RadioClient {
 
     pub async fn transmit(
         &mut self,
-        module: u16,
+        module: usize,
         frame: &Frame<RADIO_FRAME_SIZE>,
     ) -> Result<(), ControllerError> {
         self.client
             .request(
                 MessageBuilder::new()
                     .with_id(self.client.gen_id())
-                    .with_payload(Payload::TransmitModule(crate::protocol::TransmitModule {
-                        module,
-                        frame: RadioFrame::new_from_frame(frame),
-                    }))
+                    .with_payload(Payload::TransmitModuleRequest(
+                        crate::protocol::TransmitModule {
+                            module,
+                            frame: RadioFrame::new_from_frame(frame),
+                        },
+                    ))
                     .build(),
                 DEFAULT_TIMEOUT,
             )
@@ -64,16 +66,37 @@ impl RadioClient {
         Ok(())
     }
 
-    pub async fn set_modulation(&mut self, modulation: Modulation) -> Result<(), ControllerError> {
+    pub async fn set_modulation(
+        &mut self,
+        module: usize,
+        modulation: Modulation,
+    ) -> Result<(), ControllerError> {
         self.client
             .request(
                 MessageBuilder::new()
                     .with_id(self.client.gen_id())
                     .with_payload(Payload::SetModulationRequest(
-                        crate::protocol::SetModulationRequest {
-                            module: 0,
-                            modulation,
-                        },
+                        crate::protocol::SetModulationRequest { module, modulation },
+                    ))
+                    .build(),
+                DEFAULT_TIMEOUT,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn set_radio_config(
+        &mut self,
+        module: usize,
+        config: RadioConfig,
+    ) -> Result<(), ControllerError> {
+        self.client
+            .request(
+                MessageBuilder::new()
+                    .with_id(self.client.gen_id())
+                    .with_payload(Payload::SetRadioConfigRequest(
+                        crate::protocol::SetRadioConfigRequest { module, config },
                     ))
                     .build(),
                 DEFAULT_TIMEOUT,

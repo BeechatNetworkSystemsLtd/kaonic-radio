@@ -4,7 +4,7 @@ use std::{
 };
 
 use kaonic_frame::frame::Frame;
-use radio_common::{Hertz, Modulation, RadioConfig, frequency::BandwidthFilter};
+use radio_common::{Hertz, Modulation, RadioConfig, frequency::BandwidthFilter, modulation::OfdmModulation};
 use radio_rf215::{
     baseband::BasebandFrame,
     bus::{BusInterrupt, SpiBus},
@@ -211,7 +211,7 @@ impl Radio for Kaonic1SRadio {
                 .map_err(|_| KaonicError::HardwareError);
 
             if result.is_err() {
-                log::error!("tx [{}] error", self.radio.name());
+                log::error!("tx [{}] {} error", self.radio.name(), i);
                 std::thread::sleep(core::time::Duration::from_millis(4));
             } else {
                 log::trace!(

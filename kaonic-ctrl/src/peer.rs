@@ -83,7 +83,7 @@ pub trait PeerCoder<T: PeerMessage, const MTU: usize, const R: usize> {
 
 #[derive(Clone, Copy)]
 pub struct PeerTx<T: PeerMessage + Copy> {
-    pub addr: SocketAddr,
+    pub addr: Option<SocketAddr>,
     pub message: T,
 }
 
@@ -123,7 +123,7 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
             socket,
             coder,
             network: ControllerNetwork::new(),
-            frames: [Frame::new(); _],
+            frames: core::array::from_fn(|_| Frame::new()),
             tx_frame: FrameSegment::new(),
             rx_frame: FrameSegment::new(),
             tx_send,
@@ -189,8 +189,15 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
                             if let Ok(segments) = segments {
                                 for (i, segment) in segments.iter().enumerate() {
                                     log::trace!("send segment[{}] {} bytes", i, segment.len());
-                                    if let Err(_) = self.socket.send_to(segment.as_slice(), &tx.addr).await {
-                                        log::error!("socket send error");
+
+                                    if let Some(addr) = tx.addr {
+                                        if let Err(_) = self.socket.send_to(segment.as_slice(), &addr).await {
+                                            log::error!("socket send error");
+                                        }
+                                    } else {
+                                        if let Err(_) = self.socket.send(segment.as_slice()).await {
+                                            log::error!("socket send error");
+                                        }
                                     }
                                 }
                             } else {

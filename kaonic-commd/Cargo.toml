@@ -14,13 +14,12 @@ machine-host = ["kaonic-radio/machine-host"]
 # Kaonic
 radio-rf215 = { path="../radio-rf215/" }
 kaonic-radio = { path="../kaonic-radio/", default-features = false }
-kaonic-net = { path="../kaonic-net/" }
-kaonic-qos = { path="../kaonic-qos/" }
+kaonic-ctrl = { path="../kaonic-ctrl/", default-features = false }
 
 rand = { version = "=0.8.5" }
 
 # Logging
-simple_logger = { version = "=4.3.3", features = ["colors"] }
+env_logger = "0.11.9"
 log = "0.4"
 
 # Protobuf and gRPC

@@ -97,7 +97,7 @@ impl<T: PeerMessage + Send + 'static> Client<T> {
         if let Err(_) = self
             .tx_send
             .send(PeerTx {
-                addr: self.server_addr,
+                addr: Some(self.server_addr),
                 message,
             })
             .await

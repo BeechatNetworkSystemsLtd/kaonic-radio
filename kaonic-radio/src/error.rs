@@ -14,7 +14,7 @@ pub enum KaonicError {
 }
 
 impl From<FrameError> for KaonicError {
-    fn from(value: FrameError) -> Self {
+    fn from(_value: FrameError) -> Self {
         KaonicError::OutOfMemory
     }
 }
