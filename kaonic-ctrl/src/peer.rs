@@ -1,8 +1,10 @@
+use core::fmt;
+use std::net::SocketAddr;
+
 use kaonic_frame::frame::{Frame, FrameSegment};
 use kaonic_net::{packet::AssembledPacket, request::Responder};
 use rand::rngs::OsRng;
 use tokio::{
-    io,
     net::UdpSocket,
     sync::{broadcast, mpsc, oneshot},
 };
@@ -11,6 +13,32 @@ use tokio_util::sync::CancellationToken;
 use crate::{error::ControllerError, network::ControllerNetwork};
 
 pub const NETWORK_MTU: usize = 1400;
+
+pub struct AsyncRequest<T> {
+    request: oneshot::Receiver<T>,
+    timeout: core::time::Duration,
+}
+
+impl<T> AsyncRequest<T> {
+    pub fn new(request: oneshot::Receiver<T>, timeout: core::time::Duration) -> Self {
+        Self { request, timeout }
+    }
+
+    pub async fn response(self) -> Result<T, ControllerError> {
+        match tokio::time::timeout(self.timeout, self.request).await {
+            Ok(response) => {
+                if let Ok(response) = response {
+                    return Ok(response);
+                }
+            }
+            Err(_) => {
+                return Err(ControllerError::Timeout);
+            }
+        }
+
+        return Err(ControllerError::Timeout);
+    }
+}
 
 pub struct AsyncResponder<T> {
     response: oneshot::Sender<T>,
@@ -28,40 +56,72 @@ impl<T: Copy> Responder<T> for AsyncResponder<T> {
     }
 }
 
+pub struct PeerMessageId(pub u32);
+
+impl fmt::Display for PeerMessageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "/{:0>8x}/", self.0)
+    }
+}
+
 pub trait PeerMessage: Copy {
-    fn message_id(&self) -> u32;
+    fn message_id(&self) -> PeerMessageId;
 }
 
 pub trait PeerCoder<T: PeerMessage, const MTU: usize, const R: usize> {
-    fn serialize(&self, item: &T, frame: &mut FrameSegment<MTU, R>) -> Result<(), ControllerError>;
-    fn deserialize<'a>(&self, packet: &AssembledPacket<'a, MTU, R>) -> Result<T, ControllerError>;
+    fn serialize(
+        &mut self,
+        message: &T,
+        frame: &mut FrameSegment<MTU, R>,
+    ) -> Result<(), ControllerError>;
+
+    fn deserialize<'a>(
+        &mut self,
+        packet: &AssembledPacket<'a, MTU, R>,
+    ) -> Result<T, ControllerError>;
 }
 
-pub type PeerSender<T> = mpsc::Sender<T>;
-pub type PeerReceiver<T> = broadcast::Receiver<T>;
+#[derive(Clone, Copy)]
+pub struct PeerTx<T: PeerMessage + Copy> {
+    pub addr: SocketAddr,
+    pub message: T,
+}
+
+#[derive(Clone, Copy)]
+pub struct PeerRx<T: PeerMessage + Copy> {
+    pub addr: SocketAddr,
+    pub message: T,
+}
+
+pub type PeerSender<T> = mpsc::Sender<PeerTx<T>>;
+pub type PeerReceiver<T> = broadcast::Receiver<PeerRx<T>>;
 
 pub struct Peer<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> {
     socket: UdpSocket,
-    peer_addr: String,
     coder: C,
+
     network: ControllerNetwork<MTU, R>,
+
     frames: [Frame<MTU>; R],
+
     tx_frame: FrameSegment<MTU, R>,
     rx_frame: FrameSegment<MTU, R>,
-    tx_send: mpsc::Sender<T>,
-    tx_recv: mpsc::Receiver<T>,
-    rx_send: broadcast::Sender<T>,
+
+    tx_send: PeerSender<T>,
+    tx_recv: mpsc::Receiver<PeerTx<T>>,
+    rx_send: broadcast::Sender<PeerRx<T>>,
 }
 
 impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> Peer<T, MTU, R, C> {
-    pub fn new(socket: UdpSocket, peer_addr: &str, coder: C) -> Self {
+    pub fn new(socket: UdpSocket, coder: C) -> Self {
         let (tx_send, tx_recv) = mpsc::channel(32);
         let (rx_send, _) = broadcast::channel(32);
+
+        log::debug!("create new peer (mtu={},pay={})", MTU, MTU * R);
 
         Self {
             socket,
             coder,
-            peer_addr: peer_addr.to_owned(),
             network: ControllerNetwork::new(),
             frames: [Frame::new(); _],
             tx_frame: FrameSegment::new(),
@@ -84,10 +144,11 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
         let mut recv_frame = Frame::<MTU>::new();
         let mut running = true;
 
-        log::debug!("peer serve");
+        let rng = OsRng;
 
         loop {
             if !running {
+                log::warn!("stop serving peer");
                 break;
             }
 
@@ -103,8 +164,8 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
                             log::trace!("socket recv {} {} B", addr, len);
 
                             if let Ok(packet) = self.network.receive(&recv_frame, &mut self.rx_frame) {
-                                if let Ok(item) = self.coder.deserialize(&packet) {
-                                    if let Err(_) = self.rx_send.send(item) {
+                                if let Ok(message) = self.coder.deserialize(&packet) {
+                                    if let Err(_) = self.rx_send.send(PeerRx { addr, message }) {
                                     }
                                 }
                             }
@@ -117,25 +178,32 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
                 }
 
                 // Transmit branch
-                Some(message) = self.tx_recv.recv() => {
+                Some(tx) = self.tx_recv.recv() => {
 
-                    // if let Ok(message_frame) = encode_message(&message, &mut self.tx_frame) {
-                    //
-                    //     // Split messages into segment frames
-                    //     let segments = self.network.transmit(message_frame.as_slice(), rng, &mut self.frames);
-                    //
-                    //     if let Ok(segments) = segments {
-                    //         for segment in segments {
-                    //             if let Err(_) = self.socket.send_to(segment.as_slice(), &self.peer_addr).await {
-                    //                 log::error!("socket send error");
-                    //             }
-                    //         }
-                    //     }
-                    // }
+                    match self.coder.serialize(&tx.message, &mut self.tx_frame) {
+                        Ok(_) => {
+
+                            // Split messages into segment frames
+                            let segments = self.network.transmit(self.tx_frame.as_slice(), rng, &mut self.frames);
+
+                            if let Ok(segments) = segments {
+                                for (i, segment) in segments.iter().enumerate() {
+                                    log::trace!("send segment[{}] {} bytes", i, segment.len());
+                                    if let Err(_) = self.socket.send_to(segment.as_slice(), &tx.addr).await {
+                                        log::error!("socket send error");
+                                    }
+                                }
+                            } else {
+                                log::error!("segments were not created");
+                            }
+                        }
+                        Err(_) => {
+                            log::error!("can't serialize message");
+                        }
+                    }
                 },
 
                 _ = cancel.cancelled() => {
-                    log::warn!("stop serving peer");
                     running = false;
                 }
             }

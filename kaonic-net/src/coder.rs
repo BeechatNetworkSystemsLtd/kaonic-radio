@@ -54,7 +54,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
                 return Err(NetworkError::OutOfMemory);
             }
 
-            let _ = code.copy_encode(&header_data[..], output.alloc_buffer(codeword_len));
+            let _ = code.copy_encode(&header_data[..], output.alloc_buffer(codeword_len)?);
         }
 
         // Encode payload
@@ -80,7 +80,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
                     self.output_buffer[block_len..block_len + block_size].fill(0);
                 }
 
-                let buffer = output.alloc_buffer(code_block_size);
+                let buffer = output.alloc_buffer(code_block_size)?;
                 if buffer.len() < code_block_size {
                     return Err(NetworkError::OutOfMemory);
                 }
@@ -207,7 +207,7 @@ impl<const S: usize> PacketCoder<S> for BinaryPacketCoder<S> {
 
         // Decode payload
         {
-            output.frame_mut().push_data(&input[..HEADER_SIZE])?;
+            output.frame_mut().push_data(&input[HEADER_SIZE..])?;
         }
 
         // Resize to original payload length

@@ -1,19 +1,58 @@
-use kaonic_frame::frame::{Frame, FrameSegment};
+use kaonic_frame::frame::FrameSegment;
 use radio_common::Modulation;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::ControllerError,
-    peer::{PeerCoder, PeerMessage},
+    peer::{PeerCoder, PeerMessage, PeerMessageId},
 };
 
 pub const CTRL_PATTERN: u16 = 0xBACE;
+pub const RADIO_FRAME_SIZE: usize = 4096;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[repr(packed)]
+pub struct RadioFrame {
+    #[serde(with = "serde_bytes")]
+    pub data: [u8; RADIO_FRAME_SIZE],
+    pub len: u16,
+}
+
+impl RadioFrame {
+    pub fn new() -> Self {
+        Self {
+            data: [0u8; RADIO_FRAME_SIZE],
+            len: 0,
+        }
+    }
+
+    pub fn new_from_frame<const S: usize, const R: usize>(frame: &FrameSegment<S, R>) -> Self {
+        let mut radio_frame = Self::new();
+        let len = core::cmp::min(frame.len(), radio_frame.data.len());
+
+        radio_frame.data[..len].copy_from_slice(&frame.as_slice()[..len]);
+
+        radio_frame
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data[..(self.len as usize)]
+    }
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[repr(packed)]
 pub struct TransmitModule {
     pub module: u16,
+    pub frame: RadioFrame,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[repr(packed)]
+pub struct ReceiveModule {
+    pub module: u16,
+    pub frame: RadioFrame,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -35,9 +74,9 @@ pub struct SetModulationRequest {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Payload {
-    TransmitModule,
+    TransmitModule(TransmitModule),
     TransmitNetwork,
-    ReceiveModule,
+    ReceiveModule(ReceiveModule),
     ReceiveNetwork,
     ScanRequest,
     SetModulationRequest(SetModulationRequest),
@@ -68,8 +107,8 @@ impl Message {
 }
 
 impl PeerMessage for Message {
-    fn message_id(&self) -> u32 {
-        self.id
+    fn message_id(&self) -> PeerMessageId {
+        PeerMessageId(self.id)
     }
 }
 
@@ -110,117 +149,112 @@ impl MessageBuilder {
     }
 }
 
-pub fn encode_message<'a, const S: usize, const R: usize>(
-    message: &Message,
-    frame: &'a mut FrameSegment<S, R>,
-) -> Result<&'a FrameSegment<S, R>, ControllerError> {
-    frame.clear();
-
-    frame.push_data(&message.pattern.to_le_bytes()[..])?;
-    frame.push_data(&message.version.to_le_bytes()[..])?;
-    frame.push_data(&message.id.to_le_bytes()[..])?;
-    frame.push_data(&message.flags.to_le_bytes()[..])?;
-
-    let meta_len = frame.len();
-    let mut buffer = frame.alloc_max_buffer();
-
-    let mut serializer = rmp_serde::Serializer::new(&mut buffer);
-
-    message
-        .payload
-        .serialize(&mut serializer)
-        .map_err(|_| ControllerError::OutOfMemory)?;
-
-    let payload_len = serializer.into_inner().len();
-
-    frame.resize(meta_len + payload_len);
-
-    Ok(frame)
+pub struct MessageCoder<const MTU: usize, const R: usize> {
+    buffer: Vec<u8>,
 }
-
-pub fn decode_message<'a, const S: usize, const R: usize>(
-    frame: &FrameSegment<S, R>,
-    message: &'a mut Message,
-) -> Result<&'a Message, ControllerError> {
-    let input_data = frame.as_slice();
-    let mut offset = 0usize;
-
-    if input_data.len() < offset {
-        return Err(ControllerError::DecodeError);
-    }
-
-    message.pattern = u16::from_le_bytes([input_data[offset + 0], input_data[offset + 1]]);
-
-    offset += 2;
-
-    if input_data.len() < offset {
-        return Err(ControllerError::DecodeError);
-    }
-
-    message.version = u16::from_le_bytes([input_data[offset + 0], input_data[offset + 1]]);
-
-    offset += 2;
-
-    if input_data.len() < offset {
-        return Err(ControllerError::DecodeError);
-    }
-
-    message.id = u32::from_le_bytes([
-        input_data[offset + 0],
-        input_data[offset + 1],
-        input_data[offset + 2],
-        input_data[offset + 3],
-    ]);
-
-    offset += 4;
-
-    if input_data.len() < offset {
-        return Err(ControllerError::DecodeError);
-    }
-
-    message.flags = u32::from_le_bytes([
-        input_data[offset + 0],
-        input_data[offset + 1],
-        input_data[offset + 2],
-        input_data[offset + 3],
-    ]);
-
-    offset += 4;
-
-    if input_data.len() < offset {
-        return Err(ControllerError::DecodeError);
-    }
-
-    let payload_data = &input_data[offset..];
-
-    Ok(message)
-}
-
-pub struct MessageCoder<const MTU: usize, const R: usize> {}
 
 impl<const MTU: usize, const R: usize> MessageCoder<MTU, R> {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            buffer: Vec::with_capacity(MTU * R),
+        }
     }
 }
 
 impl<const MTU: usize, const R: usize> PeerCoder<Message, MTU, R> for MessageCoder<MTU, R> {
     fn serialize(
-        &self,
-        item: &Message,
+        &mut self,
+        message: &Message,
         frame: &mut FrameSegment<MTU, R>,
     ) -> Result<(), ControllerError> {
-        encode_message(item, frame)?;
+        frame.clear();
+
+        frame.push_data(&message.pattern.to_le_bytes()[..])?;
+        frame.push_data(&message.version.to_le_bytes()[..])?;
+        frame.push_data(&message.id.to_le_bytes()[..])?;
+        frame.push_data(&message.flags.to_le_bytes()[..])?;
+
+        self.buffer.clear();
+
+        let mut serializer = rmp_serde::Serializer::new(&mut self.buffer);
+
+        message
+            .payload
+            .serialize(&mut serializer)
+            .map_err(|_| ControllerError::OutOfMemory)?;
+
+        frame
+            .alloc_buffer(self.buffer.len())?
+            .copy_from_slice(self.buffer.as_slice());
+
         Ok(())
     }
 
     fn deserialize<'a>(
-        &self,
+        &mut self,
         packet: &kaonic_net::packet::AssembledPacket<'a, MTU, R>,
     ) -> Result<Message, ControllerError> {
         let mut message = Message::new();
 
-        decode_message(packet.frame(), &mut message)?;
+        let input_data = packet.as_slice();
+
+        let mut offset = 0usize;
+
+        if input_data.len() < offset {
+            return Err(ControllerError::DecodeError);
+        }
+
+        message.pattern = u16::from_le_bytes([input_data[offset + 0], input_data[offset + 1]]);
+
+        // Check if message has pattern
+        if message.pattern != CTRL_PATTERN {
+            return Err(ControllerError::DecodeError);
+        }
+
+        offset += 2;
+
+        if input_data.len() < offset {
+            return Err(ControllerError::DecodeError);
+        }
+
+        message.version = u16::from_le_bytes([input_data[offset + 0], input_data[offset + 1]]);
+
+        offset += 2;
+
+        if input_data.len() < offset {
+            return Err(ControllerError::DecodeError);
+        }
+
+        message.id = u32::from_le_bytes([
+            input_data[offset + 0],
+            input_data[offset + 1],
+            input_data[offset + 2],
+            input_data[offset + 3],
+        ]);
+
+        offset += 4;
+
+        if input_data.len() < offset {
+            return Err(ControllerError::DecodeError);
+        }
+
+        message.flags = u32::from_le_bytes([
+            input_data[offset + 0],
+            input_data[offset + 1],
+            input_data[offset + 2],
+            input_data[offset + 3],
+        ]);
+
+        offset += 4;
+
+        if input_data.len() < offset {
+            return Err(ControllerError::DecodeError);
+        }
+
+        let payload_data = &input_data[offset..];
+
+        message.payload =
+            rmp_serde::from_slice(payload_data).map_err(|_| ControllerError::DecodeError)?;
 
         Ok(message)
     }

@@ -33,19 +33,16 @@ impl<const S: usize, const R: usize> FrameSegment<S, R> {
     }
 
     pub fn push_data(&mut self, data: &[u8]) -> Result<usize, FrameError> {
-        let data_size = data.len();
-        if self.len + data_size > Self::CAPACITY {
-            return Err(FrameError::OutOfMemory);
-        }
-
-        self.alloc_buffer(data_size).copy_from_slice(data);
+        self.alloc_buffer(data.len())?.copy_from_slice(data);
 
         Ok(self.len)
     }
 
     pub fn copy_from_slice(&mut self, data: &[u8]) {
         let len = min(data.len(), Self::CAPACITY);
-        self.alloc_buffer(len).copy_from_slice(&data[..len]);
+
+        self.as_flat_mut()[..len].copy_from_slice(&data[..len]);
+        self.len = len
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -77,22 +74,22 @@ impl<const S: usize, const R: usize> FrameSegment<S, R> {
         self.len = min(len, S);
     }
 
-    pub fn alloc_buffer(&mut self, len: usize) -> &mut [u8] {
+    pub fn alloc_buffer(&mut self, len: usize) -> Result<&mut [u8], FrameError> {
         let alloc_len = if self.len + len <= Self::CAPACITY {
             len
         } else {
-            Self::CAPACITY - self.len
+            return Err(FrameError::OutOfMemory);
         };
 
         let start = self.len;
         self.len += alloc_len;
         let end = self.len;
 
-        &mut self.as_flat_mut()[start..end]
+        Ok(&mut self.as_flat_mut()[start..end])
     }
 
     pub fn alloc_max_buffer(&mut self) -> &mut [u8] {
-        self.alloc_buffer(Self::CAPACITY - self.len)
+        self.alloc_buffer(Self::CAPACITY - self.len).unwrap()
     }
 
     #[inline]
@@ -106,7 +103,7 @@ impl<const S: usize, const R: usize> FrameSegment<S, R> {
     }
 }
 
-impl<const S: usize> fmt::Display for Frame<S> {
+impl<const S: usize, const R: usize> fmt::Display for FrameSegment<S, R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         const BYTES_PER_LINE: usize = 16;
 

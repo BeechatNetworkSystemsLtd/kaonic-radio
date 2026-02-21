@@ -11,7 +11,7 @@ const CONTROLLER_NETWORK_QUEUE_SIZE: usize = 16;
 pub type ControllerCoder<const MTU: usize> = BinaryPacketCoder<MTU>;
 
 pub struct ControllerNetwork<const MTU: usize, const R: usize> {
-    network: Network<MTU, R, CONTROLLER_NETWORK_QUEUE_SIZE, MTU, ControllerCoder<MTU>>,
+    network: Network<MTU, R, CONTROLLER_NETWORK_QUEUE_SIZE, ControllerCoder<MTU>>,
 }
 
 impl<const MTU: usize, const R: usize> ControllerNetwork<MTU, R> {

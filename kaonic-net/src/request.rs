@@ -1,4 +1,4 @@
-use crate::{error::NetworkError, network_time_elapsed, packet::PacketId, request, NetworkTime};
+use crate::{error::NetworkError, network_time_elapsed, packet::PacketId, NetworkTime};
 use core::marker::PhantomData;
 
 pub trait Responder<T> {

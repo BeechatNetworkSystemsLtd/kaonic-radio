@@ -106,7 +106,7 @@ impl<const S: usize, const R: usize> PacketMuxer<S, R> {
         &self,
         frame: &'a mut FrameSegment<S, R>,
     ) -> Result<AssembledPacket<'a, S, R>, NetworkError> {
-        if self.can_assemble() {
+        if !self.can_assemble() {
             return Err(NetworkError::TryAgain);
         }
 

@@ -17,26 +17,24 @@ use crate::{
 /// - `S`: Frame payload size in bytes for each [`Frame`].
 /// - `R`: Maximum number of packet fragments/reassembly slots handled at once.
 /// - `Q`: Maximum number of packets tracked in the mux queue.
-/// - `P`: Maximum payload size in bytes per packet segment; should be `<= C::MAX_PAYLOAD_SIZE`.
 pub struct Network<
     const S: usize,
     const R: usize,
     const Q: usize,
-    const P: usize,
     C: PacketCoder<S>,
 > {
-    demuxer: Demuxer<S, R, P>,
+    demuxer: Demuxer<S, R>,
     muxer: Muxer<S, R, Q>,
     packets: [Packet<S>; R],
     coder: C,
 }
 
-impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCoder<S>>
-    Network<S, R, Q, P, C>
+impl<const S: usize, const R: usize, const Q: usize, C: PacketCoder<S>>
+    Network<S, R, Q, C>
 {
     pub fn new(coder: C) -> Self {
         Self {
-            demuxer: Demuxer::new(),
+            demuxer: Demuxer::new(C::MAX_PAYLOAD_SIZE),
             muxer: Muxer::new(),
             packets: [Packet::new(); R],
             coder,

@@ -283,4 +283,8 @@ impl<'a, const S: usize, const R: usize> AssembledPacket<'a, S, R> {
     pub fn frame(&self) -> &'a FrameSegment<S, R> {
         self.frame
     }
+
+    pub fn id(&self) -> PacketId {
+        self.id
+    }
 }
