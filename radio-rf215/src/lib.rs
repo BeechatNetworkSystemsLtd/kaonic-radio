@@ -2,13 +2,12 @@ use core::fmt;
 
 use bus::{Bus, BusError};
 use error::RadioError;
-use radio_common::Modulation;
+use radio_common::{Modulation, RadioConfig, RadioConfigBuilder};
 use transceiver::{Band09, Band24, Transreceiver};
 
 use crate::{
     baseband::BasebandFrame,
     config::TransreceiverConfigurator,
-    radio::{RadioFrequencyBuilder, RadioFrequencyConfig},
     regs::{BasebandInterruptMask, RadioInterruptMask},
 };
 
@@ -82,7 +81,7 @@ pub struct Rf215<I: Bus + Clone> {
     bus: I,
     trx_09: Transreceiver<Band09, I>,
     trx_24: Transreceiver<Band24, I>,
-    freq_config: RadioFrequencyConfig,
+    freq_config: RadioConfig,
 }
 
 impl<I: Bus + Clone> Rf215<I> {
@@ -103,7 +102,7 @@ impl<I: Bus + Clone> Rf215<I> {
         trx_09.reset().map_err(|_| BusError::ControlFailure)?;
         trx_24.reset().map_err(|_| BusError::ControlFailure)?;
 
-        let freq_config = RadioFrequencyBuilder::new().build();
+        let freq_config = RadioConfigBuilder::new().build();
         if let Err(_) = trx_09.set_frequency(&freq_config) {
             return Err(BusError::CommunicationFailure);
         }
@@ -168,7 +167,7 @@ impl<I: Bus + Clone> Rf215<I> {
         Ok(())
     }
 
-    pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
+    pub fn set_frequency(&mut self, config: &RadioConfig) -> Result<(), RadioError> {
         let result = if self.freq_config != *config {
             if self.trx_09.check_band(config.freq) {
                 self.trx_09.set_frequency(config)

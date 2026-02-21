@@ -1,14 +1,11 @@
 use std::sync::{atomic::AtomicUsize, Arc};
 
 use linux_embedded_hal::spidev::SpidevOptions;
+use radio_common::{Modulation, RadioConfigBuilder, modulation::OfdmModulation};
 use radio_rf215::{
     bus::{Bus, BusError, SpiBus},
     error::RadioError,
-    modulation::{Modulation, OfdmModulation},
-    radio::{
-        AgcGainMap, AuxiliarySettings, FrontendPinConfig, PaVol, RadioFrequencyBuilder,
-        RadioFrequencyConfig,
-    },
+    radio::{AgcGainMap, AuxiliarySettings, FrontendPinConfig, PaVol},
     regs::{BasebandInterrupt, BasebandInterruptMask, RadioInterrupt, RadioInterruptMask},
     transceiver::{Band09, Band24, Transreceiver},
     PadOutputDrive, Rf215,
@@ -246,7 +243,7 @@ fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>, index: usize) -> Result<()
     configure_radio_24(rf.trx_24())?;
 
     rf.set_frequency(
-        &RadioFrequencyBuilder::new()
+        &RadioConfigBuilder::new()
             .freq(869_535_000)
             .channel((index as u16 + 1) * 5)
             .build(),

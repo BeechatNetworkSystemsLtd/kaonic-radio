@@ -1,58 +1,12 @@
 use core::marker::PhantomData;
 
+use radio_common::{frequency::RadioChannel, Hertz, RadioConfig};
+
 use crate::{
     bus::Bus,
     error::RadioError,
     regs::{self, RadioInterruptMask, RegisterAddress},
 };
-
-/// Frequency in Hz
-pub type RadioFrequency = u32;
-pub type RadioChannel = u16;
-
-#[derive(PartialEq, Clone, Copy)]
-pub struct RadioFrequencyConfig {
-    pub freq: RadioFrequency,
-    pub channel_spacing: RadioFrequency,
-    pub channel: RadioChannel,
-    pub pll_lbw: PllLoopBandwidth,
-}
-
-pub struct RadioFrequencyBuilder {
-    config: RadioFrequencyConfig,
-}
-
-impl RadioFrequencyBuilder {
-    pub const fn new() -> Self {
-        Self {
-            config: RadioFrequencyConfig {
-                freq: 869_535_000,
-                channel_spacing: 200_000,
-                channel: 10,
-                pll_lbw: PllLoopBandwidth::Default,
-            },
-        }
-    }
-
-    pub fn freq(mut self, freq: RadioFrequency) -> Self {
-        self.config.freq = freq;
-        self
-    }
-
-    pub fn channel(mut self, channel: RadioChannel) -> Self {
-        self.config.channel = channel;
-        self
-    }
-
-    pub fn channel_spacing(mut self, spacing: RadioFrequency) -> Self {
-        self.config.channel_spacing = spacing;
-        self
-    }
-
-    pub fn build(self) -> RadioFrequencyConfig {
-        self.config
-    }
-}
 
 pub trait Band {
     const RADIO_ADDRESS: RegisterAddress;
@@ -60,9 +14,9 @@ pub trait Band {
     const BASEBAND_FRAME_BUFFER_ADDRESS: RegisterAddress;
     const RADIO_IRQ_ADDRESS: RegisterAddress;
     const BASEBAND_IRQ_ADDRESS: RegisterAddress;
-    const MIN_FREQUENCY: RadioFrequency;
-    const MAX_FREQUENCY: RadioFrequency;
-    const FREQUENCY_OFFSET: RadioFrequency;
+    const MIN_FREQUENCY: Hertz;
+    const MAX_FREQUENCY: Hertz;
+    const FREQUENCY_OFFSET: Hertz;
     const MAX_CHANNEL: RadioChannel;
 }
 
@@ -501,8 +455,15 @@ where
         Ok(())
     }
 
+    pub fn set_pll(&mut self, pll: PllLoopBandwidth) -> Result<(), RadioError> {
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL), pll as u8)?;
+
+        Ok(())
+    }
+
     /// Configures Radio for a specific frequency, spacing and channel
-    pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
+    pub fn set_frequency(&mut self, config: &RadioConfig) -> Result<(), RadioError> {
         if config.freq < B::MIN_FREQUENCY
             || config.freq > B::MAX_FREQUENCY
             || config.freq < B::FREQUENCY_OFFSET
@@ -514,12 +475,13 @@ where
             return Err(RadioError::IncorrectConfig);
         }
 
-        let cs = config.channel_spacing / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
+        let cs = config.channel_spacing.as_hz() as u32 / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
         if cs > 0xFF {
             return Err(RadioError::IncorrectConfig);
         }
 
-        let freq = (config.freq - B::FREQUENCY_OFFSET) / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
+        let freq = (config.freq.as_hz() - B::FREQUENCY_OFFSET.as_hz()) as u32
+            / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
 
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_CS), cs as u8)?;
@@ -535,9 +497,6 @@ where
         // Using IEEE-compliant Scheme
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_CNM), 0x00 | channel[1])?;
-
-        self.bus
-            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL), config.pll_lbw as u8)?;
 
         Ok(())
     }
@@ -833,7 +792,7 @@ where
         Ok(())
     }
 
-    pub const fn check_band(freq: RadioFrequency) -> bool {
+    pub fn check_band(freq: Hertz) -> bool {
         (freq <= B::MAX_FREQUENCY) && (freq >= B::MIN_FREQUENCY)
     }
 

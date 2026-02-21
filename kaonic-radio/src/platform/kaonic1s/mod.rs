@@ -4,25 +4,23 @@ use std::{
 };
 
 use kaonic_frame::frame::Frame;
+use radio_common::{Hertz, Modulation, RadioConfig, frequency::BandwidthFilter};
 use radio_rf215::{
     baseband::BasebandFrame,
     bus::{BusInterrupt, SpiBus},
-    radio::RadioFrequencyBuilder,
     Rf215,
 };
 
 use crate::{
     error::KaonicError,
-    modulation::{Modulation, OfdmModulation},
     platform::{
         kaonic1s::machine::create_radios,
         linux::{
             LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
         },
         linux_rf215::AtomicInterrupt,
-        platform_impl::rf215::map_modulation,
     },
-    radio::{BandwidthFilter, Hertz, Radio, RadioConfig, ReceiveResult, ScanResult},
+    radio::{Radio, ReceiveResult, ScanResult},
 };
 
 mod machine;
@@ -177,9 +175,7 @@ impl Radio for Kaonic1SRadio {
     fn set_modulation(&mut self, modulation: &Modulation) -> Result<(), KaonicError> {
         log::debug!("set modulation ({}) = {}", self.radio.name(), modulation);
 
-        let rf_modulation = map_modulation(modulation)?;
-
-        self.radio.configure(&rf_modulation)?;
+        self.radio.configure(modulation)?;
 
         self.modulation = *modulation;
 
@@ -191,13 +187,7 @@ impl Radio for Kaonic1SRadio {
 
         log::trace!("set radio config ({}) = {}", self.radio.name(), config);
 
-        self.radio.set_frequency(
-            &RadioFrequencyBuilder::new()
-                .freq(config.freq.as_hz() as u32)
-                .channel_spacing(config.channel_spacing.as_hz() as u32)
-                .channel(config.channel)
-                .build(),
-        )?;
+        self.radio.set_frequency(config)?;
 
         Ok(())
     }

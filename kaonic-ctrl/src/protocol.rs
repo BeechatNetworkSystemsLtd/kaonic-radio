@@ -1,5 +1,5 @@
 use kaonic_frame::frame::FrameSegment;
-use radio_common::Modulation;
+use radio_common::{Modulation, RadioConfig};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,6 @@ pub const CTRL_PATTERN: u16 = 0xBACE;
 pub const RADIO_FRAME_SIZE: usize = 4096;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[repr(packed)]
 pub struct RadioFrame {
     #[serde(with = "serde_bytes")]
     pub data: [u8; RADIO_FRAME_SIZE],
@@ -42,45 +41,48 @@ impl RadioFrame {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[repr(packed)]
 pub struct TransmitModule {
     pub module: u16,
     pub frame: RadioFrame,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[repr(packed)]
 pub struct ReceiveModule {
     pub module: u16,
     pub frame: RadioFrame,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[repr(packed)]
-pub struct GetInfoRequest {}
+pub struct GetInfoResponse {
+    pub module_count: u16,
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[repr(packed)]
-pub struct GetInfoResponse {}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[repr(packed)]
 pub struct SetModulationRequest {
     pub module: u16,
     pub modulation: Modulation,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SetRadioConfigRequest {
+    pub module: u16,
+    pub config: RadioConfig,
 }
 
 //***********************************************************************************************//
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Payload {
+    Ping,
+    Pong,
     TransmitModule(TransmitModule),
-    TransmitNetwork,
     ReceiveModule(ReceiveModule),
-    ReceiveNetwork,
     ScanRequest,
+    SetRadioConfigRequest(SetRadioConfigRequest),
+    SetRadioConfigResponse,
     SetModulationRequest(SetModulationRequest),
-    GetInfoRequest(GetInfoRequest),
+    SetModulationResponse,
+    GetInfoRequest,
     GetInfoResponse(GetInfoResponse),
 }
 

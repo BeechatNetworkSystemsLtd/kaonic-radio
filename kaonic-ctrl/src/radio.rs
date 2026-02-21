@@ -95,7 +95,6 @@ impl RadioClient {
                         Payload::ReceiveModule(rx) => {
                             let _ = module_rx_send.send(rx);
                         },
-                        Payload::ReceiveNetwork => {},
                         _ => {}
                     }
                 }
