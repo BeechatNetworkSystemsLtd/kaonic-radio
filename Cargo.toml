@@ -1,6 +1,25 @@
 [workspace]
 resolver = "2"
-members = [ "kaonic-commd", "kaonic-factory", "kaonic-fpga", "kaonic-net", "kaonic-qos", "kaonic-radio", "radio-rf215"]
+members = [ 
+    # Applications
+    "kaonic-commd",
+    "kaonic-factory",
+    "kaonic-iperf",
 
-# exclude = ["kaonic-gui", "kaonic-iperf"]
+    # Integration
+    "kaonic-ctrl", 
+
+    # Hardware BSP
+    "kaonic-fpga",
+    "kaonic-radio",
+
+    # Algorithms
+    "kaonic-net",
+    "kaonic-frame",
+
+    # Drivers
+    "radio-rf215"
+, "radio-common"]
+
+# exclude = ["kaonic-gui"]
 
