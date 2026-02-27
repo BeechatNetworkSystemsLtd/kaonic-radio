@@ -33,7 +33,12 @@ impl Hertz {
 
 impl fmt::Display for Hertz {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "{}Hz", self.0,)?;
+        let khz = self.0 / 1000;
+        let mhz = khz / 1000;
+
+        let khz = khz - (mhz * 1000);
+
+        writeln!(f, "{}.{}kHz", mhz, khz)?;
         Ok(())
     }
 }
@@ -66,7 +71,7 @@ impl RadioConfigBuilder {
                 freq: Hertz::new(869_535_000),
                 channel_spacing: Hertz::new(200_000),
                 channel: 10,
-                bandwidth_filter: BandwidthFilter::Wide,
+                bandwidth_filter: BandwidthFilter::Narrow,
             },
         }
     }

@@ -44,6 +44,7 @@ impl Default for BasebandAutoMode {
     }
 }
 
+#[derive(Debug)]
 pub struct Baseband<B, I>
 where
     B: Band,

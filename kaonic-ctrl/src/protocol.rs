@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kaonic_frame::frame::FrameSegment;
 use radio_common::{Modulation, RadioConfig};
 use rand::{CryptoRng, RngCore};
@@ -31,6 +33,7 @@ impl RadioFrame {
         let len = core::cmp::min(frame.len(), radio_frame.data.len());
 
         radio_frame.data[..len].copy_from_slice(&frame.as_slice()[..len]);
+        radio_frame.len = len as u16;
 
         radio_frame
     }
@@ -117,6 +120,19 @@ impl PeerMessage for Message {
     }
 }
 
+impl PeerMessage for std::sync::Arc<Message> {
+    fn message_id(&self) -> PeerMessageId {
+        PeerMessageId(self.id)
+    }
+}
+
+impl PeerMessage for Box<Message> {
+    fn message_id(&self) -> PeerMessageId {
+        PeerMessageId(self.id)
+    }
+}
+
+#[derive(Debug)]
 pub struct MessageBuilder {
     message: Message,
 }
@@ -154,6 +170,7 @@ impl MessageBuilder {
     }
 }
 
+#[derive(Debug)]
 pub struct MessageCoder<const MTU: usize, const R: usize> {
     buffer: Vec<u8>,
 }

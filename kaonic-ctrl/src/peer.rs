@@ -1,5 +1,5 @@
 use core::fmt;
-use std::net::SocketAddr;
+use std::{collections::HashSet, net::SocketAddr, time::Instant};
 
 use kaonic_frame::frame::{Frame, FrameSegment};
 use kaonic_net::{packet::AssembledPacket, request::Responder};
@@ -15,44 +15,41 @@ use crate::{error::ControllerError, network::ControllerNetwork};
 pub const NETWORK_MTU: usize = 1400;
 
 pub struct AsyncRequest<T> {
-    request: oneshot::Receiver<T>,
+    request: mpsc::Receiver<T>,
     timeout: core::time::Duration,
 }
 
 impl<T> AsyncRequest<T> {
-    pub fn new(request: oneshot::Receiver<T>, timeout: core::time::Duration) -> Self {
+    pub fn new(request: mpsc::Receiver<T>, timeout: core::time::Duration) -> Self {
         Self { request, timeout }
     }
 
-    pub async fn response(self) -> Result<T, ControllerError> {
-        match tokio::time::timeout(self.timeout, self.request).await {
-            Ok(response) => {
-                if let Ok(response) = response {
-                    return Ok(response);
-                }
+    pub async fn response(mut self) -> Result<T, ControllerError> {
+        tokio::select! {
+            biased;
+            Some(message) = self.request.recv() => {
+                return Ok(message)
             }
-            Err(_) => {
+            _ = tokio::time::sleep(self.timeout) => {
                 return Err(ControllerError::Timeout);
             }
         }
-
-        return Err(ControllerError::Timeout);
     }
 }
 
 pub struct AsyncResponder<T> {
-    response: oneshot::Sender<T>,
+    response: mpsc::Sender<T>,
 }
 
 impl<T> AsyncResponder<T> {
-    pub fn new(response: oneshot::Sender<T>) -> Self {
+    pub fn new(response: mpsc::Sender<T>) -> Self {
         Self { response }
     }
 }
 
-impl<T: Copy> Responder<T> for AsyncResponder<T> {
+impl<T: Clone> Responder<T> for AsyncResponder<T> {
     fn respond(self, _id: kaonic_net::packet::PacketId, response: T) {
-        let _ = self.response.send(response);
+        let _ = self.response.try_send(response);
     }
 }
 
@@ -64,7 +61,7 @@ impl fmt::Display for PeerMessageId {
     }
 }
 
-pub trait PeerMessage: Copy {
+pub trait PeerMessage: Clone {
     fn message_id(&self) -> PeerMessageId;
 }
 
@@ -81,25 +78,34 @@ pub trait PeerCoder<T: PeerMessage, const MTU: usize, const R: usize> {
     ) -> Result<T, ControllerError>;
 }
 
-#[derive(Clone, Copy)]
-pub struct PeerTx<T: PeerMessage + Copy> {
+#[derive(Clone)]
+pub struct PeerTx<T: PeerMessage + Clone> {
+    pub time: Instant,
     pub addr: Option<SocketAddr>,
-    pub message: T,
+    pub message: Box<T>,
 }
 
-#[derive(Clone, Copy)]
-pub struct PeerRx<T: PeerMessage + Copy> {
+#[derive(Clone)]
+pub struct PeerRx<T: PeerMessage + Clone> {
+    pub time: Instant,
     pub addr: SocketAddr,
-    pub message: T,
+    pub message: Box<T>,
 }
 
 pub type PeerSender<T> = mpsc::Sender<PeerTx<T>>;
 pub type PeerReceiver<T> = broadcast::Receiver<PeerRx<T>>;
 
-pub struct Peer<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> {
+#[derive(Debug)]
+pub struct Peer<
+    T: PeerMessage + std::fmt::Debug,
+    const MTU: usize,
+    const R: usize,
+    C: PeerCoder<T, MTU, R> + std::fmt::Debug,
+> {
     socket: UdpSocket,
     coder: C,
 
+    filter_rx_addr: Option<SocketAddr>,
     network: ControllerNetwork<MTU, R>,
 
     frames: [Frame<MTU>; R],
@@ -112,10 +118,16 @@ pub struct Peer<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T
     rx_send: broadcast::Sender<PeerRx<T>>,
 }
 
-impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> Peer<T, MTU, R, C> {
-    pub fn new(socket: UdpSocket, coder: C) -> Self {
-        let (tx_send, tx_recv) = mpsc::channel(32);
-        let (rx_send, _) = broadcast::channel(32);
+impl<
+        T: PeerMessage + std::fmt::Debug,
+        const MTU: usize,
+        const R: usize,
+        C: PeerCoder<T, MTU, R> + std::fmt::Debug,
+    > Peer<T, MTU, R, C>
+{
+    pub fn new(socket: UdpSocket, coder: C, filter_rx_addr: Option<SocketAddr>) -> Self {
+        let (tx_send, tx_recv) = mpsc::channel(128);
+        let (rx_send, _) = broadcast::channel(128);
 
         log::debug!("create new peer (mtu={},pay={})", MTU, MTU * R);
 
@@ -129,6 +141,7 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
             tx_send,
             tx_recv,
             rx_send,
+            filter_rx_addr,
         }
     }
 
@@ -146,6 +159,10 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
 
         let rng = OsRng;
 
+        let local_addr = self.socket.local_addr()?;
+
+        let mut clients = HashSet::new();
+
         loop {
             if !running {
                 log::warn!("stop serving peer");
@@ -159,17 +176,18 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
                 result = self.socket.recv_from(recv_frame.alloc_max_buffer()) => {
                     match result {
                         Ok((len, addr)) => {
-                            recv_frame.resize(len);
+                            if addr != local_addr && (self.filter_rx_addr.is_some_and(|a| a == addr) || self.filter_rx_addr.is_none()) {
 
-                            log::trace!("socket recv {} {} B", addr, len);
+                                clients.insert(addr);
+                                recv_frame.resize(len);
 
-                            if let Ok(packet) = self.network.receive(&recv_frame, &mut self.rx_frame) {
-                                if let Ok(message) = self.coder.deserialize(&packet) {
-                                    if let Err(_) = self.rx_send.send(PeerRx { addr, message }) {
+                                if let Ok(packet) = self.network.receive(&recv_frame, &mut self.rx_frame) {
+                                    if let Ok(message) = self.coder.deserialize(&packet) {
+                                        if let Err(_) = self.rx_send.send(PeerRx { time: Instant::now(), addr, message: Box::new(message) }) {
+                                        }
                                     }
                                 }
                             }
-
                         }
                         Err(e) => {
                             log::error!("socket error: {}", e);
@@ -179,24 +197,27 @@ impl<T: PeerMessage, const MTU: usize, const R: usize, C: PeerCoder<T, MTU, R>> 
 
                 // Transmit branch
                 Some(tx) = self.tx_recv.recv() => {
-
                     match self.coder.serialize(&tx.message, &mut self.tx_frame) {
                         Ok(_) => {
+
+                            log::trace!("tx message time {}", tx.time.elapsed().as_millis());
 
                             // Split messages into segment frames
                             let segments = self.network.transmit(self.tx_frame.as_slice(), rng, &mut self.frames);
 
                             if let Ok(segments) = segments {
-                                for (i, segment) in segments.iter().enumerate() {
-                                    log::trace!("send segment[{}] {} bytes", i, segment.len());
+                                for segment in segments.iter() {
 
                                     if let Some(addr) = tx.addr {
                                         if let Err(_) = self.socket.send_to(segment.as_slice(), &addr).await {
                                             log::error!("socket send error");
                                         }
                                     } else {
-                                        if let Err(_) = self.socket.send(segment.as_slice()).await {
-                                            log::error!("socket send error");
+                                        for addr in clients.iter().into_iter() {
+
+                                            if let Err(_) = self.socket.send_to(segment.as_slice(), &addr).await {
+                                                log::error!("socket broadcast send error");
+                                            }
                                         }
                                     }
                                 }

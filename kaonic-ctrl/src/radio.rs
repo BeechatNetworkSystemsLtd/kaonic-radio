@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kaonic_frame::frame::Frame;
 use radio_common::{Modulation, RadioConfig};
 use tokio::sync::broadcast;
@@ -58,7 +60,8 @@ impl RadioClient {
                             frame: RadioFrame::new_from_frame(frame),
                         },
                     ))
-                    .build(),
+                    .build()
+                    .into(),
                 DEFAULT_TIMEOUT,
             )
             .await?;
@@ -78,7 +81,8 @@ impl RadioClient {
                     .with_payload(Payload::SetModulationRequest(
                         crate::protocol::SetModulationRequest { module, modulation },
                     ))
-                    .build(),
+                    .build()
+                    .into(),
                 DEFAULT_TIMEOUT,
             )
             .await?;
@@ -98,7 +102,8 @@ impl RadioClient {
                     .with_payload(Payload::SetRadioConfigRequest(
                         crate::protocol::SetRadioConfigRequest { module, config },
                     ))
-                    .build(),
+                    .build()
+                    .into(),
                 DEFAULT_TIMEOUT,
             )
             .await?;
@@ -107,7 +112,7 @@ impl RadioClient {
     }
 
     async fn listen_rx(
-        mut rx_recv: broadcast::Receiver<Message>,
+        mut rx_recv: broadcast::Receiver<Box<Message>>,
         module_rx_send: broadcast::Sender<ReceiveModule>,
         cancel: CancellationToken,
     ) {

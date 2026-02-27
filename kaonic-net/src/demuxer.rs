@@ -14,6 +14,7 @@ use crate::{
 /// - `S`: Frame payload size in bytes for each [`Packet`].
 /// - `R`: Maximum number of packet segments handled per demultiplex operation.
 /// - `P`: Maximum payload size in bytes per packet segment.
+#[derive(Debug)]
 pub struct Demuxer<const S: usize, const R: usize> {
     total_size: usize,
     segment_size: usize,

@@ -29,6 +29,7 @@ pub const FRAME_SIZE: usize = 2048usize;
 
 pub type Kaonic1SBus = SpiBus<LinuxSpi, AtomicInterrupt, LinuxClock, LinuxGpioReset>;
 
+#[derive(Debug)]
 pub struct Kaonic1SRadioFem {
     flt_v1: LinuxOutputPin,
     flt_v2: LinuxOutputPin,
@@ -110,6 +111,7 @@ impl Kaonic1SRadioFem {
 pub type Kaonic1SFrame = Frame<FRAME_SIZE>;
 pub type Kaonic1SRf215 = Rf215<SharedBus<Kaonic1SBus>>;
 
+#[derive(Debug)]
 pub struct Kaonic1SRadioEvent {
     counter: Arc<AtomicUsize>,
     irq: LinuxGpioInterrupt,
@@ -131,6 +133,8 @@ impl Kaonic1SRadioEvent {
         false
     }
 }
+
+
 
 pub struct Kaonic1SRadio {
     fem: Kaonic1SRadioFem,

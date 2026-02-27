@@ -2,8 +2,10 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::error::Error;
-
-use crate::kaonic::{ConfigurationRequest, RadioModule, RadioPhyConfigOfdm, RadioPhyConfigQpsk, configuration_request::PhyConfig};
+use radio_common::{
+    RadioConfig, RadioConfigBuilder, Hertz, Modulation,
+    modulation::{OfdmModulation, OfdmMcs, OfdmBandwidthOption, QpskModulation, QpskChipFrequency, QpskRateMode}
+};
 
 #[derive(Debug)]
 pub struct IperfConfig {
@@ -11,7 +13,7 @@ pub struct IperfConfig {
     pub payload_size: usize,
     pub timeout: u64,
     pub ip: Option<String>,
-    pub module: i32, // RadioModule enum value
+    pub module: usize,
 }
 
 impl Default for IperfConfig {
@@ -21,17 +23,23 @@ impl Default for IperfConfig {
             payload_size: 2047,
             timeout: 10,
             ip: None,
-            module: 0, // MODULE_A
+            module: 0,
         }
     }
 }
 
 #[derive(Debug, Default)]
 pub struct Config {
-    // Radios are represented as protobuf ConfigurationRequest objects directly
-    pub radios: Vec<ConfigurationRequest>,
+    pub radios: Vec<RadioConfigWithModule>,
     pub iperf: IperfConfig,
     pub modulation: HashMap<String, toml::Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RadioConfigWithModule {
+    pub module: usize,
+    pub config: RadioConfig,
+    pub modulation: Option<Modulation>,
 }
 
 #[derive(Deserialize)]
@@ -61,56 +69,36 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
     let mut radio_keys: Vec<String> = table.keys().filter(|k| k.starts_with("radio-")).cloned().collect();
     radio_keys.sort();
 
-    let mut radios_proto: Vec<ConfigurationRequest> = Vec::new();
+    let mut radios: Vec<RadioConfigWithModule> = Vec::new();
     for (i, key) in radio_keys.iter().enumerate() {
         if let Some(v) = table.get(key) {
             if let Some(rtab) = v.as_table() {
-                let mut req = ConfigurationRequest::default();
-
-                // Map module index to enum
-                req.module = match i {
-                    0 => RadioModule::ModuleA as i32,
-                    1 => RadioModule::ModuleB as i32,
-                    _ => RadioModule::ModuleA as i32,
-                };
+                let mut builder = RadioConfigBuilder::new();
 
                 if let Some(freq) = rtab.get("freq").and_then(|x| x.as_integer()) {
-                    req.freq = freq as u32;
+                    builder = builder.freq(Hertz::new(freq as u64));
                 }
                 if let Some(ch) = rtab.get("channel").and_then(|x| x.as_integer()) {
-                    req.channel = ch as u32;
+                    builder = builder.channel(ch as u16);
                 }
                 if let Some(cs) = rtab.get("channel_spacing").and_then(|x| x.as_integer()) {
-                    req.channel_spacing = cs as u32;
-                }
-                if let Some(tp) = rtab.get("tx_power").and_then(|x| x.as_integer()) {
-                    req.tx_power = tp as u32;
+                    builder = builder.channel_spacing(Hertz::new(cs as u64));
                 }
 
-                // Apply modulation preset in place if specified
-                if let Some(mod_name) = rtab.get("modulation").and_then(|x| x.as_str()) {
-                    if let Some(preset) = modulation.get(mod_name) {
-                        if let Some(t) = preset.get("type").and_then(|v| v.as_str()) {
-                            match t {
-                                "ofdm" => {
-                                    let mcs = preset.get("mcs").and_then(|v| v.as_integer()).unwrap_or(0) as u32;
-                                    let opt = preset.get("opt").and_then(|v| v.as_integer()).unwrap_or(0) as u32;
-                                    let ofdm = RadioPhyConfigOfdm { mcs, opt };
-                                    req.phy_config = Some(PhyConfig::Ofdm(ofdm));
-                                }
-                                "qpsk" => {
-                                    let chip = preset.get("chip_freq").and_then(|v| v.as_integer()).unwrap_or(0) as u32;
-                                    let rate = preset.get("rate").and_then(|v| v.as_integer()).unwrap_or(0) as u32;
-                                    let qpsk = RadioPhyConfigQpsk { chip_freq: chip, rate_mode: rate };
-                                    req.phy_config = Some(PhyConfig::Qpsk(qpsk));
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-
-                radios_proto.push(req);
+                let config = builder.build();
+                
+                // Parse modulation from preset if specified
+                let mod_config = if let Some(mod_name) = rtab.get("modulation").and_then(|x| x.as_str()) {
+                    parse_modulation(&modulation, mod_name)
+                } else {
+                    None
+                };
+                
+                radios.push(RadioConfigWithModule {
+                    module: i,
+                    config,
+                    modulation: mod_config,
+                });
             }
         }
     }
@@ -124,11 +112,7 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
             if let Some(x) = partial.timeout { d.timeout = x; }
             if let Some(x) = partial.ip { d.ip = Some(x); }
             if let Some(m) = partial.module {
-                d.module = match m {
-                    0 => RadioModule::ModuleA as i32,
-                    1 => RadioModule::ModuleB as i32,
-                    _ => RadioModule::ModuleA as i32,
-                };
+                d.module = m as usize;
             }
         }
         d
@@ -145,5 +129,73 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
     }
 
 
-    Ok(Config { radios: radios_proto, iperf, modulation })
+    Ok(Config { radios, iperf, modulation })
+}
+
+fn parse_modulation(presets: &HashMap<String, toml::Value>, name: &str) -> Option<Modulation> {
+    let preset = presets.get(name)?;
+    let mod_type = preset.get("type")?.as_str()?;
+    
+    match mod_type {
+        "ofdm" => {
+            let mcs_val = preset.get("mcs")?.as_integer()? as u8;
+            let opt_val = preset.get("opt")?.as_integer()? as u8;
+            let tx_power = preset.get("tx_power").and_then(|v| v.as_integer()).unwrap_or(10) as u8;
+            
+            let mcs = match mcs_val {
+                0 => OfdmMcs::BpskC1_2_4x,
+                1 => OfdmMcs::BpskC1_2_2x,
+                2 => OfdmMcs::QpskC1_2_2x,
+                3 => OfdmMcs::QpskC1_2,
+                4 => OfdmMcs::QpskC3_4,
+                5 => OfdmMcs::QamC1_2,
+                6 => OfdmMcs::QamC3_4,
+                _ => return None,
+            };
+            
+            let opt = match opt_val {
+                0 => OfdmBandwidthOption::Option1,
+                1 => OfdmBandwidthOption::Option2,
+                2 => OfdmBandwidthOption::Option3,
+                3 => OfdmBandwidthOption::Option4,
+                _ => return None,
+            };
+            
+            Some(Modulation::Ofdm(OfdmModulation {
+                mcs,
+                opt,
+                pdt: 0x03,
+                tx_power,
+            }))
+        }
+        "qpsk" => {
+            let chip_val = preset.get("chip_freq")?.as_integer()? as u32;
+            let rate_val = preset.get("rate")?.as_integer()? as u8;
+            let tx_power = preset.get("tx_power").and_then(|v| v.as_integer()).unwrap_or(10) as u8;
+            
+            let fchip = match chip_val {
+                100 => QpskChipFrequency::Fchip100,
+                200 => QpskChipFrequency::Fchip200,
+                1000 => QpskChipFrequency::Fchip1000,
+                2000 => QpskChipFrequency::Fchip2000,
+                _ => return None,
+            };
+            
+            let mode = match rate_val {
+                0 => QpskRateMode::RateMode0,
+                1 => QpskRateMode::RateMode1,
+                2 => QpskRateMode::RateMode2,
+                3 => QpskRateMode::RateMode3,
+                4 => QpskRateMode::RateMode4,
+                _ => return None,
+            };
+            
+            Some(Modulation::Qpsk(QpskModulation {
+                fchip,
+                mode,
+                tx_power,
+            }))
+        }
+        _ => None,
+    }
 }

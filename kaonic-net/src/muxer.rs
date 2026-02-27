@@ -143,6 +143,7 @@ impl<const S: usize, const R: usize> PacketMuxer<S, R> {
 }
 
 /// The muxer can handle up to 'Q' packets divided into 'R' segments of 'S' size
+#[derive(Debug)]
 pub struct Muxer<const S: usize, const R: usize, const Q: usize> {
     queue: [PacketMuxer<S, R>; Q],
     timeout: core::time::Duration,

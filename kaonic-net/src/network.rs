@@ -17,6 +17,8 @@ use crate::{
 /// - `S`: Frame payload size in bytes for each [`Frame`].
 /// - `R`: Maximum number of packet fragments/reassembly slots handled at once.
 /// - `Q`: Maximum number of packets tracked in the mux queue.
+
+#[derive(Debug)]
 pub struct Network<
     const S: usize,
     const R: usize,

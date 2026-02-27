@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use kaonic_frame::frame::{Frame, FrameSegment};
 use kaonic_net::{
     coder::BinaryPacketCoder, network::Network, packet::AssembledPacket, NetworkTime,
@@ -10,6 +12,7 @@ const CONTROLLER_NETWORK_QUEUE_SIZE: usize = 16;
 
 pub type ControllerCoder<const MTU: usize> = BinaryPacketCoder<MTU>;
 
+#[derive(Debug)]
 pub struct ControllerNetwork<const MTU: usize, const R: usize> {
     network: Network<MTU, R, CONTROLLER_NETWORK_QUEUE_SIZE, ControllerCoder<MTU>>,
 }
@@ -41,6 +44,7 @@ impl<const MTU: usize, const R: usize> ControllerNetwork<MTU, R> {
         rng: RNG,
         output_frames: &'a mut [Frame<MTU>],
     ) -> Result<&'a [Frame<MTU>], ControllerError> {
+
         let frames = self.network.transmit(data, rng, output_frames)?;
 
         Ok(frames)

@@ -8,6 +8,7 @@ use linux_embedded_hal::SpidevDevice;
 
 use crate::error::KaonicError;
 
+#[derive(Debug)]
 pub struct SharedBus<T> {
     pub(super) bus: std::sync::Arc<std::sync::Mutex<T>>,
 }
@@ -28,20 +29,24 @@ impl<T> Clone for SharedBus<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct LinuxGpioConfig {
     pub line_name: &'static str,
 }
 
+#[derive(Debug)]
 pub struct LinuxGpioLineConfig {
     pub chip: &'static str,
     pub offset: u32,
 }
 
+#[derive(Debug)]
 pub struct LinuxSpiConfig {
     pub path: &'static str,
     pub max_speed: u32,
 }
 
+#[derive(Debug)]
 pub struct LinuxGpioInterrupt {
     pub(super) buffer: libgpiod::request::Buffer,
     pub(super) request: libgpiod::request::Request,
@@ -68,6 +73,7 @@ impl LinuxGpioInterrupt {
     }
 }
 
+#[derive(Debug)]
 pub struct LinuxGpioReset {
     pub(super) line: Offset,
     pub(super) request: libgpiod::request::Request,
@@ -90,6 +96,7 @@ impl LinuxGpioReset {
     }
 }
 
+#[derive(Debug)]
 pub struct LinuxOutputPin {
     line: Offset,
     request: libgpiod::request::Request,
@@ -141,6 +148,7 @@ impl LinuxOutputPin {
     }
 }
 
+#[derive(Debug)]
 pub struct LinuxClock {
     pub(crate) start_time: Instant,
 }

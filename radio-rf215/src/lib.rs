@@ -21,7 +21,7 @@ pub mod transceiver;
 
 mod config;
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
 pub enum PartNumber {
     At86Rf215 = 0x34,
@@ -74,6 +74,7 @@ impl Default for RfConfig {
     }
 }
 
+#[derive(Debug)]
 pub struct Rf215<I: Bus + Clone> {
     name: &'static str,
     part_number: PartNumber,

@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use tokio::{
     net::UdpSocket,
-    sync::{mpsc, oneshot},
+    sync::{broadcast, mpsc, oneshot},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -11,20 +11,33 @@ use crate::{
     peer::{AsyncRequest, Peer, PeerCoder, PeerMessage, PeerReceiver, PeerSender, PeerTx},
 };
 
+#[derive(Debug, Clone)]
 pub struct ServerRequest<T: PeerMessage> {
+    time: Instant,
     message: T,
-    send: oneshot::Sender<T>,
+    send: mpsc::Sender<Box<T>>,
 }
 
 impl<T: PeerMessage> ServerRequest<T> {
-    pub fn new(message: T, send: oneshot::Sender<T>) -> Self {
-        Self { message, send }
+    pub fn new(time: Instant, message: T, send: mpsc::Sender<Box<T>>) -> Self {
+        Self {
+            time,
+            message,
+            send,
+        }
     }
 
-    pub fn response(self, message: T) -> Result<(), ControllerError> {
+    pub async fn response(self, message: Box<T>) -> Result<(), ControllerError> {
         self.send
             .send(message)
-            .map_err(|_| ControllerError::SocketError)
+            .await
+            .map_err(|_| ControllerError::SocketError)?;
+
+        Ok(())
+    }
+
+    pub fn time(&self) -> Instant {
+        self.time
     }
 
     pub fn message(&self) -> &T {
@@ -32,68 +45,63 @@ impl<T: PeerMessage> ServerRequest<T> {
     }
 }
 
-pub struct Server<T: PeerMessage> {
-    peer_send: PeerSender<T>,
-    req_recv: mpsc::Receiver<ServerRequest<T>>,
-    cancel: CancellationToken,
+pub trait ServerHandler<T> {
+    fn handle_message(request: &T) -> Option<T>;
 }
 
-impl<T: PeerMessage + Send + 'static> Server<T> {
+pub struct Server<T: PeerMessage, H: ServerHandler<T>> {
+    peer_send: PeerSender<T>,
+    cancel: CancellationToken,
+    handler: H,
+}
+
+impl<T: PeerMessage + Send + std::fmt::Debug + 'static, H: ServerHandler<T>> Server<T, H> {
     pub async fn listen<
         const MTU: usize,
         const R: usize,
-        C: PeerCoder<T, MTU, R> + Send + 'static,
+        C: PeerCoder<T, MTU, R> + Send + std::fmt::Debug + 'static,
     >(
         listen_addr: SocketAddr,
+        handler: H,
         coder: C,
         cancel: CancellationToken,
     ) -> Result<Self, ControllerError> {
-        let (req_send, req_recv) = mpsc::channel(8);
-
         log::info!("listen server on {}", listen_addr);
 
         let socket = UdpSocket::bind(listen_addr).await?;
         socket.set_broadcast(true)?;
 
-        let peer = Peer::new(socket, coder);
+        let peer = Peer::new(socket, coder, None);
         let peer_send = peer.tx_send();
         let peer_recv = peer.rx_recv();
 
         {
+            let peer_send = peer_send.clone();
             let cancel = cancel.clone();
-            tokio::spawn(async move {
-                let _ = peer.serve(cancel).await;
-            });
+            tokio::spawn(Self::manage_requests(peer_send, peer_recv, cancel));
         }
 
-        tokio::spawn(Self::manage_requests(
-            peer_send.clone(),
-            peer_recv,
-            req_send.clone(),
-            cancel.clone(),
-        ));
+        {
+            let cancel = cancel.clone();
+            tokio::spawn(Box::pin(async move {
+                let _ = peer.serve(cancel).await;
+            }));
+        }
 
         Ok(Self {
             peer_send,
-            req_recv,
+            handler,
             cancel,
         })
-    }
-
-    /// Wait of a next request
-    pub async fn request(&mut self) -> Result<ServerRequest<T>, ControllerError> {
-        match self.req_recv.recv().await {
-            Some(r) => Ok(r),
-            None => Err(ControllerError::SocketError),
-        }
     }
 
     pub async fn broadcast(&mut self, message: T) {
         if let Err(_) = self
             .peer_send
             .send(PeerTx {
+                time: Instant::now(),
                 addr: None,
-                message,
+                message: Box::new(message),
             })
             .await
         {
@@ -101,27 +109,33 @@ impl<T: PeerMessage + Send + 'static> Server<T> {
         }
     }
 
-    pub fn cancel(&mut self) {
-        self.cancel.cancel();
-    }
 
     async fn manage_requests(
         peer_send: PeerSender<T>,
         mut peer_recv: PeerReceiver<T>,
-        req_send: mpsc::Sender<ServerRequest<T>>,
+        req_send: broadcast::Sender<ServerRequest<T>>,
         cancel: CancellationToken,
     ) {
         loop {
             tokio::select! {
+                biased;
                 Ok(rx) = peer_recv.recv() => {
-                    let (res_send, res_recv) = oneshot::channel();
+                    let message_id = rx.message.message_id();
+                    log::trace!("server request {}", message_id);
 
-                    log::trace!("server request {}", rx.message.message_id());
+                    let (res_send, res_recv) = mpsc::channel(1);
 
-                    if let Ok(_) = req_send.send(ServerRequest::new(rx.message, res_send)).await {
+                    if let Ok(_) = req_send.send(ServerRequest::new(rx.time, rx.message.as_ref().clone(), res_send)) {
+
+                        log::trace!("request {} wait {} msec", message_id, rx.time.elapsed().as_micros());
                         let request = AsyncRequest::new(res_recv, core::time::Duration::from_secs(30));
                         if let Ok(res) = request.response().await {
-                            let _ = peer_send.send(PeerTx { addr: Some(rx.addr), message: res }).await;
+
+                            log::trace!("request {} send in {} msec", message_id, rx.time.elapsed().as_micros());
+
+                            let _ = peer_send.send(PeerTx { time: rx.time, addr: Some(rx.addr), message: res }).await;
+
+                            log::trace!("request {} completed in {} msec", message_id, rx.time.elapsed().as_micros());
                         } else {
                             log::error!("request wasn't handled");
                         }

@@ -3,71 +3,20 @@ use crc32fast::Hasher;
 use log::{error, warn};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
-use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 
-pub mod kaonic {
-    tonic::include_proto!("kaonic");
-}
+use kaonic_ctrl::{
+    client::Client,
+    protocol::MessageCoder,
+    radio::RadioClient,
+};
+use kaonic_frame::frame::Frame;
 
 mod config;
 
-use kaonic::{radio_client::RadioClient, RadioFrame, ReceiveRequest, TransmitRequest};
-
-const DEFAULT_COMMD_ADDR: &str = "http://192.168.10.1:8080";
+const DEFAULT_COMMD_ADDR: &str = "192.168.10.1:9090";
 const MIN_PACKET_SIZE: usize = 24; // MAGIC(4) + SEQ(4) + TIMESTAMP(8) + padding(4) + CRC(4)
 const MAX_PACKET_SIZE: usize = 2048;
-const MAX_WORDS: usize = MAX_PACKET_SIZE / 4;
-
-/// 4-byte aligned buffer for zero-copy u8 <-> u32 conversion
-#[repr(C, align(4))]
-struct AlignedBuffer {
-    data: [u8; MAX_PACKET_SIZE],
-    len: usize,
-}
-
-impl AlignedBuffer {
-    fn new() -> Self {
-        Self {
-            data: [0u8; MAX_PACKET_SIZE],
-            len: 0,
-        }
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        &self.data[..self.len]
-    }
-
-    fn as_words(&self) -> &[u32] {
-        let word_len = (self.len + 3) / 4;
-        // SAFETY: buffer is aligned to 4 bytes, and we're on little-endian
-        unsafe { std::slice::from_raw_parts(self.data.as_ptr() as *const u32, word_len) }
-    }
-
-    fn set_len(&mut self, len: usize) {
-        self.len = len.min(MAX_PACKET_SIZE);
-    }
-
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    fn push(&mut self, byte: u8) {
-        if self.len < MAX_PACKET_SIZE {
-            self.data[self.len] = byte;
-            self.len += 1;
-        }
-    }
-
-    fn extend_from_slice(&mut self, slice: &[u8]) {
-        let copy_len = slice.len().min(MAX_PACKET_SIZE - self.len);
-        self.data[self.len..self.len + copy_len].copy_from_slice(&slice[..copy_len]);
-        self.len += copy_len;
-    }
-
-    fn len(&self) -> usize {
-        self.len
-    }
-}
 const RESPONSE_TIMEOUT_MS: u64 = 500;
 
 #[derive(Parser, Debug)]
@@ -78,7 +27,7 @@ struct Args {
     #[arg(long, short = 'c', default_value = "kaonic-config.toml")]
     config: String,
 
-    /// kaonic-commd gRPC address (overrides config file)
+    /// kaonic-commd address (overrides config file)
     #[arg(long, short = 'a')]
     address: Option<String>,
 
@@ -102,27 +51,6 @@ fn compute_crc(data: &[u8]) -> u32 {
     hasher.finalize()
 }
 
-fn encode_frame(buffer: &AlignedBuffer) -> RadioFrame {
-    RadioFrame {
-        data: buffer.as_words().to_vec(),
-        length: buffer.len() as u32,
-    }
-}
-
-fn decode_frame_into(frame: &RadioFrame, buffer: &mut AlignedBuffer) {
-    let byte_len = frame.length as usize;
-    let word_len = frame.data.len().min(MAX_WORDS);
-
-    // SAFETY: we're copying u32 words directly into aligned buffer as bytes (little-endian)
-    unsafe {
-        let src = frame.data.as_ptr() as *const u8;
-        let dst = buffer.data.as_mut_ptr();
-        std::ptr::copy_nonoverlapping(src, dst, word_len * 4);
-    }
-
-    buffer.set_len(byte_len);
-}
-
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -130,23 +58,30 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn fill_packet(packet: &mut AlignedBuffer, seq: u32, size: usize) {
+fn fill_packet(frame: &mut Frame<4096>, seq: u32, size: usize) {
     let size = size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
-    packet.clear();
-
+    frame.clear();
+    
+    let buffer = frame.alloc_buffer(size).expect("Frame too small");
+    let mut pos = 0;
+    
     // Header: MAGIC + SEQ + TIMESTAMP (16 bytes)
-    packet.extend_from_slice(&MAGIC);
-    packet.extend_from_slice(&seq.to_le_bytes());
-    packet.extend_from_slice(&now_ms().to_le_bytes());
-
+    buffer[pos..pos+4].copy_from_slice(&MAGIC);
+    pos += 4;
+    buffer[pos..pos+4].copy_from_slice(&seq.to_le_bytes());
+    pos += 4;
+    buffer[pos..pos+8].copy_from_slice(&now_ms().to_le_bytes());
+    pos += 8;
+    
     // Padding (fill to size - 4 bytes for CRC)
-    while packet.len() < size - 4 {
-        packet.push((packet.len() & 0xFF) as u8);
+    while pos < size - 4 {
+        buffer[pos] = (pos & 0xFF) as u8;
+        pos += 1;
     }
-
+    
     // CRC32 of everything before it
-    let crc = compute_crc(packet.as_bytes());
-    packet.extend_from_slice(&crc.to_le_bytes());
+    let crc = compute_crc(&buffer[..pos]);
+    buffer[pos..pos+4].copy_from_slice(&crc.to_le_bytes());
 }
 
 #[derive(Debug)]
@@ -197,32 +132,50 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
     println!("=== Kaonic RTT Server ===");
     println!("Connecting to {}...", address);
 
-    let mut client = RadioClient::connect(address.to_string()).await?;
+    let server_addr: std::net::SocketAddr = address.parse()?;
+    let listen_addr: std::net::SocketAddr = "0.0.0.0:0".parse()?;
+    
+    let cancel = CancellationToken::new();
+    
+    let client = Client::connect(
+        listen_addr,
+        server_addr,
+        MessageCoder::<1000, 6>::new(),
+        cancel.clone(),
+    )
+    .await
+    .map_err(|e| format!("Client connect error: {:?}", e))?;
+    
+    let mut radio_client = RadioClient::new(client, cancel.clone())
+        .await
+        .map_err(|e| format!("RadioClient init error: {:?}", e))?;
     println!("Connected.");
     
     // Apply radio configuration for the target module only
     if let Some(radio_cfg) = cfg.radios.iter().find(|r| r.module == cfg.iperf.module) {
         println!("Configuring radio module {}...", cfg.iperf.module);
-        client.configure(radio_cfg.clone()).await?;
+        radio_client.set_radio_config(cfg.iperf.module, radio_cfg.config.clone())
+            .await
+            .map_err(|e| format!("Config error: {:?}", e))?;
+        
+        if let Some(modulation) = radio_cfg.modulation {
+            radio_client.set_modulation(cfg.iperf.module, modulation)
+                .await
+                .map_err(|e| format!("Modulation error: {:?}", e))?;
+            println!("Modulation configured: {:?}", modulation);
+        }
+        
         println!("Radio configuration applied.\n");
     } else {
         println!("Warning: no radio config found for module {}\n", cfg.iperf.module);
     }
 
-    let request = ReceiveRequest {
-        module: cfg.iperf.module,
-        timeout: 0,
-    };
-
-    let mut stream = client.receive_stream(request).await?.into_inner();
+    let mut module_rx = radio_client.module_receive();
     let mut count: u64 = 0;
     let mut ignored: u64 = 0;
     let mut crc_errors: u64 = 0;
     let mut bytes_received: u64 = 0;
     let mut start_time: Option<Instant> = None;
-
-    // Pre-allocate reusable aligned buffer
-    let mut rx_buf = AlignedBuffer::new();
 
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
@@ -233,16 +186,20 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
                 println!("\nShutting down...");
                 break;
             }
-            result = stream.next() => {
+            result = module_rx.recv() => {
                 match result {
-                    Some(Ok(response)) => {
-                        let frame = response.frame.unwrap_or_default();
-                        decode_frame_into(&frame, &mut rx_buf);
+                    Ok(rx_module) => {
+                        if rx_module.module != cfg.iperf.module {
+                            continue;
+                        }
+                        
+                        let rx_data = rx_module.frame.as_slice();
 
-                        match parse_packet(rx_buf.as_bytes()) {
+                        match parse_packet(rx_data) {
                             Ok((seq, _ts)) => {
                                 // Track receive stats
-                                let packet_size = rx_buf.len() as u64;
+                                let packet_size = rx_data.len() as u64;
+                                println!("[RX] seq={} size={} bytes", seq, packet_size);
                                 if start_time.is_none() {
                                     start_time = Some(Instant::now());
                                 }
@@ -260,21 +217,19 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
                                     })
                                     .unwrap_or(0.0);
 
-                                // Echo back the same packet (preserving timestamp and CRC)
-                                let tx_request = TransmitRequest {
-                                    module: cfg.iperf.module,
-                                    frame: Some(frame),
-                                };
+                                // Echo back the same packet
+                                let mut echo_frame = Frame::<4096>::new();
+                                echo_frame.copy_from_slice(rx_data);
 
-                                match client.transmit(tx_request).await {
+                                match radio_client.transmit(cfg.iperf.module, &echo_frame).await {
                                     Ok(_) => {
                                         count += 1;
                                         println!(
-                                            "[{}] Echo seq={} size={} rssi={} dBm  rx={:.2} kb/s",
-                                            count, seq, rx_buf.len(), response.rssi, speed_kbps
+                                            "[{}] Echo seq={} size={}  rx={:.2} kb/s",
+                                            count, seq, rx_data.len(), speed_kbps
                                         );
                                     }
-                                    Err(e) => warn!("Transmit error: {}", e),
+                                    Err(e) => warn!("Transmit error: {:?}", e),
                                 }
                             }
                             Err(ParseError::TooShort) => {
@@ -287,17 +242,21 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
                                 crc_errors += 1;
                                 warn!(
                                     "CRC mismatch: expected={:#010x} actual={:#010x} size={}",
-                                    expected, actual, rx_buf.len()
+                                    expected, actual, rx_data.len()
                                 );
                             }
                         }
                     }
-                    Some(Err(e)) => error!("Receive error: {}", e),
-                    None => break,
+                    Err(_) => {
+                        // Channel closed or lagged
+                        break;
+                    }
                 }
             }
         }
     }
+
+    radio_client.cancel();
 
     println!("\nTotal packets echoed: {}", count);
     if ignored > 0 {
@@ -326,13 +285,39 @@ async fn run_client(
     println!("=== Kaonic RTT Client ===");
     println!("Connecting to {}...", address);
 
-    let mut client = RadioClient::connect(address.to_string()).await?;
+    let server_addr: std::net::SocketAddr = address.parse()?;
+    let listen_addr: std::net::SocketAddr = "0.0.0.0:0".parse()?;
+    
+    let cancel = CancellationToken::new();
+    
+    let client = Client::connect(
+        listen_addr,
+        server_addr,
+        MessageCoder::<1400, 5>::new(),
+        cancel.clone(),
+    )
+    .await
+    .map_err(|e| format!("Client connect error: {:?}", e))?;
+    
+    let mut radio_client = RadioClient::new(client, cancel.clone())
+        .await
+        .map_err(|e| format!("RadioClient init error: {:?}", e))?;
     println!("Connected.");
     
     // Apply radio configuration for the target module only
     if let Some(radio_cfg) = cfg.radios.iter().find(|r| r.module == cfg.iperf.module) {
         println!("Configuring radio module {}...", cfg.iperf.module);
-        client.configure(radio_cfg.clone()).await?;
+        radio_client.set_radio_config(cfg.iperf.module, radio_cfg.config.clone())
+            .await
+            .map_err(|e| format!("Config error: {:?}", e))?;
+        
+        if let Some(modulation) = radio_cfg.modulation {
+            radio_client.set_modulation(cfg.iperf.module, modulation)
+                .await
+                .map_err(|e| format!("Modulation error: {:?}", e))?;
+            println!("Modulation configured: {:?}", modulation);
+        }
+        
         println!("Radio configuration applied.");
     } else {
         println!("Warning: no radio config found for module {}", cfg.iperf.module);
@@ -342,11 +327,7 @@ async fn run_client(
     println!("Duration: {} seconds\n", cfg.iperf.duration);
 
     // Start receive stream
-    let request = ReceiveRequest {
-        module: cfg.iperf.module,
-        timeout: RESPONSE_TIMEOUT_MS as u32,
-    };
-    let mut stream = client.receive_stream(request).await?.into_inner();
+    let mut module_rx = radio_client.module_receive();
 
     let start = Instant::now();
     let test_duration = Duration::from_secs(cfg.iperf.duration);
@@ -359,33 +340,31 @@ async fn run_client(
     let mut timeouts: u64 = 0;
     let mut crc_errors: u64 = 0;
 
-    // Pre-allocate reusable aligned buffers
-    let mut packet_buf = AlignedBuffer::new();
-    let mut rx_buf = AlignedBuffer::new();
+    // Pre-allocate reusable packet frame
+    let mut tx_frame = Frame::<4096>::new();
 
     while start.elapsed() < test_duration {
         // Send request packet
-        fill_packet(&mut packet_buf, seq, packet_size);
+        fill_packet(&mut tx_frame, seq, packet_size);
         let send_time = Instant::now();
 
-        let tx_request = TransmitRequest {
-            module: cfg.iperf.module,
-            frame: Some(encode_frame(&packet_buf)),
-        };
-
-        if let Err(e) = client.transmit(tx_request).await {
-            error!("Transmit error: {}", e);
+        if let Err(e) = radio_client.transmit(cfg.iperf.module, &tx_frame).await {
+            error!("Transmit error: {:?}", e);
             seq = seq.wrapping_add(1);
             continue;
         }
 
         // Wait for response
-        match timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS), stream.next()).await {
-            Ok(Some(Ok(response))) => {
+        match timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS), module_rx.recv()).await {
+            Ok(Ok(rx_module)) => {
+                if rx_module.module != cfg.iperf.module {
+                    continue;
+                }
+                
                 let rtt = send_time.elapsed().as_millis() as u64;
-                decode_frame_into(&response.frame.unwrap_or_default(), &mut rx_buf);
+                let rx_data = rx_module.frame.as_slice();
 
-                match parse_packet(rx_buf.as_bytes()) {
+                match parse_packet(rx_data) {
                     Ok((resp_seq, _)) => {
                         if resp_seq == seq {
                             rtt_min = rtt_min.min(rtt);
@@ -395,11 +374,10 @@ async fn run_client(
                             bytes_transferred += (packet_size * 2) as u64; // req + resp
 
                             println!(
-                                "seq={:<6} rtt={:<4} ms  rssi={:<4} dBm  size={}",
+                                "seq={:<6} rtt={:<4} ms  size={}",
                                 seq,
                                 rtt,
-                                response.rssi,
-                                rx_buf.len()
+                                rx_data.len()
                             );
                         }
                     }
@@ -415,13 +393,9 @@ async fn run_client(
                     }
                 }
             }
-            Ok(Some(Err(e))) => {
-                warn!("Receive error: {}", e);
+            Ok(Err(_)) => {
+                // Channel error
                 timeouts += 1;
-            }
-            Ok(None) => {
-                warn!("Stream ended");
-                break;
             }
             Err(_) => {
                 println!("seq={:<6} TIMEOUT", seq);
@@ -431,6 +405,8 @@ async fn run_client(
 
         seq = seq.wrapping_add(1);
     }
+
+    radio_client.cancel();
 
     // Print results
     let elapsed = start.elapsed().as_secs_f64();
@@ -468,7 +444,7 @@ async fn run_client(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    simple_logger::init_with_level(log::Level::Info)?;
+    simple_logger::init_with_level(log::Level::Trace)?;
 
     let args = Args::parse();
 
@@ -491,14 +467,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Determine address: CLI arg takes precedence over config
     let address = if let Some(addr) = &args.address {
-        // Wrap with http:// and :8080 if not already formatted
-        if addr.starts_with("http://") || addr.starts_with("https://") {
+        // Parse as IP:PORT or add default port
+        if addr.contains(':') {
             addr.clone()
         } else {
-            format!("http://{}:8080", addr)
+            format!("{}:9090", addr)
         }
     } else if let Some(ip) = &cfg.iperf.ip {
-        format!("http://{}:8080", ip)
+        format!("{}:9090", ip)
     } else {
         DEFAULT_COMMD_ADDR.to_string()
     };

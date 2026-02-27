@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use kaonic_ctrl::{
     protocol::{Message, MessageBuilder, Payload, RadioFrame, ReceiveModule},
@@ -10,18 +10,23 @@ use kaonic_radio::{
     radio::Radio,
 };
 use rand::rngs::OsRng;
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 pub struct RadioServer {
     server: Server<Message>,
     module_rx_recv: mpsc::Receiver<ReceiveModule>,
+    req_recv: broadcast::Receiver<ServerRequest<Message>>,
     radios: Vec<Arc<Mutex<PlatformRadio>>>,
     cancel: CancellationToken,
 }
 
 impl RadioServer {
-    pub fn new(server: Server<Message>, cancel: CancellationToken) -> Result<Self, KaonicError> {
+    pub fn new(
+        server: Server<Message>,
+        req_recv: broadcast::Receiver<ServerRequest<Message>>,
+        cancel: CancellationToken,
+    ) -> Result<Self, KaonicError> {
         let mut machine = create_machine()?;
 
         let (module_rx_send, module_rx_recv) = mpsc::channel(16);
@@ -50,38 +55,61 @@ impl RadioServer {
                 })
                 .unwrap();
 
-            tokio::spawn(Self::manage_radio(
-                radio_index as u16,
-                radio.clone(),
-                module_rx_send.clone(),
-                event_recv,
-                cancel.clone(),
-            ));
+            {
+                let cancel = cancel.clone();
+                let module_rx_send = module_rx_send.clone();
+                let radio = radio.clone();
+
+                tokio::spawn(Box::pin(async move {
+                    Self::manage_radio(
+                        radio_index as u16,
+                        radio,
+                        module_rx_send,
+                        event_recv,
+                        cancel,
+                    )
+                    .await;
+                }));
+            }
 
             radio_index += 1;
             radios.push(radio);
+
+            break;
         }
 
         Ok(Self {
             server,
             radios,
+            req_recv,
             module_rx_recv,
             cancel,
         })
     }
 
     pub async fn serve(mut self) {
+        let mut res_message = MessageBuilder::new()
+            .with_id(0)
+            .with_payload(Payload::NotImplemented)
+            .build();
+
         loop {
             tokio::select! {
-                Ok(request) = self.server.request() => {
-                    self.handle_request(request).await;
+                biased;
+                Ok(request) = self.req_recv.recv() => {
+
+                    log::trace!("new request {}us", request.time().elapsed().as_micros());
+
+                    res_message.id = request.message().id;
+
+                    self.handle_request(request, &mut res_message).await;
                 }
                 Some(rx) = self.module_rx_recv.recv() => {
                    self.server.broadcast(
                         MessageBuilder::new()
                             .with_rnd_id(OsRng)
                             .with_payload(Payload::ReceiveModule(rx))
-                            .build())
+                            .build().into())
                     .await;
                 }
                 _ = self.cancel.cancelled() => {
@@ -91,13 +119,11 @@ impl RadioServer {
         }
     }
 
-    async fn handle_request(&mut self, request: ServerRequest<Message>) {
+    async fn handle_request(&mut self, request: ServerRequest<Message>, res_message: &mut Message) {
         let req_message = request.message();
 
-        let mut res_message = MessageBuilder::new()
-            .with_id(req_message.id)
-            .with_payload(Payload::NotImplemented)
-            .build();
+        let req_time = request.time();
+        let start_time = Instant::now();
 
         match req_message.payload {
             Payload::TransmitModuleRequest(tx) => {
@@ -140,7 +166,13 @@ impl RadioServer {
             _ => {}
         }
 
-        let _ = request.response(res_message);
+        let _ = request.response(Box::new(*res_message)).await;
+
+        log::trace!(
+            "request handled in {} ms total:{} usec",
+            start_time.elapsed().as_millis(),
+            req_time.elapsed().as_micros(),
+        );
     }
 
     async fn manage_radio(

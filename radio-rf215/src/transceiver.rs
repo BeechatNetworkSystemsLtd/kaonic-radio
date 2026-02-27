@@ -8,7 +8,10 @@ use crate::regs::{
     self, BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask, RegisterAddress,
 };
 
+
+#[derive(Debug)]
 pub struct Band09;
+#[derive(Debug)]
 pub struct Band24;
 
 /// sub-GHz Band
@@ -36,6 +39,7 @@ impl Band for Band24 {
     const MAX_CHANNEL: RadioChannel = 511;
 }
 
+#[derive(Debug)]
 pub struct Transreceiver<B: Band, I: Bus + Clone> {
     radio: Radio<B, I>,
     baseband: Baseband<B, I>,

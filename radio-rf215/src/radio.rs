@@ -314,6 +314,7 @@ pub enum RadioCommand {
 
 /// Represents radio module part of the transceiver
 /// B is a sub-GHz or 2.4GHz band
+#[derive(Debug)]
 pub struct Radio<B, I>
 where
     B: Band,
@@ -475,7 +476,7 @@ where
             return Err(RadioError::IncorrectConfig);
         }
 
-        let cs = config.channel_spacing.as_hz() as u32 / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
+        let cs = config.channel_spacing.as_khz() as u32 / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
         if cs > 0xFF {
             return Err(RadioError::IncorrectConfig);
         }
