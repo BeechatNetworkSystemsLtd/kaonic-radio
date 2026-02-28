@@ -200,13 +200,15 @@ impl<
                     match self.coder.serialize(&tx.message, &mut self.tx_frame) {
                         Ok(_) => {
 
-                            log::trace!("tx message time {}", tx.time.elapsed().as_millis());
 
                             // Split messages into segment frames
                             let segments = self.network.transmit(self.tx_frame.as_slice(), rng, &mut self.frames);
 
                             if let Ok(segments) = segments {
+                                let mut total_bytes = 0usize;
                                 for segment in segments.iter() {
+
+                                    total_bytes += segment.len();
 
                                     if let Some(addr) = tx.addr {
                                         if let Err(_) = self.socket.send_to(segment.as_slice(), &addr).await {
@@ -221,6 +223,9 @@ impl<
                                         }
                                     }
                                 }
+
+                                // log::trace!("tx message time {} usec, {} bytes", tx.time.elapsed().as_micros(), total_bytes);
+
                             } else {
                                 log::error!("segments were not created");
                             }

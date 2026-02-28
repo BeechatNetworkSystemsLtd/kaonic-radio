@@ -5,11 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use kaonic_ctrl::{
-    client::Client,
-    protocol::MessageCoder,
-    radio::RadioClient,
-};
+use kaonic_ctrl::{client::Client, protocol::MessageCoder, radio::RadioClient};
 use kaonic_frame::frame::Frame;
 
 mod config;
@@ -58,30 +54,30 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn fill_packet(frame: &mut Frame<4096>, seq: u32, size: usize) {
+fn fill_packet(frame: &mut Frame<2048>, seq: u32, size: usize) {
     let size = size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
     frame.clear();
-    
+
     let buffer = frame.alloc_buffer(size).expect("Frame too small");
     let mut pos = 0;
-    
+
     // Header: MAGIC + SEQ + TIMESTAMP (16 bytes)
-    buffer[pos..pos+4].copy_from_slice(&MAGIC);
+    buffer[pos..pos + 4].copy_from_slice(&MAGIC);
     pos += 4;
-    buffer[pos..pos+4].copy_from_slice(&seq.to_le_bytes());
+    buffer[pos..pos + 4].copy_from_slice(&seq.to_le_bytes());
     pos += 4;
-    buffer[pos..pos+8].copy_from_slice(&now_ms().to_le_bytes());
+    buffer[pos..pos + 8].copy_from_slice(&now_ms().to_le_bytes());
     pos += 8;
-    
+
     // Padding (fill to size - 4 bytes for CRC)
     while pos < size - 4 {
         buffer[pos] = (pos & 0xFF) as u8;
         pos += 1;
     }
-    
+
     // CRC32 of everything before it
     let crc = compute_crc(&buffer[..pos]);
-    buffer[pos..pos+4].copy_from_slice(&crc.to_le_bytes());
+    buffer[pos..pos + 4].copy_from_slice(&crc.to_le_bytes());
 }
 
 #[derive(Debug)]
@@ -134,40 +130,45 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
 
     let server_addr: std::net::SocketAddr = address.parse()?;
     let listen_addr: std::net::SocketAddr = "0.0.0.0:0".parse()?;
-    
+
     let cancel = CancellationToken::new();
-    
+
     let client = Client::connect(
         listen_addr,
         server_addr,
-        MessageCoder::<1000, 6>::new(),
+        MessageCoder::<1400, 5>::new(),
         cancel.clone(),
     )
     .await
     .map_err(|e| format!("Client connect error: {:?}", e))?;
-    
+
     let mut radio_client = RadioClient::new(client, cancel.clone())
         .await
         .map_err(|e| format!("RadioClient init error: {:?}", e))?;
     println!("Connected.");
-    
+
     // Apply radio configuration for the target module only
     if let Some(radio_cfg) = cfg.radios.iter().find(|r| r.module == cfg.iperf.module) {
         println!("Configuring radio module {}...", cfg.iperf.module);
-        radio_client.set_radio_config(cfg.iperf.module, radio_cfg.config.clone())
+        radio_client
+            .set_radio_config(cfg.iperf.module, radio_cfg.config.clone())
             .await
             .map_err(|e| format!("Config error: {:?}", e))?;
-        
+
         if let Some(modulation) = radio_cfg.modulation {
-            radio_client.set_modulation(cfg.iperf.module, modulation)
+            radio_client
+                .set_modulation(cfg.iperf.module, modulation)
                 .await
                 .map_err(|e| format!("Modulation error: {:?}", e))?;
             println!("Modulation configured: {:?}", modulation);
         }
-        
+
         println!("Radio configuration applied.\n");
     } else {
-        println!("Warning: no radio config found for module {}\n", cfg.iperf.module);
+        println!(
+            "Warning: no radio config found for module {}\n",
+            cfg.iperf.module
+        );
     }
 
     let mut module_rx = radio_client.module_receive();
@@ -192,7 +193,7 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
                         if rx_module.module != cfg.iperf.module {
                             continue;
                         }
-                        
+
                         let rx_data = rx_module.frame.as_slice();
 
                         match parse_packet(rx_data) {
@@ -218,7 +219,7 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
                                     .unwrap_or(0.0);
 
                                 // Echo back the same packet
-                                let mut echo_frame = Frame::<4096>::new();
+                                let mut echo_frame = Frame::<2048>::new();
                                 echo_frame.copy_from_slice(rx_data);
 
                                 match radio_client.transmit(cfg.iperf.module, &echo_frame).await {
@@ -276,20 +277,20 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
     Ok(())
 }
 
-async fn run_client(
-    address: &str,
-    cfg: &config::Config,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let packet_size = cfg.iperf.payload_size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
+async fn run_client(address: &str, cfg: &config::Config) -> Result<(), Box<dyn std::error::Error>> {
+    let packet_size = cfg
+        .iperf
+        .payload_size
+        .clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
 
     println!("=== Kaonic RTT Client ===");
     println!("Connecting to {}...", address);
 
     let server_addr: std::net::SocketAddr = address.parse()?;
     let listen_addr: std::net::SocketAddr = "0.0.0.0:0".parse()?;
-    
+
     let cancel = CancellationToken::new();
-    
+
     let client = Client::connect(
         listen_addr,
         server_addr,
@@ -298,31 +299,36 @@ async fn run_client(
     )
     .await
     .map_err(|e| format!("Client connect error: {:?}", e))?;
-    
+
     let mut radio_client = RadioClient::new(client, cancel.clone())
         .await
         .map_err(|e| format!("RadioClient init error: {:?}", e))?;
     println!("Connected.");
-    
+
     // Apply radio configuration for the target module only
     if let Some(radio_cfg) = cfg.radios.iter().find(|r| r.module == cfg.iperf.module) {
         println!("Configuring radio module {}...", cfg.iperf.module);
-        radio_client.set_radio_config(cfg.iperf.module, radio_cfg.config.clone())
+        radio_client
+            .set_radio_config(cfg.iperf.module, radio_cfg.config.clone())
             .await
             .map_err(|e| format!("Config error: {:?}", e))?;
-        
+
         if let Some(modulation) = radio_cfg.modulation {
-            radio_client.set_modulation(cfg.iperf.module, modulation)
+            radio_client
+                .set_modulation(cfg.iperf.module, modulation)
                 .await
                 .map_err(|e| format!("Modulation error: {:?}", e))?;
             println!("Modulation configured: {:?}", modulation);
         }
-        
+
         println!("Radio configuration applied.");
     } else {
-        println!("Warning: no radio config found for module {}", cfg.iperf.module);
+        println!(
+            "Warning: no radio config found for module {}",
+            cfg.iperf.module
+        );
     }
-    
+
     println!("Packet size: {} bytes", packet_size);
     println!("Duration: {} seconds\n", cfg.iperf.duration);
 
@@ -341,7 +347,7 @@ async fn run_client(
     let mut crc_errors: u64 = 0;
 
     // Pre-allocate reusable packet frame
-    let mut tx_frame = Frame::<4096>::new();
+    let mut tx_frame = Frame::<2048>::new();
 
     while start.elapsed() < test_duration {
         // Send request packet
@@ -360,7 +366,7 @@ async fn run_client(
                 if rx_module.module != cfg.iperf.module {
                     continue;
                 }
-                
+
                 let rtt = send_time.elapsed().as_millis() as u64;
                 let rx_data = rx_module.frame.as_slice();
 
@@ -373,12 +379,7 @@ async fn run_client(
                             rtt_count += 1;
                             bytes_transferred += (packet_size * 2) as u64; // req + resp
 
-                            println!(
-                                "seq={:<6} rtt={:<4} ms  size={}",
-                                seq,
-                                rtt,
-                                rx_data.len()
-                            );
+                            println!("seq={:<6} rtt={:<4} ms  size={}", seq, rtt, rx_data.len());
                         }
                     }
                     Err(ParseError::CrcMismatch { expected, actual }) => {
@@ -451,7 +452,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load config from specified path (required)
     let cfg = match config::load_config(&args.config) {
         Ok(c) => {
-            println!("Loaded config from {} with {} radio(s)", args.config, c.radios.len());
+            println!(
+                "Loaded config from {} with {} radio(s)",
+                args.config,
+                c.radios.len()
+            );
             c
         }
         Err(e) => {

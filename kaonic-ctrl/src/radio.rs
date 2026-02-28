@@ -14,7 +14,7 @@ use crate::{
 pub const DEFAULT_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(6);
 
 pub struct RadioClient {
-    module_rx_send: broadcast::Sender<ReceiveModule>,
+    module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
     cancel: CancellationToken,
     client: Client<Message>,
 }
@@ -41,7 +41,7 @@ impl RadioClient {
         })
     }
 
-    pub fn module_receive(&self) -> broadcast::Receiver<ReceiveModule> {
+    pub fn module_receive(&self) -> broadcast::Receiver<Box<ReceiveModule>> {
         self.module_rx_send.subscribe()
     }
 
@@ -113,7 +113,7 @@ impl RadioClient {
 
     async fn listen_rx(
         mut rx_recv: broadcast::Receiver<Box<Message>>,
-        module_rx_send: broadcast::Sender<ReceiveModule>,
+        module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
         cancel: CancellationToken,
     ) {
         loop {
@@ -121,7 +121,7 @@ impl RadioClient {
                 Ok(message) = rx_recv.recv() => {
                     match message.payload {
                         Payload::ReceiveModule(rx) => {
-                            let _ = module_rx_send.send(rx);
+                            let _ = module_rx_send.send(Box::new(rx));
                         },
                         _ => {}
                     }

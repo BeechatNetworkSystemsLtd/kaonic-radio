@@ -45,17 +45,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cancel = CancellationToken::new();
 
-    let (req_send, req_recv) = broadcast::channel(16);
+    let (client_send, client_recv) = mpsc::channel(16);
+
+    let radio_server = RadioServer::new(client_send, cancel.clone()).expect("radio server");
+
     let server = Server::listen(
         addr,
-        req_send,
         MessageCoder::<SERVER_MTU, SERVER_SEGMENTS>::new(),
+        radio_server,
+        client_recv,
         cancel.clone(),
     )
     .await
     .expect("server");
-
-    let radio_server = RadioServer::new(server, req_recv, cancel.clone()).expect("radio server");
 
     tokio::spawn(async move {
         // SIGTERM (Unix only)
@@ -70,8 +72,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(not(unix))]
         let terminate = std::future::pending::<()>();
 
-        log::info!("wait shutdown listeners");
-
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 log::warn!("Stopping by Ctrl+C");
@@ -84,9 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         log::info!("Shutdown signal received. Cancelling tasks...");
-    });
+    })
+    .await;
 
-    radio_server.serve().await;
+
+    log::info!("server started");
 
     Ok(())
 }

@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub const CTRL_PATTERN: u16 = 0xBACE;
-pub const RADIO_FRAME_SIZE: usize = 4096;
+pub const RADIO_FRAME_SIZE: usize = 2048;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct RadioFrame {
@@ -53,6 +53,15 @@ pub struct TransmitModule {
 pub struct ReceiveModule {
     pub module: usize,
     pub frame: RadioFrame,
+}
+
+impl ReceiveModule {
+    pub fn new() -> Self {
+        Self {
+            module: 0,
+            frame: RadioFrame::new(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

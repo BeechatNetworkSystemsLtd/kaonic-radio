@@ -4,7 +4,9 @@ use std::{
 };
 
 use kaonic_frame::frame::Frame;
-use radio_common::{Hertz, Modulation, RadioConfig, frequency::BandwidthFilter, modulation::OfdmModulation};
+use radio_common::{
+    frequency::BandwidthFilter, modulation::OfdmModulation, Hertz, Modulation, RadioConfig,
+};
 use radio_rf215::{
     baseband::BasebandFrame,
     bus::{BusInterrupt, SpiBus},
@@ -133,8 +135,6 @@ impl Kaonic1SRadioEvent {
         false
     }
 }
-
-
 
 pub struct Kaonic1SRadio {
     fem: Kaonic1SRadioFem,
