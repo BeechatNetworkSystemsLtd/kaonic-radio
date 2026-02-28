@@ -18,10 +18,6 @@ mod grpc_client;
 mod ui;
 mod iperf;
 
-pub mod kaonic {
-    tonic::include_proto!("kaonic");
-}
-
 use clap::Parser;
 use grpc_client::GrpcClient;
 use ui::{AppState, RadioGuiApp};
@@ -139,7 +135,7 @@ fn main() {
         s.server_addr = ip.clone();
         drop(s);
 
-        let addr = format!("http://{}:8080", ip);
+        let addr = format!("{}:9090", ip);
         client.lock().set_server_addr(addr);
     }
 

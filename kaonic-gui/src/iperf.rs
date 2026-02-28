@@ -1,7 +1,6 @@
-use crate::grpc_client::{GrpcClient, TxTarget};
+use crate::grpc_client::{GrpcClient, RadioModule, TxTarget};
 use crate::ui::AppState;
 use parking_lot::Mutex;
-use crate::kaonic::RadioModule;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;

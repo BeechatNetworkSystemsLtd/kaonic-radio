@@ -11,6 +11,8 @@ use crate::{
     protocol::{Message, MessageBuilder, Payload, RadioFrame, ReceiveModule, RADIO_FRAME_SIZE},
 };
 
+pub use crate::protocol::GetInfoResponse;
+
 pub const DEFAULT_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(6);
 
 pub struct RadioClient {
@@ -130,6 +132,24 @@ impl RadioClient {
 
                 }
             }
+        }
+    }
+
+    pub async fn get_info(&mut self) -> Result<GetInfoResponse, ControllerError> {
+        let response = self
+            .client
+            .request(
+                MessageBuilder::new()
+                    .with_id(self.client.gen_id())
+                    .with_payload(Payload::GetInfoRequest)
+                    .build(),
+                DEFAULT_TIMEOUT,
+            )
+            .await?;
+
+        match response.payload {
+            Payload::GetInfoResponse(info) => Ok(info),
+            _ => Err(ControllerError::DecodeError),
         }
     }
 

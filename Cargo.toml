@@ -18,8 +18,9 @@ members = [
     "kaonic-frame",
 
     # Drivers
-    "radio-rf215"
-, "radio-common"]
+    "radio-rf215",
+    "radio-common"
+]
 
 # exclude = ["kaonic-gui"]
 

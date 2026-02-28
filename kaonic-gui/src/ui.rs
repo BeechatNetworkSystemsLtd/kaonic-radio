@@ -1,5 +1,4 @@
-use crate::grpc_client::{GrpcClient, ReceiveEvent, TxTarget};
-use crate::kaonic::{configuration_request::PhyConfig, QoSConfig, RadioModule, RadioPhyConfigOfdm, RadioPhyConfigQpsk};
+use crate::grpc_client::{GrpcClient, PhyConfig, QoSConfig, RadioModule, RadioPhyConfigOfdm, RadioPhyConfigQpsk, ReceiveEvent, TxTarget};
 use imgui::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -358,7 +357,7 @@ impl RadioGuiApp {
         ui.set_next_item_width(200.0);
         ui.input_text("##server", &mut state.server_addr).build();
         
-        let addr = format!("http://{}:8080", state.server_addr);
+        let addr = format!("{}:9090", state.server_addr);
         let ip_addr = state.server_addr.clone();
         let connected = state.connected;
         drop(state);

@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 
+[workspace]
+
 [features]
 default = []
-machine-kaonic1s = ["kaonic-net/machine-kaonic1s"]
-machine-host = ["kaonic-net/machine-host"]
 
 [dependencies]
 # GUI
@@ -20,11 +20,9 @@ winit = "0.29"
 glow = "0.13"
 raw-window-handle = "0.5"
 
-# gRPC and Protobuf
-tonic = "0.13.0"
-prost = "0.13.5"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
+# Async
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util = "0.7.15"
 
 # Utilities
 chrono = "0.4"
@@ -38,6 +36,9 @@ reqwest = { version = "0.11", features = ["blocking", "multipart", "json"] }
 serde_json = "1.0"
 
 # Local crates
+kaonic-ctrl = { path = "../kaonic-ctrl/" }
+kaonic-frame = { path = "../kaonic-frame/" }
+radio-common = { path = "../radio-common/" }
 kaonic-net = { path = "../kaonic-net/" }
 
 # File dialog
@@ -45,6 +46,3 @@ rfd = "0.12"
 
 # CLI parsing
 clap = { version = "4.5", features = ["derive"] }
-
-[build-dependencies]
-tonic-build = "0.13.0"
