@@ -21,11 +21,11 @@ jobs:
       - name: Build Host-Tools for macOS
         working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          echo 'exclude = ["kaonic-gui"]' >> Cargo.toml
           cd ./kaonic-iperf
           cargo build --release --target aarch64-apple-darwin --no-default-features --features machine-host
           cd ../kaonic-gui
-          cargo build --release --target aarch64-apple-darwin --no-default-features --features machine-host 
+          cargo build --release --target aarch64-apple-darwin 
 
       - name: Prepare macOS artifacts
         run: |
@@ -57,11 +57,11 @@ jobs:
       - name: Build Host-Tools for Linux
         working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          echo 'exclude = ["kaonic-gui"]' >> Cargo.toml
           cd ./kaonic-iperf
           cargo build --release --target x86_64-unknown-linux-gnu --no-default-features --features machine-host
           cd ../kaonic-gui
-          cargo build --release --target x86_64-unknown-linux-gnu --no-default-features --features machine-host
+          cargo build --release --target x86_64-unknown-linux-gnu
 
       - name: Prepare Linux artifacts
         run: |
@@ -94,11 +94,11 @@ jobs:
       - name: Build Host-Tools for Windows
         working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          echo 'exclude = ["kaonic-gui"]' >> Cargo.toml
           cd ./kaonic-iperf
           cargo build --release --target x86_64-pc-windows-gnu --no-default-features --features machine-host
           cd ../kaonic-gui
-          cargo build --release --target x86_64-pc-windows-gnu --no-default-features --features machine-host
+          cargo build --release --target x86_64-pc-windows-gnu
 
       - name: Prepare Windows artifacts
         run: |
