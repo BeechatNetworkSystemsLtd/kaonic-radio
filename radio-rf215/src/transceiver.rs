@@ -1,16 +1,17 @@
+use radio_common::{Hertz, Modulation, RadioChannel, RadioConfig};
+
 use crate::baseband::{Baseband, BasebandAutoMode, BasebandFrame};
 use crate::bus::Bus;
 use crate::error::RadioError;
-use crate::modulation::{self};
-use crate::radio::{
-    Band, Radio, RadioChannel, RadioFrequency, RadioFrequencyConfig, RadioState,
-    RadioTransreceiverConfig,
-};
+use crate::radio::{Band, Radio, RadioState, RadioTransreceiverConfig};
 use crate::regs::{
     self, BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask, RegisterAddress,
 };
 
+
+#[derive(Debug)]
 pub struct Band09;
+#[derive(Debug)]
 pub struct Band24;
 
 /// sub-GHz Band
@@ -20,9 +21,9 @@ impl Band for Band09 {
     const BASEBAND_FRAME_BUFFER_ADDRESS: RegisterAddress = regs::RG_BBC0_FRAME_BUFFER_ADDRESS;
     const RADIO_IRQ_ADDRESS: RegisterAddress = regs::RG_RF09_IRQS;
     const BASEBAND_IRQ_ADDRESS: RegisterAddress = regs::RG_BBC0_IRQS;
-    const MIN_FREQUENCY: RadioFrequency = 389_500_000;
-    const MAX_FREQUENCY: RadioFrequency = 1_020_000_000;
-    const FREQUENCY_OFFSET: RadioFrequency = 0;
+    const MIN_FREQUENCY: Hertz = Hertz::new(389_500_000);
+    const MAX_FREQUENCY: Hertz = Hertz::new(1_020_000_000);
+    const FREQUENCY_OFFSET: Hertz = Hertz(0);
     const MAX_CHANNEL: RadioChannel = 255;
 }
 
@@ -32,12 +33,13 @@ impl Band for Band24 {
     const BASEBAND_FRAME_BUFFER_ADDRESS: RegisterAddress = regs::RG_BBC1_FRAME_BUFFER_ADDRESS;
     const RADIO_IRQ_ADDRESS: RegisterAddress = regs::RG_RF24_IRQS;
     const BASEBAND_IRQ_ADDRESS: RegisterAddress = regs::RG_BBC1_IRQS;
-    const MIN_FREQUENCY: RadioFrequency = 2_400_000_000;
-    const MAX_FREQUENCY: RadioFrequency = 2_483_500_000;
-    const FREQUENCY_OFFSET: RadioFrequency = 1_500_000_000;
+    const MIN_FREQUENCY: Hertz = Hertz::new(2_400_000_000);
+    const MAX_FREQUENCY: Hertz = Hertz::new(2_483_500_000);
+    const FREQUENCY_OFFSET: Hertz = Hertz::new(1_500_000_000);
     const MAX_CHANNEL: RadioChannel = 511;
 }
 
+#[derive(Debug)]
 pub struct Transreceiver<B: Band, I: Bus + Clone> {
     radio: Radio<B, I>,
     baseband: Baseband<B, I>,
@@ -55,7 +57,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         trx
     }
 
-    pub fn set_frequency(&mut self, config: &RadioFrequencyConfig) -> Result<(), RadioError> {
+    pub fn set_frequency(&mut self, config: &RadioConfig) -> Result<(), RadioError> {
         self.radio
             .change_state(CHANGE_STATE_DURATION, RadioState::TrxOff)?;
 
@@ -66,7 +68,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         Ok(())
     }
 
-    pub const fn check_band(&self, freq: RadioFrequency) -> bool {
+    pub fn check_band(&self, freq: Hertz) -> bool {
         Radio::<B, I>::check_band(freq)
     }
 
@@ -215,7 +217,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
     pub fn configure(
         &mut self,
-        modulation: &modulation::Modulation,
+        modulation: &Modulation,
         trx_config: &RadioTransreceiverConfig,
     ) -> Result<(), RadioError> {
         self.radio

@@ -1,10 +1,14 @@
 use core::marker::PhantomData;
 
+use radio_common::{
+    modulation::{OfdmModulation, QpskModulation},
+    Modulation,
+};
+
 use crate::{
     bus::Bus,
     error::RadioError,
     frame::Frame,
-    modulation::{Modulation, OfdmModulation, QpskModulation},
     radio::Band,
     regs::{self, BasebandInterrupt, BasebandInterruptMask, RegisterAddress, RG_BBCX_FRAME_SIZE},
 };
@@ -40,6 +44,7 @@ impl Default for BasebandAutoMode {
     }
 }
 
+#[derive(Debug)]
 pub struct Baseband<B, I>
 where
     B: Band,

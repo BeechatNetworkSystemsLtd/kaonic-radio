@@ -101,6 +101,7 @@ pub trait Bus {
     fn hardware_reset(&mut self) -> Result<(), BusError>;
 }
 
+#[derive(Debug)]
 pub struct SpiBus<S, I, C, R>
 where
     S: SpiDevice,

@@ -3,55 +3,57 @@ use core::{
     ops::{Add, Div, Rem},
 };
 
-use kaonic_radio::error::KaonicError;
+use crate::{
+    error::NetworkError,
+    packet::{Packet, PacketFlag, PacketId},
+};
 
-use crate::packet::{Packet, PacketFlag, PacketId};
+/// Splits a payload into packet-sized segments.
+///
+/// Const generic parameters:
+/// - `S`: Frame payload size in bytes for each [`Packet`].
+/// - `R`: Maximum number of packet segments handled per demultiplex operation.
+/// - `P`: Maximum payload size in bytes per packet segment.
+#[derive(Debug)]
+pub struct Demuxer<const S: usize, const R: usize> {
+    total_size: usize,
+    segment_size: usize,
+}
 
-pub struct Demuxer<const S: usize, const R: usize, const P: usize> {}
-
-impl<const S: usize, const R: usize, const P: usize> Demuxer<S, R, P> {
-    pub const MAX_PACKET_PAYLOAD_SIZE: usize = P;
-    pub const MAX_PAYLOAD_SIZE: usize = P * R;
-
-    pub fn new() -> Self {
-        Self {}
+impl<const S: usize, const R: usize> Demuxer<S, R> {
+    pub fn new(segment_size: usize) -> Self {
+        Self {
+            segment_size,
+            total_size: segment_size * R,
+        }
     }
-
-    pub fn max_payload_size(&self) -> usize {
-        Self::MAX_PAYLOAD_SIZE
-    }
-
-    pub fn max_packet_payload_size(&self) -> usize {
-        Self::MAX_PACKET_PAYLOAD_SIZE
-    }
-
     pub fn demultiplex<'a>(
         &mut self,
         id: PacketId,
         payload_data: &[u8],
         packets: &'a mut [Packet<S>],
-    ) -> Result<&'a [Packet<S>], KaonicError> {
+    ) -> Result<&'a [Packet<S>], NetworkError> {
         // Check if payload can fit into overall demux process
         let total_len = payload_data.len();
-        if total_len > Self::MAX_PAYLOAD_SIZE {
-            return Err(KaonicError::PayloadTooBig);
+        if total_len > self.total_size {
+            return Err(NetworkError::PayloadTooBig);
         }
 
-        let segment_size = Self::MAX_PACKET_PAYLOAD_SIZE;
+        let segment_size = self.segment_size;
         if segment_size > (u16::max_value() as usize) {
-            return Err(KaonicError::PayloadTooBig);
+            return Err(NetworkError::PayloadTooBig);
         }
 
         let seq_count = div_round_up(total_len, segment_size);
         if seq_count > packets.len() {
-            return Err(KaonicError::PayloadTooBig);
+            return Err(NetworkError::PayloadTooBig);
         }
 
         let mut seq = 0;
         let mut offset = 0usize;
         while offset < total_len {
             if seq > packets.len() {
-                return Err(KaonicError::PayloadTooBig);
+                return Err(NetworkError::PayloadTooBig);
             }
 
             let chunk_len = if offset + segment_size < total_len {

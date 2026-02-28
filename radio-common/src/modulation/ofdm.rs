@@ -1,12 +1,7 @@
-pub enum Modulation {
-    Off,
-    Ofdm(OfdmModulation),
-    Qpsk(QpskModulation),
-    Fsk,
-}
+use serde::{Deserialize, Serialize};
 
 ///  Modulation and Coding Scheme
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum OfdmMcs {
     BpskC1_2_4x = 0x00, // BPSK, coding rate 1/2, 4 x frequency repetition
@@ -18,7 +13,7 @@ pub enum OfdmMcs {
     QamC3_4 = 0x06,     // 16-QAM, coding rate 3/4
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum OfdmBandwidthOption {
     Option1 = 0x00,
@@ -27,6 +22,7 @@ pub enum OfdmBandwidthOption {
     Option4 = 0x03,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct OfdmModulation {
     pub mcs: OfdmMcs,
     pub opt: OfdmBandwidthOption,
@@ -40,41 +36,6 @@ impl Default for OfdmModulation {
             mcs: OfdmMcs::QamC3_4,
             opt: OfdmBandwidthOption::Option1,
             pdt: 0x03,
-            tx_power: 10,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-#[repr(u8)]
-pub enum QpskChipFrequency {
-    Fchip100 = 0x00,
-    Fchip200 = 0x01,
-    Fchip1000 = 0x02,
-    Fchip2000 = 0x03,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-#[repr(u8)]
-pub enum QpskRateMode {
-    RateMode0 = 0x00,
-    RateMode1 = 0x01,
-    RateMode2 = 0x02,
-    RateMode3 = 0x03,
-    RateMode4 = 0x04,
-}
-
-pub struct QpskModulation {
-    pub fchip: QpskChipFrequency,
-    pub mode: QpskRateMode,
-    pub tx_power: u8,
-}
-
-impl Default for QpskModulation {
-    fn default() -> Self {
-        Self {
-            fchip: QpskChipFrequency::Fchip100,
-            mode: QpskRateMode::RateMode0,
             tx_power: 10,
         }
     }

@@ -3,26 +3,26 @@ use std::{
     time::Instant,
 };
 
+use kaonic_frame::frame::Frame;
+use radio_common::{
+    frequency::BandwidthFilter, modulation::OfdmModulation, Hertz, Modulation, RadioConfig,
+};
 use radio_rf215::{
     baseband::BasebandFrame,
     bus::{BusInterrupt, SpiBus},
-    radio::RadioFrequencyBuilder,
     Rf215,
 };
 
 use crate::{
     error::KaonicError,
-    frame::Frame,
-    modulation::{Modulation, OfdmModulation},
     platform::{
         kaonic1s::machine::create_radios,
         linux::{
             LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
         },
         linux_rf215::AtomicInterrupt,
-        platform_impl::rf215::map_modulation,
     },
-    radio::{BandwidthFilter, Hertz, Radio, RadioConfig, ReceiveResult, ScanResult},
+    radio::{Radio, ReceiveResult, ScanResult},
 };
 
 mod machine;
@@ -31,6 +31,7 @@ pub const FRAME_SIZE: usize = 2048usize;
 
 pub type Kaonic1SBus = SpiBus<LinuxSpi, AtomicInterrupt, LinuxClock, LinuxGpioReset>;
 
+#[derive(Debug)]
 pub struct Kaonic1SRadioFem {
     flt_v1: LinuxOutputPin,
     flt_v2: LinuxOutputPin,
@@ -112,6 +113,7 @@ impl Kaonic1SRadioFem {
 pub type Kaonic1SFrame = Frame<FRAME_SIZE>;
 pub type Kaonic1SRf215 = Rf215<SharedBus<Kaonic1SBus>>;
 
+#[derive(Debug)]
 pub struct Kaonic1SRadioEvent {
     counter: Arc<AtomicUsize>,
     irq: LinuxGpioInterrupt,
@@ -177,9 +179,7 @@ impl Radio for Kaonic1SRadio {
     fn set_modulation(&mut self, modulation: &Modulation) -> Result<(), KaonicError> {
         log::debug!("set modulation ({}) = {}", self.radio.name(), modulation);
 
-        let rf_modulation = map_modulation(modulation)?;
-
-        self.radio.configure(&rf_modulation)?;
+        self.radio.configure(modulation)?;
 
         self.modulation = *modulation;
 
@@ -191,13 +191,7 @@ impl Radio for Kaonic1SRadio {
 
         log::trace!("set radio config ({}) = {}", self.radio.name(), config);
 
-        self.radio.set_frequency(
-            &RadioFrequencyBuilder::new()
-                .freq(config.freq.as_hz() as u32)
-                .channel_spacing(config.channel_spacing.as_hz() as u32)
-                .channel(config.channel)
-                .build(),
-        )?;
+        self.radio.set_frequency(config)?;
 
         Ok(())
     }
@@ -221,7 +215,7 @@ impl Radio for Kaonic1SRadio {
                 .map_err(|_| KaonicError::HardwareError);
 
             if result.is_err() {
-                log::error!("tx [{}] error", self.radio.name());
+                log::error!("tx [{}] {} error", self.radio.name(), i);
                 std::thread::sleep(core::time::Duration::from_millis(4));
             } else {
                 log::trace!(

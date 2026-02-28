@@ -1,48 +1,53 @@
-use kaonic_radio::{
-    error::KaonicError,
-    frame::{Frame, FrameSegment},
-};
+use kaonic_frame::frame::{Frame, FrameSegment};
 use rand::{CryptoRng, RngCore};
 
 use crate::{
+    coder::PacketCoder,
     demuxer::Demuxer,
+    error::NetworkError,
     generator::Generator,
-    muxer::{CurrentTime, Muxer},
-    packet::{Packet, PacketCoder},
+    muxer::Muxer,
+    packet::{AssembledPacket, Packet},
+    NetworkTime,
 };
 
+/// Network packet processing pipeline.
+///
+/// Const generic parameters:
+/// - `S`: Frame payload size in bytes for each [`Frame`].
+/// - `R`: Maximum number of packet fragments/reassembly slots handled at once.
+/// - `Q`: Maximum number of packets tracked in the mux queue.
+
+#[derive(Debug)]
 pub struct Network<
     const S: usize,
     const R: usize,
     const Q: usize,
-    const P: usize,
     C: PacketCoder<S>,
 > {
-    demuxer: Demuxer<S, R, P>,
+    demuxer: Demuxer<S, R>,
     muxer: Muxer<S, R, Q>,
     packets: [Packet<S>; R],
-    input_frame: FrameSegment<S, R>,
     coder: C,
 }
 
-impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCoder<S>>
-    Network<S, R, Q, P, C>
+impl<const S: usize, const R: usize, const Q: usize, C: PacketCoder<S>>
+    Network<S, R, Q, C>
 {
     pub fn new(coder: C) -> Self {
         Self {
-            demuxer: Demuxer::new(),
+            demuxer: Demuxer::new(C::MAX_PAYLOAD_SIZE),
             muxer: Muxer::new(),
             packets: [Packet::new(); R],
-            input_frame: FrameSegment::new(),
             coder,
         }
     }
 
     pub fn receive(
         &mut self,
-        current_time: CurrentTime,
+        current_time: NetworkTime,
         frame: &Frame<S>,
-    ) -> Result<(), KaonicError> {
+    ) -> Result<(), NetworkError> {
         self.coder.decode(&frame, &mut self.packets[0])?;
 
         let _ = self.muxer.multiplex(current_time, &self.packets[0]);
@@ -50,25 +55,24 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
         Ok(())
     }
 
-    pub fn process<F>(&mut self, current_time: CurrentTime, receive_func: F)
-    where
-        F: FnOnce(&[u8]),
-    {
-        if let Ok(frame) = self.muxer.process(current_time, &mut self.input_frame) {
-            receive_func(frame.as_slice());
-        }
+    pub fn process<'a>(
+        &mut self,
+        current_time: NetworkTime,
+        rx_frame: &'a mut FrameSegment<S, R>,
+    ) -> Result<AssembledPacket<'a, S, R>, NetworkError> {
+        let packet = self.muxer.process(rx_frame);
+
+        self.muxer.release_expired(current_time);
+
+        packet
     }
 
-    pub fn transmit<'a, RNG: CryptoRng + RngCore + Copy, F>(
+    pub fn transmit<'a, RNG: CryptoRng + RngCore + Copy>(
         &mut self,
         data: &[u8],
         rng: RNG,
         output_frames: &'a mut [Frame<S>],
-        transmit_func: F,
-    ) -> Result<(), KaonicError>
-    where
-        F: FnOnce(&[&[u8]]) -> Result<(), KaonicError>,
-    {
+    ) -> Result<&'a [Frame<S>], NetworkError> {
         let packet_id = Generator::generate_packet_id(rng)?;
 
         let packets = self
@@ -76,19 +80,13 @@ impl<const S: usize, const R: usize, const Q: usize, const P: usize, C: PacketCo
             .demultiplex(packet_id, data, &mut self.packets[..])?;
 
         if output_frames.len() < packets.len() {
-            return Err(KaonicError::PayloadTooBig);
+            return Err(NetworkError::PayloadTooBig);
         }
-
-        let mut frames_data: [&[u8]; R] = [&[]; R];
 
         for i in 0..packets.len() {
             self.coder.encode(&packets[i], &mut output_frames[i])?;
         }
 
-        for i in 0..packets.len() {
-            frames_data[i] = output_frames[i].as_slice();
-        }
-
-        transmit_func(&frames_data[..packets.len()])
+        Ok(&output_frames[..packets.len()])
     }
 }

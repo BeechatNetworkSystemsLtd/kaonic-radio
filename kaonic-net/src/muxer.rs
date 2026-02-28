@@ -1,14 +1,17 @@
-use kaonic_radio::{error::KaonicError, frame::FrameSegment};
+use kaonic_frame::frame::FrameSegment;
 
-use crate::packet::{Packet, PacketFlag, PacketId};
-
-pub type CurrentTime = u128;
+use crate::{
+    error::NetworkError,
+    network_time_elapsed,
+    packet::{AssembledPacket, Packet, PacketFlag, PacketId},
+    NetworkTime,
+};
 
 #[derive(Copy, Clone, Debug)]
 pub struct PacketMuxer<const S: usize, const R: usize> {
     packets: [Packet<S>; R],
     count: usize,
-    last_update_time: CurrentTime,
+    last_update_time: NetworkTime,
 }
 
 impl<const S: usize, const R: usize> PacketMuxer<S, R> {
@@ -32,7 +35,7 @@ impl<const S: usize, const R: usize> PacketMuxer<S, R> {
         self.count == 0
     }
 
-    pub fn push(&mut self, current_time: CurrentTime, new_packet: &Packet<S>) -> bool {
+    pub fn push(&mut self, current_time: NetworkTime, new_packet: &Packet<S>) -> bool {
         // Packet collection is already full
         if self.count >= R {
             return false;
@@ -79,25 +82,36 @@ impl<const S: usize, const R: usize> PacketMuxer<S, R> {
 
     pub fn timeout_reached(
         &self,
-        current_time: CurrentTime,
+        current_time: NetworkTime,
         timeout: core::time::Duration,
     ) -> bool {
-        let timeout = current_time + timeout.as_millis();
-        current_time > timeout
+        network_time_elapsed(self.last_update_time, current_time, timeout)
     }
 
-    pub fn assemble(&self, frame: &mut FrameSegment<S, R>) -> Result<(), KaonicError> {
-        // No packets in the collection for assembly
+    pub fn can_assemble(&self) -> bool {
         if self.count == 0 {
-            return Err(KaonicError::TryAgain);
+            return false;
+        }
+
+        let header = self.packets[0].header();
+
+        if self.count < header.seq_count() {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn assemble<'a>(
+        &self,
+        frame: &'a mut FrameSegment<S, R>,
+    ) -> Result<AssembledPacket<'a, S, R>, NetworkError> {
+        if !self.can_assemble() {
+            return Err(NetworkError::TryAgain);
         }
 
         // Use first packet as common header
         let header = self.packets[0].header();
-
-        if self.count < header.seq_count() {
-            return Err(KaonicError::TryAgain);
-        }
 
         frame.clear();
 
@@ -118,17 +132,18 @@ impl<const S: usize, const R: usize> PacketMuxer<S, R> {
 
             // Sequance was not found in the collection
             if !seq_found {
-                return Err(KaonicError::InvalidState);
+                return Err(NetworkError::IncorrectSequence);
             }
 
             iter += 1;
         }
 
-        Ok(())
+        Ok(AssembledPacket::new(header.id(), frame))
     }
 }
 
 /// The muxer can handle up to 'Q' packets divided into 'R' segments of 'S' size
+#[derive(Debug)]
 pub struct Muxer<const S: usize, const R: usize, const Q: usize> {
     queue: [PacketMuxer<S, R>; Q],
     timeout: core::time::Duration,
@@ -144,11 +159,11 @@ impl<const S: usize, const R: usize, const Q: usize> Muxer<S, R, Q> {
 
     pub fn multiplex(
         &mut self,
-        current_time: CurrentTime,
+        current_time: NetworkTime,
         packet: &Packet<S>,
-    ) -> Result<(), KaonicError> {
+    ) -> Result<(), NetworkError> {
         if !packet.header().has_flag(PacketFlag::Segmented) {
-            return Err(KaonicError::NotSupported);
+            return Err(NetworkError::NotSupported);
         }
 
         let packet_id = packet.header().id();
@@ -162,6 +177,10 @@ impl<const S: usize, const R: usize, const Q: usize> Muxer<S, R, Q> {
         }
 
         for px in self.queue.iter_mut() {
+            if px.timeout_reached(current_time, self.timeout) {
+                px.release();
+            }
+
             if px.is_empty() {
                 if px.push(current_time, packet) {
                     return Ok(());
@@ -169,36 +188,32 @@ impl<const S: usize, const R: usize, const Q: usize> Muxer<S, R, Q> {
             }
         }
 
-        Err(KaonicError::TryAgain)
+        Err(NetworkError::TryAgain)
     }
 
     pub fn process<'a>(
         &mut self,
-        current_time: CurrentTime,
         frame: &'a mut FrameSegment<S, R>,
-    ) -> Result<&'a FrameSegment<S, R>, KaonicError> {
-        let mut result: Result<&'a FrameSegment<S, R>, KaonicError> = Err(KaonicError::TryAgain);
-
+    ) -> Result<AssembledPacket<'a, S, R>, NetworkError> {
         // Find one assembled packet
-        for px in self.queue.iter_mut() {
-            match px.assemble(frame) {
-                Ok(_) => {
-                    px.release();
-                    result = Ok(frame);
-                    break;
-                }
+        let px = self.queue.iter_mut().find(|px| px.can_assemble());
 
-                Err(_) => {}
+        if let Some(px) = px {
+            if let Ok(packet) = px.assemble(frame) {
+                px.release();
+                return Ok(packet);
             }
         }
 
+        return Err(NetworkError::TryAgain);
+    }
+
+    pub fn release_expired(&mut self, current_time: NetworkTime) {
         // Release all expired packets
         for px in self.queue.iter_mut() {
             if px.timeout_reached(current_time, self.timeout) {
                 px.release();
             }
         }
-
-        result
     }
 }

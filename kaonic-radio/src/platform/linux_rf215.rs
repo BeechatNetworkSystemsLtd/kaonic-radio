@@ -105,6 +105,7 @@ impl BusClock for LinuxClock {
     }
 }
 
+#[derive(Debug)]
 pub struct AtomicInterrupt {
     counter: Arc<AtomicUsize>,
     prev_count: usize,

@@ -8,6 +8,7 @@ rust-version = "1.75"
 memmap2 = "0.9.8"
 
 # Kaonic
+radio-common = { path="../radio-common/" }
 radio-rf215 = { path="../radio-rf215/" }
 kaonic-radio = { path="../kaonic-radio/" }
 

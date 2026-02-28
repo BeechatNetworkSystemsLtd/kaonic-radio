@@ -1,0 +1,114 @@
+use core::fmt;
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct Hertz(pub u64);
+
+impl Hertz {
+    pub const fn new(hz: u64) -> Self {
+        Hertz(hz)
+    }
+
+    pub const fn from_khz(khz: u64) -> Self {
+        Hertz(khz * 1_000)
+    }
+
+    pub const fn from_mhz(mhz: u64) -> Self {
+        Hertz(mhz * 1_000_000)
+    }
+
+    pub const fn as_hz(&self) -> u64 {
+        self.0
+    }
+
+    pub const fn as_khz(&self) -> u64 {
+        self.0 / 1_000
+    }
+
+    pub const fn as_mhz(&self) -> u64 {
+        self.0 / 1_000_000
+    }
+}
+
+impl fmt::Display for Hertz {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let khz = self.0 / 1000;
+        let mhz = khz / 1000;
+
+        let khz = khz - (mhz * 1000);
+
+        writeln!(f, "{}.{}kHz", mhz, khz)?;
+        Ok(())
+    }
+}
+
+pub type RadioChannel = u16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum BandwidthFilter {
+    Narrow = 0x00,
+    Wide = 0x01,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+pub struct RadioConfig {
+    pub freq: Hertz,
+    pub channel_spacing: Hertz,
+    pub channel: RadioChannel,
+    pub bandwidth_filter: BandwidthFilter,
+}
+
+pub struct RadioConfigBuilder {
+    config: RadioConfig,
+}
+
+impl RadioConfigBuilder {
+    pub const fn new() -> Self {
+        Self {
+            config: RadioConfig {
+                freq: Hertz::new(869_535_000),
+                channel_spacing: Hertz::new(200_000),
+                channel: 10,
+                bandwidth_filter: BandwidthFilter::Narrow,
+            },
+        }
+    }
+
+    pub fn freq(mut self, freq: Hertz) -> Self {
+        self.config.freq = freq;
+        self
+    }
+
+    pub fn channel(mut self, channel: RadioChannel) -> Self {
+        self.config.channel = channel;
+        self
+    }
+
+    pub fn channel_spacing(mut self, spacing: Hertz) -> Self {
+        self.config.channel_spacing = spacing;
+        self
+    }
+
+    pub fn bandwidth_filter(mut self, bandwidth_filter: BandwidthFilter) -> Self {
+        self.config.bandwidth_filter = bandwidth_filter;
+        self
+    }
+
+    pub fn build(self) -> RadioConfig {
+        self.config
+    }
+}
+
+impl fmt::Display for RadioConfig {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(
+            f,
+            "[freq:{} spacing:{} ch:{}]",
+            self.freq, self.channel_spacing, self.channel,
+        )?;
+
+        Ok(())
+    }
+}

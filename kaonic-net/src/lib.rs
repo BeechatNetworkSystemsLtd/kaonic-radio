@@ -1,21 +1,36 @@
+pub mod coder;
 pub mod demuxer;
+pub mod error;
 pub mod generator;
 pub mod muxer;
 pub mod network;
 pub mod packet;
+pub mod request;
+
+pub type NetworkTime = u128;
+
+pub fn network_time_elapsed(
+    start_time: NetworkTime,
+    current_time: NetworkTime,
+    duration: core::time::Duration,
+) -> bool {
+    let interval_time = start_time + duration.as_millis();
+    current_time > interval_time
+}
 
 #[cfg(test)]
 mod tests {
 
-    use kaonic_radio::frame::{Frame, FrameSegment};
+    use kaonic_frame::frame::{Frame, FrameSegment};
     use rand::rngs::OsRng;
 
     use crate::{
+        coder::{LdpcPacketCoder, PacketCoder},
         demuxer::Demuxer,
         generator::Generator,
         muxer::Muxer,
-        network::{Network, NetworkReceiver, NetworkTransmitter},
-        packet::{LdpcPacketCoder, Packet, PacketCoder},
+        network::Network,
+        packet::Packet,
     };
 
     const FRAME_SIZE: usize = 2048;
@@ -36,14 +51,7 @@ mod tests {
         type Coder = LdpcPacketCoder<FRAME_SIZE>;
         let mut coder = Coder::new();
 
-        let mut demuxer =
-            Demuxer::<FRAME_SIZE, MAX_SEGMENTS_COUNT, { Coder::MAX_PAYLOAD_SIZE }>::new();
-
-        println!(
-            "Demuxer:\n\r\tmax_payload_len:{}\n\r\tmax_packet_payload_size:{}\n\r",
-            demuxer.max_payload_size(),
-            demuxer.max_packet_payload_size()
-        );
+        let mut demuxer = Demuxer::<FRAME_SIZE, MAX_SEGMENTS_COUNT>::new(Coder::MAX_PAYLOAD_SIZE);
 
         let mut muxer = Muxer::<FRAME_SIZE, MAX_SEGMENTS_COUNT, 6>::new();
 

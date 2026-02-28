@@ -1,10 +1,8 @@
 use std::time::Duration;
 
 use kaonic_fpga::platform::Kaonic1SFpga;
-use kaonic_radio::{
-    platform::create_machine,
-    radio::{Hertz, Radio, RadioConfigBuilder},
-};
+use kaonic_radio::{platform::create_machine, radio::Radio};
+use radio_common::{Hertz, RadioConfigBuilder};
 
 const MAIN_FREQ: Hertz = Hertz::new(869_535_000);
 
