@@ -8,6 +8,7 @@ pub enum ControllerError {
     DecodeError,
     SocketError,
     Timeout,
+    MethodError,
 }
 
 impl From<NetworkError> for ControllerError {

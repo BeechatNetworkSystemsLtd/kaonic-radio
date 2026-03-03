@@ -1,7 +1,8 @@
+use radio_common::{modulation::OfdmModulation, Modulation, RadioConfig, RadioConfigBuilder};
+
 use crate::{
     error::KaonicError,
-    modulation::Modulation,
-    radio::{Radio, RadioConfig, ReceiveResult, ScanResult},
+    radio::{Radio, ReceiveResult, ScanResult},
 };
 
 pub struct DummyMachine;
@@ -37,12 +38,20 @@ impl Radio for DummyRadio {
         Ok(())
     }
 
-    fn configure(&mut self, _config: &RadioConfig) -> Result<(), KaonicError> {
+    fn set_config(&mut self, _config: &RadioConfig) -> Result<(), KaonicError> {
         Ok(())
+    }
+
+    fn get_config(&self) -> RadioConfig {
+        RadioConfigBuilder::new().build()
     }
 
     fn set_modulation(&mut self, _modulation: &Modulation) -> Result<(), KaonicError> {
         Ok(())
+    }
+
+    fn get_modulation(&self) -> Modulation {
+        Modulation::Ofdm(OfdmModulation::default())
     }
 
     fn transmit(&mut self, _frame: &Self::TxFrame) -> Result<(), KaonicError> {

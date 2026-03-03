@@ -6,6 +6,7 @@ use std::{
 use kaonic_frame::frame::Frame;
 use radio_common::{
     frequency::BandwidthFilter, modulation::OfdmModulation, Hertz, Modulation, RadioConfig,
+    RadioConfigBuilder,
 };
 use radio_rf215::{
     baseband::BasebandFrame,
@@ -142,6 +143,7 @@ pub struct Kaonic1SRadio {
     event: Arc<Mutex<Kaonic1SRadioEvent>>,
     bb_frame: BasebandFrame,
 
+    config: RadioConfig,
     modulation: Modulation,
 
     noise_dbm: i8,
@@ -158,6 +160,7 @@ impl Kaonic1SRadio {
             event: Arc::new(Mutex::new(event)),
             fem,
             bb_frame: BasebandFrame::new(),
+            config: RadioConfigBuilder::new().build(),
             modulation: Modulation::Ofdm(OfdmModulation::default()),
             noise_dbm: -127,
         }
@@ -186,14 +189,24 @@ impl Radio for Kaonic1SRadio {
         Ok(())
     }
 
-    fn configure(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
+    fn get_modulation(&self) -> Modulation {
+        self.modulation
+    }
+
+    fn set_config(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
         self.fem.adjust(config)?;
 
         log::trace!("set radio config ({}) = {}", self.radio.name(), config);
 
         self.radio.set_frequency(config)?;
 
+        self.config = *config;
+
         Ok(())
+    }
+
+    fn get_config(&self) -> RadioConfig {
+        self.config
     }
 
     fn update_event(&mut self) -> Result<(), KaonicError> {

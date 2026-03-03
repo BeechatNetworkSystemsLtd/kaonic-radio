@@ -182,9 +182,23 @@ impl ServerHandler<Message> for RadioServer {
                     let _ = self.radios[set.module]
                         .lock()
                         .unwrap()
-                        .configure(&set.config);
+                        .set_config(&set.config);
 
                     response.payload = Payload::SetRadioConfigResponse;
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
+            Payload::GetRadioConfigRequest(get) => {
+                if get.module < self.radios.len() {
+                    let config = self.radios[get.module].lock().unwrap().get_config();
+
+                    response.payload = Payload::GetRadioConfigResponse(
+                        kaonic_ctrl::protocol::GetRadioConfigResponse {
+                            module: get.module,
+                            config,
+                        },
+                    );
                 } else {
                     response.payload = Payload::Error;
                 }
@@ -197,6 +211,20 @@ impl ServerHandler<Message> for RadioServer {
                         .set_modulation(&set.modulation);
 
                     response.payload = Payload::SetModulationResponse;
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
+            Payload::GetModulationRequest(get) => {
+                if get.module < self.radios.len() {
+                    let modulation = self.radios[get.module].lock().unwrap().get_modulation();
+
+                    response.payload = Payload::GetModulationResponse(
+                        kaonic_ctrl::protocol::GetModulationResponse {
+                            module: get.module,
+                            modulation,
+                        },
+                    );
                 } else {
                     response.payload = Payload::Error;
                 }
