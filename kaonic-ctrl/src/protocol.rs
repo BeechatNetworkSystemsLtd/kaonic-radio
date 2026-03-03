@@ -69,6 +69,22 @@ pub struct GetInfoResponse {
     pub module_count: usize,
 }
 
+/// Per-module configuration (frequency, channel, modulation).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ModuleConfig {
+    pub config: RadioConfig,
+    pub modulation: Modulation,
+}
+
+/// Response for GetConfigRequest. Only modules[0..module_count] are valid.
+pub const MAX_MODULES: usize = 2;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GetConfigResponse {
+    pub module_count: u8,
+    pub modules: [ModuleConfig; MAX_MODULES],
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SetModulationRequest {
     pub module: usize,
@@ -97,6 +113,8 @@ pub enum Payload {
     SetModulationResponse,
     GetInfoRequest,
     GetInfoResponse(GetInfoResponse),
+    GetConfigRequest,
+    GetConfigResponse(GetConfigResponse),
     NotImplemented,
     Error,
 }

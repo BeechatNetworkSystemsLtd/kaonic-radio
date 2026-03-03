@@ -13,6 +13,7 @@ machine-host = ["kaonic-radio/machine-host"]
 [dependencies]
 
 # Kaonic
+radio-common = { path="../radio-common/" }
 radio-rf215 = { path="../radio-rf215/" }
 kaonic-radio = { path="../kaonic-radio/", default-features = false }
 kaonic-ctrl = { path="../kaonic-ctrl/", default-features = false }

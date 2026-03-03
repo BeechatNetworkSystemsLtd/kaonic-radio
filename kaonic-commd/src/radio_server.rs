@@ -1,9 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
-use kaonic_ctrl::{
-    protocol::{Message, MessageBuilder, Payload, RadioFrame, ReceiveModule},
-    server::{Server, ServerHandler},
-};
+use kaonic_ctrl::protocol::{GetConfigResponse, Message, MessageBuilder, ModuleConfig, Payload, RadioFrame, ReceiveModule, MAX_MODULES};
+use kaonic_ctrl::server::{Server, ServerHandler};
 use kaonic_radio::{
     error::KaonicError,
     platform::{
@@ -13,14 +11,31 @@ use kaonic_radio::{
     radio::Radio,
 };
 
+use radio_common::{modulation::OfdmModulation, Modulation, RadioConfigBuilder};
 use rand::rngs::OsRng;
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio_util::sync::CancellationToken;
 
 pub type SharedRadio = Arc<std::sync::Mutex<PlatformRadio>>;
 
+/// Boot defaults matching kaonic-radio machine configure_radio.
+fn default_module_config(index: usize) -> ModuleConfig {
+    ModuleConfig {
+        config: RadioConfigBuilder::new()
+            .freq(radio_common::Hertz::new(869_535_000))
+            .channel((index as u16 + 1) * 5)
+            .build(),
+        modulation: Modulation::Ofdm(OfdmModulation {
+            tx_power: 18,
+            ..Default::default()
+        }),
+    }
+}
+
 pub struct RadioServer {
     radios: Vec<SharedRadio>,
+    /// Cached config per module (updated on SetRadioConfig/SetModulation).
+    module_configs: [ModuleConfig; MAX_MODULES],
     cancel: CancellationToken,
 }
 
@@ -87,7 +102,13 @@ impl RadioServer {
             }));
         }
 
-        Ok(Self { radios, cancel })
+        let module_configs = [0, 1].map(|i| default_module_config(i));
+
+        Ok(Self {
+            radios,
+            module_configs,
+            cancel,
+        })
     }
 
     async fn manage_module_receive(
@@ -178,24 +199,24 @@ impl ServerHandler<Message> for RadioServer {
                 }
             }
             Payload::SetRadioConfigRequest(set) => {
-                if set.module < self.radios.len() {
+                if set.module < self.radios.len() && set.module < MAX_MODULES {
                     let _ = self.radios[set.module]
                         .lock()
                         .unwrap()
                         .configure(&set.config);
-
+                    self.module_configs[set.module].config = set.config;
                     response.payload = Payload::SetRadioConfigResponse;
                 } else {
                     response.payload = Payload::Error;
                 }
             }
             Payload::SetModulationRequest(set) => {
-                if set.module < self.radios.len() {
+                if set.module < self.radios.len() && set.module < MAX_MODULES {
                     let _ = self.radios[set.module]
                         .lock()
                         .unwrap()
                         .set_modulation(&set.modulation);
-
+                    self.module_configs[set.module].modulation = set.modulation;
                     response.payload = Payload::SetModulationResponse;
                 } else {
                     response.payload = Payload::Error;
@@ -204,6 +225,13 @@ impl ServerHandler<Message> for RadioServer {
             Payload::GetInfoRequest => {
                 response.payload = Payload::GetInfoResponse(kaonic_ctrl::protocol::GetInfoResponse {
                     module_count: self.radios.len(),
+                });
+            }
+            Payload::GetConfigRequest => {
+                let module_count = self.radios.len().min(MAX_MODULES) as u8;
+                response.payload = Payload::GetConfigResponse(GetConfigResponse {
+                    module_count,
+                    modules: self.module_configs,
                 });
             }
             Payload::Ping => {

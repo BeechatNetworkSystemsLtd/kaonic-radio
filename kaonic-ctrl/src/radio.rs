@@ -11,7 +11,7 @@ use crate::{
     protocol::{Message, MessageBuilder, Payload, RadioFrame, ReceiveModule, RADIO_FRAME_SIZE},
 };
 
-pub use crate::protocol::GetInfoResponse;
+pub use crate::protocol::{GetConfigResponse, GetInfoResponse};
 
 pub const DEFAULT_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(6);
 
@@ -149,6 +149,24 @@ impl RadioClient {
 
         match response.payload {
             Payload::GetInfoResponse(info) => Ok(info),
+            _ => Err(ControllerError::DecodeError),
+        }
+    }
+
+    pub async fn get_config(&mut self) -> Result<GetConfigResponse, ControllerError> {
+        let response = self
+            .client
+            .request(
+                MessageBuilder::new()
+                    .with_id(self.client.gen_id())
+                    .with_payload(Payload::GetConfigRequest)
+                    .build(),
+                DEFAULT_TIMEOUT,
+            )
+            .await?;
+
+        match response.payload {
+            Payload::GetConfigResponse(config) => Ok(config),
             _ => Err(ControllerError::DecodeError),
         }
     }
