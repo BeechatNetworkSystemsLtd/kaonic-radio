@@ -28,7 +28,7 @@ fn main() {
 
     log::debug!("Set Frequency to {} Hz", MAIN_FREQ);
     radio
-        .configure(&RadioConfigBuilder::new().freq(MAIN_FREQ).build())
+        .set_config(&RadioConfigBuilder::new().freq(MAIN_FREQ).build())
         .unwrap();
 
     let mut fpga = Kaonic1SFpga::new().unwrap();
