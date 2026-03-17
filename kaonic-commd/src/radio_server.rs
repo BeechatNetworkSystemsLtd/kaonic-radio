@@ -230,9 +230,10 @@ impl ServerHandler<Message> for RadioServer {
                 }
             }
             Payload::GetInfoRequest => {
-                response.payload = Payload::GetInfoResponse(kaonic_ctrl::protocol::GetInfoResponse {
-                    module_count: self.radios.len(),
-                });
+                response.payload =
+                    Payload::GetInfoResponse(kaonic_ctrl::protocol::GetInfoResponse {
+                        module_count: self.radios.len(),
+                    });
             }
             Payload::Ping => {
                 response.payload = Payload::Pong;

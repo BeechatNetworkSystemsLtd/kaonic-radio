@@ -236,8 +236,7 @@ impl RadioClient {
         self.cancel.cancel();
     }
 
-
-        async fn listen_rx(
+    async fn listen_rx(
         mut rx_recv: broadcast::Receiver<Box<Message>>,
         module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
         cancel: CancellationToken,
@@ -258,6 +257,4 @@ impl RadioClient {
             }
         }
     }
-
-
 }

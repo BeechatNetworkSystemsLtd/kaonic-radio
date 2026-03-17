@@ -127,31 +127,6 @@ pub enum Payload {
     Error,
 }
 
-impl Payload {
-    pub fn check_match(&self, payload: &Payload) -> bool {
-        match self {
-            Payload::Ping => matches!(payload, Payload::Pong),
-            Payload::Pong => matches!(payload, Payload::Ping),
-            Payload::TransmitModuleRequest(_) => matches!(payload, Payload::TransmitModuleResponse),
-            Payload::TransmitModuleResponse => matches!(payload, Payload::TransmitModuleRequest(_)),
-            Payload::ReceiveModule(_) => false,
-            Payload::ScanRequest => false,
-            Payload::SetRadioConfigRequest(_) => matches!(payload, Payload::SetRadioConfigResponse),
-            Payload::SetRadioConfigResponse => matches!(payload, Payload::SetRadioConfigRequest(_)),
-            Payload::GetRadioConfigRequest(_) => matches!(payload, Payload::GetRadioConfigResponse(_)),
-            Payload::GetRadioConfigResponse(_) => matches!(payload, Payload::GetRadioConfigRequest(_)),
-            Payload::SetModulationRequest(_) => matches!(payload, Payload::SetModulationResponse),
-            Payload::SetModulationResponse => matches!(payload, Payload::SetModulationRequest(_)),
-            Payload::GetModulationRequest(_) => matches!(payload, Payload::GetModulationResponse(_)),
-            Payload::GetModulationResponse(_) => matches!(payload, Payload::GetModulationRequest(_)),
-            Payload::GetInfoRequest => matches!(payload, Payload::GetInfoResponse(_)),
-            Payload::GetInfoResponse(_) => matches!(payload, Payload::GetInfoRequest),
-            Payload::NotImplemented => false,
-            Payload::Error => false,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Message {
     // should be equal to CTRL_PATTERN
