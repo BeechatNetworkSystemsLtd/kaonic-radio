@@ -76,8 +76,6 @@ impl RadioServer {
 
             radio_index += 1;
             radios.push(radio);
-
-            break;
         }
 
         {
