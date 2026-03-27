@@ -1,4 +1,3 @@
-
 syntax = "proto3";
 
 package kaonic;
@@ -10,16 +9,32 @@ message Empty {}
 service EmptyService {}
 
 //***************************************************************************//
+// Device
+//***************************************************************************//
 
-message InfoResponse {}
-
-message StatisticsResponse {}
-
-service Device {
-  rpc GetInfo(kaonic.Empty) returns (InfoResponse) {}
-  rpc GetStatistics(kaonic.Empty) returns (StatisticsResponse) {}
+message InfoResponse {
+  uint32 module_count = 1;
+  string serial       = 2; // device serial / machine-id
+  uint32 mtu          = 3; // max frame payload in bytes
+  string version      = 4; // kaonic-commd semver
 }
 
+message StatisticsResponse {
+  uint64 rx_packets = 1;
+  uint64 tx_packets = 2;
+  uint64 rx_bytes   = 3;
+  uint64 tx_bytes   = 4;
+  uint64 rx_errors  = 5;
+  uint64 tx_errors  = 6;
+}
+
+service Device {
+  rpc GetInfo(Empty) returns (InfoResponse) {}
+  rpc GetStatistics(ModuleRequest) returns (StatisticsResponse) {}
+}
+
+//***************************************************************************//
+// Shared
 //***************************************************************************//
 
 enum RadioModule {
@@ -28,130 +43,148 @@ enum RadioModule {
 }
 
 message RadioFrame {
-  repeated uint32 data = 1;
-  uint32 length = 2;
+  bytes data = 1;
 }
 
-message RadioPhyConfigOFDM {
-  uint32 mcs = 1;
-  uint32 opt = 2;
+message ModuleRequest {
+  RadioModule module = 1;
 }
 
-message RadioPhyConfigQPSK {
-  uint32 chip_freq = 1;
-  uint32 rate_mode = 2;
-}
-
-message RadioPhyConfigFSK {
-  uint32 bt = 1;
-  uint32 midxs = 2;
-  uint32 midx = 3;
-  uint32 mord = 4;
-  uint32 preamble_length = 5;
-  bool freq_inversion = 6;
-  uint32 srate = 7;
-  uint32 pdtm = 8;
-  uint32 rxo = 9;
-  uint32 rxpto = 10;
-  uint32 mse = 11;
-  bool preamble_inversion = 12;
-  uint32 fecs = 13;
-  bool fecie = 14;
-  uint32 sfdt = 15;
-  uint32 pdt = 16;
-  bool sftq = 17;
-  uint32 sfd32 = 18;
-  bool rawbit = 19;
-  uint32 csfd1 = 20;
-  uint32 csfd0 = 21;
-  uint32 sfd0 = 22;
-  uint32 sfd1 = 23;
-  uint32 sfd = 24;
-  uint32 dw = 25;
-  bool pe = 26;
-  bool en = 27;
-  uint32 fskpe0 = 28;
-  uint32 fskpe1 = 29;
-  uint32 fskpe2 = 30;
-}
-
-message QoSConfig {
-  bool enabled = 1;
-  bool adaptive_modulation = 2;
-  bool adaptive_tx_power = 3;
-  bool adaptive_backoff = 4;
-  int32 cca_threshold = 5; // Clear Channel Assessment threshold in dBm
-}
+//***************************************************************************//
+// Radio config (frequency layer)
+//***************************************************************************//
 
 enum BandwidthFilter {
   BANDWIDTH_FILTER_NARROW = 0;
-  BANDWIDTH_FILTER_WIDE = 1;
+  BANDWIDTH_FILTER_WIDE   = 1;
 }
 
-message ConfigurationRequest {
+message RadioConfig {
+  RadioModule     module           = 1;
+  uint64          freq             = 2; // Hz
+  uint64          channel_spacing  = 3; // Hz
+  uint32          channel          = 4;
+  BandwidthFilter bandwidth_filter = 5;
+}
+
+//***************************************************************************//
+// Modulation
+//***************************************************************************//
+
+message RadioModulationOfdm {
+  uint32 mcs      = 1;
+  uint32 opt      = 2;
+  uint32 pdt      = 3; // preamble detection threshold
+  uint32 tx_power = 4;
+}
+
+message RadioModulationQpsk {
+  uint32 chip_freq  = 1;
+  uint32 rate_mode  = 2;
+  uint32 tx_power   = 3;
+}
+
+message RadioModulationFsk {
+  uint32 bt                 = 1;
+  uint32 midxs              = 2;
+  uint32 midx               = 3;
+  uint32 mord               = 4;
+  uint32 preamble_length    = 5;
+  bool   freq_inversion     = 6;
+  uint32 srate              = 7;
+  uint32 pdtm               = 8;
+  uint32 rxo                = 9;
+  uint32 rxpto              = 10;
+  uint32 mse                = 11;
+  bool   preamble_inversion = 12;
+  uint32 fecs               = 13;
+  bool   fecie              = 14;
+  uint32 sfdt               = 15;
+  uint32 pdt                = 16;
+  bool   sftq               = 17;
+  uint32 sfd32              = 18;
+  bool   rawbit             = 19;
+  uint32 csfd1              = 20;
+  uint32 csfd0              = 21;
+  uint32 sfd0               = 22;
+  uint32 sfd1               = 23;
+  uint32 sfd                = 24;
+  uint32 dw                 = 25;
+  bool   pe                 = 26;
+  bool   en                 = 27;
+  uint32 fskpe0             = 28;
+  uint32 fskpe1             = 29;
+  uint32 fskpe2             = 30;
+}
+
+// `module` identifies which radio this modulation applies to.
+// If no oneof variant is set → Off (radio disabled).
+message RadioModulation {
   RadioModule module = 1;
-
-  uint32 freq = 2;
-  uint32 channel = 3;
-  uint32 channel_spacing = 4;
-  uint32 tx_power = 5;
-
-  oneof phy_config {
-    RadioPhyConfigOFDM ofdm = 8;
-    RadioPhyConfigFSK fsk = 9;
-    RadioPhyConfigQPSK qpsk = 10;
+  oneof modulation {
+    RadioModulationOfdm ofdm = 2;
+    RadioModulationQpsk qpsk = 3;
+    RadioModulationFsk  fsk  = 4;
   }
-
-  QoSConfig qos = 11;
-  BandwidthFilter bandwidth_filter = 12;
 }
+
+//***************************************************************************//
+// Radio service
+//***************************************************************************//
 
 message TransmitRequest {
   RadioModule module = 1;
-  RadioFrame frame = 2;
+  RadioFrame  frame  = 2;
 }
 
-message TransmitResponse { uint32 latency = 1; }
+message TransmitResponse {
+  uint32 latency = 1;
+}
 
 message ReceiveRequest {
-  RadioModule module = 1;
-  uint32 timeout = 2;
+  RadioModule module  = 1;
+  uint32      timeout = 2;
 }
 
 message ReceiveResponse {
-  RadioModule module = 1;
-  RadioFrame frame = 2;
-  int32 rssi = 3;
-  uint32 latency = 4;
+  RadioModule module  = 1;
+  RadioFrame  frame   = 2;
+  int32       rssi    = 3;
+  uint32      latency = 4;
 }
 
 service Radio {
-  rpc Configure(ConfigurationRequest) returns (kaonic.Empty) {}
-  rpc Transmit(TransmitRequest) returns (TransmitResponse) {}
-  rpc ReceiveStream(ReceiveRequest) returns (stream ReceiveResponse) {}
+  rpc GetConfig     (ModuleRequest)   returns (RadioConfig)    {}
+  rpc SetConfig     (RadioConfig)     returns (Empty)          {}
+  rpc GetModulation (ModuleRequest)   returns (RadioModulation){}
+  rpc SetModulation (RadioModulation) returns (Empty)          {}
+  rpc Transmit      (TransmitRequest) returns (TransmitResponse) {}
+  rpc ReceiveStream (ReceiveRequest)  returns (stream ReceiveResponse) {}
 }
 
+//***************************************************************************//
+// Network service
 //***************************************************************************//
 
 message NetworkTransmitRequest {
   RadioFrame frame = 1;
 }
 
-message NetworkTransmitResponse { uint32 latency = 1; }
+message NetworkTransmitResponse {
+  uint32 latency = 1;
+}
 
 message NetworkReceiveRequest {}
 
 message NetworkReceiveResponse {
-  RadioFrame frame = 1;
-  int32 rssi = 2;
-  uint32 latency = 3;
+  RadioFrame frame   = 1;
+  int32      rssi    = 2;
+  uint32     latency = 3;
 }
 
 service Network {
-  rpc Transmit(NetworkTransmitRequest) returns (NetworkTransmitResponse) {}
-  rpc ReceiveStream(NetworkReceiveRequest) returns (stream NetworkReceiveResponse) {}
+  rpc Transmit     (NetworkTransmitRequest) returns (NetworkTransmitResponse) {}
+  rpc ReceiveStream(NetworkReceiveRequest)  returns (stream NetworkReceiveResponse) {}
 }
 
 //***************************************************************************//
-
-

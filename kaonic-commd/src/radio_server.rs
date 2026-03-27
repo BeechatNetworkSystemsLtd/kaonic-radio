@@ -1,33 +1,56 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
+};
 
 use kaonic_ctrl::{
-    protocol::{Message, MessageBuilder, Payload, RadioFrame, ReceiveModule},
-    server::{Server, ServerHandler},
+    protocol::{
+        GetStatisticsResponse, Message, MessageBuilder, Payload, RadioFrame, ReceiveModule,
+    },
+    server::ServerHandler,
 };
 use kaonic_radio::{
     error::KaonicError,
-    platform::{
-        create_machine, kaonic1s::Kaonic1SRadioEvent, PlatformRadio, PlatformRadioEvent,
-        PlatformRadioFrame,
-    },
+    platform::{PlatformRadio, PlatformRadioEvent, PlatformRadioFrame, create_machine},
     radio::Radio,
 };
 
 use rand::rngs::OsRng;
-use tokio::sync::{broadcast, mpsc, watch, Mutex};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 pub type SharedRadio = Arc<std::sync::Mutex<PlatformRadio>>;
 
+#[derive(Default)]
+pub struct ModuleStats {
+    pub rx_packets: AtomicU64,
+    pub tx_packets: AtomicU64,
+    pub rx_bytes:   AtomicU64,
+    pub tx_bytes:   AtomicU64,
+    pub rx_errors:  AtomicU64,
+    pub tx_errors:  AtomicU64,
+}
+
+pub type SharedModuleStats = Arc<ModuleStats>;
+
 pub struct RadioServer {
     radios: Vec<SharedRadio>,
+    stats:  Vec<SharedModuleStats>,
+    module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
     cancel: CancellationToken,
+    serial: String,
+    mtu: usize,
 }
 
 impl RadioServer {
     pub fn new(
         client_send: mpsc::Sender<Box<Message>>,
         cancel: CancellationToken,
+        serial: String,
+        mtu: usize,
     ) -> Result<Self, KaonicError> {
         let mut machine = create_machine()?;
 
@@ -35,6 +58,7 @@ impl RadioServer {
 
         let mut radio_index = 0;
         let mut radios = Vec::new();
+        let mut stats: Vec<SharedModuleStats> = Vec::new();
         loop {
             let radio = machine.take_radio(radio_index);
             if radio.is_none() {
@@ -49,6 +73,7 @@ impl RadioServer {
             let event = radio.event();
 
             let radio = Arc::new(std::sync::Mutex::new(radio));
+            let module_stats: SharedModuleStats = Arc::new(ModuleStats::default());
 
             std::thread::Builder::new()
                 .name(format!("kaonic-radio-event-{}", radio_index))
@@ -61,6 +86,7 @@ impl RadioServer {
                 let cancel = cancel.clone();
                 let module_rx_send = module_rx_send.clone();
                 let radio = radio.clone();
+                let module_stats = module_stats.clone();
 
                 tokio::spawn(Box::pin(async move {
                     Self::manage_radio(
@@ -69,6 +95,7 @@ impl RadioServer {
                         module_rx_send,
                         event_recv,
                         cancel,
+                        module_stats,
                     )
                     .await;
                 }));
@@ -76,6 +103,7 @@ impl RadioServer {
 
             radio_index += 1;
             radios.push(radio);
+            stats.push(module_stats);
         }
 
         {
@@ -85,7 +113,39 @@ impl RadioServer {
             }));
         }
 
-        Ok(Self { radios, cancel })
+        Ok(Self {
+            radios,
+            stats,
+            module_rx_send,
+            cancel,
+            serial,
+            mtu,
+        })
+    }
+
+    /// Returns clones of the shared radio handles.
+    pub fn radios(&self) -> Vec<SharedRadio> {
+        self.radios.clone()
+    }
+
+    /// Returns the number of available radio modules.
+    pub fn module_count(&self) -> usize {
+        self.radios.len()
+    }
+
+    /// Returns clones of the per-module statistics handles.
+    pub fn stats(&self) -> Vec<SharedModuleStats> {
+        self.stats.clone()
+    }
+
+    /// Subscribes to the broadcast channel of received radio frames.
+    pub fn subscribe_rx(&self) -> broadcast::Receiver<Box<ReceiveModule>> {
+        self.module_rx_send.subscribe()
+    }
+
+    /// Returns a clone of the broadcast sender for received radio frames.
+    pub fn rx_sender(&self) -> broadcast::Sender<Box<ReceiveModule>> {
+        self.module_rx_send.clone()
     }
 
     async fn manage_module_receive(
@@ -117,6 +177,7 @@ impl RadioServer {
         module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
         mut event_recv: watch::Receiver<bool>,
         cancel: CancellationToken,
+        stats: SharedModuleStats,
     ) {
         let mut rx_frame = PlatformRadioFrame::new();
 
@@ -133,15 +194,22 @@ impl RadioServer {
                     match radio.lock().unwrap()
                         .receive(rx_frame.clear(), core::time::Duration::from_millis(2))
                     {
-                        Ok(_rr) => {
+                        Ok(rr) => {
+                            let frame_len = rx_frame.len() as u64;
+                            stats.rx_packets.fetch_add(1, Ordering::Relaxed);
+                            stats.rx_bytes.fetch_add(frame_len, Ordering::Relaxed);
+
                             receive_module.module = module.into();
                             receive_module.frame = RadioFrame::new_from_frame(&rx_frame);
+                            receive_module.rssi = rr.rssi;
 
                             if let Err(_) = module_rx_send.send(receive_module) {
                                 log::error!("can't send module-rx event");
                             }
                         }
-                        Err(_) => {}
+                        Err(_) => {
+                            stats.rx_errors.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 },
 
@@ -161,16 +229,24 @@ impl ServerHandler<Message> for RadioServer {
     ) -> Option<Box<Message>> {
         let start_time = Instant::now();
 
-        *response.as_mut() = *request;
+        *response.as_mut() = request.clone();
 
         match request.payload {
             Payload::TransmitModuleRequest(tx) => {
                 if tx.module < self.radios.len() {
                     let mut radio = self.radios[tx.module].lock().unwrap();
+                    let frame_len = tx.frame.as_slice().len() as u64;
 
-                    radio.transmit(&PlatformRadioFrame::new_from_slice(tx.frame.as_slice()));
-
-                    response.payload = Payload::TransmitModuleResponse;
+                    if let Ok(_) =
+                        radio.transmit(&PlatformRadioFrame::new_from_slice(tx.frame.as_slice()))
+                    {
+                        self.stats[tx.module].tx_packets.fetch_add(1, Ordering::Relaxed);
+                        self.stats[tx.module].tx_bytes.fetch_add(frame_len, Ordering::Relaxed);
+                        response.payload = Payload::TransmitModuleResponse;
+                    } else {
+                        self.stats[tx.module].tx_errors.fetch_add(1, Ordering::Relaxed);
+                        response.payload = Payload::Error;
+                    }
                 } else {
                     response.payload = Payload::Error;
                 }
@@ -231,7 +307,27 @@ impl ServerHandler<Message> for RadioServer {
                 response.payload =
                     Payload::GetInfoResponse(kaonic_ctrl::protocol::GetInfoResponse {
                         module_count: self.radios.len(),
+                        serial: self.serial.clone(),
+                        mtu: self.mtu,
+                        version: env!("CARGO_PKG_VERSION").to_string(),
                     });
+            }
+            Payload::GetStatisticsRequest(req) => {
+                if req.module < self.stats.len() {
+                    let s = &self.stats[req.module];
+                    response.payload =
+                        Payload::GetStatisticsResponse(GetStatisticsResponse {
+                            module:     req.module,
+                            rx_packets: s.rx_packets.load(Ordering::Relaxed),
+                            tx_packets: s.tx_packets.load(Ordering::Relaxed),
+                            rx_bytes:   s.rx_bytes.load(Ordering::Relaxed),
+                            tx_bytes:   s.tx_bytes.load(Ordering::Relaxed),
+                            rx_errors:  s.rx_errors.load(Ordering::Relaxed),
+                            tx_errors:  s.tx_errors.load(Ordering::Relaxed),
+                        });
+                } else {
+                    response.payload = Payload::Error;
+                }
             }
             Payload::Ping => {
                 response.payload = Payload::Pong;

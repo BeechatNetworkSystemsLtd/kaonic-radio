@@ -15,6 +15,7 @@ machine-host = ["kaonic-radio/machine-host"]
 radio-rf215 = { path="../radio-rf215/" }
 kaonic-radio = { path="../kaonic-radio/", default-features = false }
 kaonic-ctrl = { path="../kaonic-ctrl/", default-features = false }
+radio-common = { path="../radio-common/" }
 
 rand = { version = "=0.8.5" }
 
