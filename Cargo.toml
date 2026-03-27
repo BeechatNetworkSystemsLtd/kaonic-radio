@@ -3,6 +3,7 @@ resolver = "2"
 members = [ 
     # Applications
     "kaonic-commd",
+    "kaonic-commd-cli",
     "kaonic-factory",
     "kaonic-iperf",
 
