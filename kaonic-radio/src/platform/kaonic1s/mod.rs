@@ -256,7 +256,7 @@ impl Radio for Kaonic1SRadio {
 
         let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
 
-        let edv = 0; //self.radio.read_edv().unwrap_or(127);
+        let edv = self.radio.read_edv().unwrap_or(127);
 
         let _ = self.radio.start_receive();
 
