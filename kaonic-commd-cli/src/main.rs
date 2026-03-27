@@ -23,7 +23,7 @@ use grpc::GrpcEvent;
 #[command(name = "kaonic-commd-cli", about = "TUI for kaonic-commd gRPC interface")]
 struct Args {
     /// gRPC server address
-    #[arg(default_value = "http://127.0.0.1:50051")]
+    #[arg(default_value = "http://192.168.10.1:50051")]
     server: String,
 }
 
@@ -83,7 +83,7 @@ async fn run(
             }
 
             _ = tick.tick() => {
-                // Force redraw on tick (cursor blink, live clock, etc.)
+                app.tick = app.tick.wrapping_add(1);
             }
         }
 

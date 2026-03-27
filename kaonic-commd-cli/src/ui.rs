@@ -19,17 +19,19 @@ const EDIT_FG: Color = Color::Yellow;
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    // Root layout: header / body / footer
+    // Root layout: header / body / footer / branding
     let root = Layout::vertical([
         Constraint::Length(4), // header (2 content lines + 2 borders)
         Constraint::Min(0),    // body
         Constraint::Length(3), // footer
+        Constraint::Length(1), // branding bar
     ])
     .split(area);
 
     draw_header(frame, app, root[0]);
     draw_body(frame, app, root[1]);
     draw_footer(frame, app, root[2]);
+    draw_branding(frame, root[3]);
 
     // Compose popup drawn last so it appears on top
     if app.compose_text.is_some() {
@@ -37,9 +39,38 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 }
 
+// ─── Branding bar ────────────────────────────────────────────────────────────
+
+fn draw_branding(frame: &mut Frame, area: Rect) {
+    let line = Paragraph::new(Line::from(vec![
+        Span::styled("Powered by ", Style::default().fg(DIM)),
+        Span::styled("Beechat Network", Style::default().fg(ACCENT).bold()),
+        Span::styled("  ·  ", Style::default().fg(DIM)),
+        Span::styled("beechat.network", Style::default().fg(DIM).add_modifier(Modifier::UNDERLINED)),
+    ]))
+    .alignment(Alignment::Center);
+    frame.render_widget(line, area);
+}
+
 // ─── Header ─────────────────────────────────────────────────────────────────
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM));
+
+    let inner = outer_block.inner(area);
+    frame.render_widget(outer_block, area);
+
+    // Split inner area: left (status + info) | right (animation)
+    let cols = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(14),
+    ])
+    .split(inner);
+
+    // ── Left: status + device info ────────────────────────────────────────
     let (status_text, status_style) = if app.connected {
         (
             format!("● Connected  {}", app.server_addr),
@@ -52,11 +83,11 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    let serial_str = if app.serial.is_empty() { "–".to_string() } else { app.serial.clone() };
+    let serial_str  = if app.serial.is_empty()  { "–".to_string() } else { app.serial.clone() };
     let version_str = if app.version.is_empty() { "–".to_string() } else { app.version.clone() };
-    let mtu_str = if app.mtu == 0 { "–".to_string() } else { app.mtu.to_string() };
+    let mtu_str     = if app.mtu == 0           { "–".to_string() } else { app.mtu.to_string() };
 
-    let title = Paragraph::new(Text::from(vec![
+    let left = Paragraph::new(Text::from(vec![
         Line::from(vec![
             Span::styled("kaonic-commd-cli  ", Style::default().fg(ACCENT).bold()),
             Span::styled(status_text, status_style),
@@ -69,15 +100,40 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled("   MTU: ", Style::default().fg(DIM)),
             Span::styled(mtu_str, Style::default().fg(Color::White)),
         ]),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM)),
-    );
+    ]));
+    frame.render_widget(left, cols[0]);
 
-    frame.render_widget(title, area);
+    // ── Right: radio scan animation ────────────────────────────────────────
+    let (bars, spinner) = radio_anim(app.tick);
+    let anim_color = if app.connected { ACCENT } else { DIM };
+
+    let right = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(bars,    Style::default().fg(anim_color))),
+        Line::from(vec![
+            Span::styled(spinner, Style::default().fg(anim_color).bold()),
+            Span::styled(" RF SCAN", Style::default().fg(DIM)),
+        ]),
+    ]))
+    .alignment(Alignment::Center);
+    frame.render_widget(right, cols[1]);
+}
+
+/// Returns `(spectrum_bars, spinner_char)` for the current tick.
+fn radio_anim(tick: u64) -> (String, &'static str) {
+    const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    const SPINNERS: [&str; 8] = ["◐", "◓", "◑", "◒", "◐", "◓", "◑", "◒"];
+
+    let phase = (tick % 16) as f64 * std::f64::consts::TAU / 16.0;
+    let bars: String = (0..10)
+        .map(|i| {
+            let wave = (i as f64 / 10.0 * std::f64::consts::TAU + phase).sin();
+            let level = ((wave + 1.0) / 2.0 * 7.0).round() as usize;
+            LEVELS[level.min(7)]
+        })
+        .collect();
+
+    let spinner = SPINNERS[(tick / 2 % 8) as usize];
+    (bars, spinner)
 }
 
 // ─── Body: left config panel + right RX log ─────────────────────────────────

@@ -282,6 +282,9 @@ pub struct App {
     pub compose_text: Option<String>,
 
     pub should_quit: bool,
+
+    // Animation tick (bumped on every 100ms timer tick)
+    pub tick: u64,
 }
 
 impl App {
@@ -313,6 +316,7 @@ impl App {
             tx_count: 0,
             compose_text: None,
             should_quit: false,
+            tick: 0,
         }
     }
 
