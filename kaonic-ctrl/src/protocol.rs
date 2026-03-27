@@ -53,6 +53,7 @@ pub struct TransmitModule {
 pub struct ReceiveModule {
     pub module: usize,
     pub frame: RadioFrame,
+    pub rssi: i8,
 }
 
 impl ReceiveModule {
@@ -60,13 +61,33 @@ impl ReceiveModule {
         Self {
             module: 0,
             frame: RadioFrame::new(),
+            rssi: 0,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetInfoResponse {
     pub module_count: usize,
+    pub serial: String,
+    pub mtu: usize,
+    pub version: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GetStatisticsRequest {
+    pub module: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct GetStatisticsResponse {
+    pub module: usize,
+    pub rx_packets: u64,
+    pub tx_packets: u64,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_errors: u64,
+    pub tx_errors: u64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -105,7 +126,7 @@ pub struct GetRadioConfigResponse {
 
 //***********************************************************************************************//
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Payload {
     Ping,
     Pong,
@@ -123,11 +144,13 @@ pub enum Payload {
     GetModulationResponse(GetModulationResponse),
     GetInfoRequest,
     GetInfoResponse(GetInfoResponse),
+    GetStatisticsRequest(GetStatisticsRequest),
+    GetStatisticsResponse(GetStatisticsResponse),
     NotImplemented,
     Error,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     // should be equal to CTRL_PATTERN
     pub pattern: u16,
