@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{collections::HashSet, net::SocketAddr, time::Instant};
+use std::{collections::HashMap, net::SocketAddr, time::{Duration, Instant}};
 
 use kaonic_frame::frame::{Frame, FrameSegment};
 use kaonic_net::{packet::AssembledPacket, request::Responder};
@@ -161,7 +161,11 @@ impl<
 
         let local_addr = self.socket.local_addr()?;
 
-        let mut clients = HashSet::new();
+        // addr -> last packet received time
+        let mut clients: HashMap<SocketAddr, Instant> = HashMap::new();
+        let mut cleanup_tick = tokio::time::interval(Duration::from_secs(30));
+        cleanup_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        const CLIENT_TIMEOUT: Duration = Duration::from_secs(120);
 
         loop {
             if !running {
@@ -178,7 +182,7 @@ impl<
                         Ok((len, addr)) => {
                             if addr != local_addr && (self.filter_rx_addr.is_some_and(|a| a == addr) || self.filter_rx_addr.is_none()) {
 
-                                clients.insert(addr);
+                                clients.insert(addr, Instant::now());
                                 recv_frame.resize(len);
 
                                 if let Ok(packet) = self.network.receive(&recv_frame, &mut self.rx_frame) {
@@ -215,7 +219,7 @@ impl<
                                             log::error!("socket send error");
                                         }
                                     } else {
-                                        for addr in clients.iter().into_iter() {
+                                        for addr in clients.keys() {
 
                                             if let Err(_) = self.socket.send_to(segment.as_slice(), &addr).await {
                                                 log::error!("socket broadcast send error");
@@ -233,6 +237,16 @@ impl<
                         Err(_) => {
                             log::error!("can't serialize message");
                         }
+                    }
+                },
+
+                // Periodic client cleanup
+                _ = cleanup_tick.tick() => {
+                    let before = clients.len();
+                    clients.retain(|_, last_seen| last_seen.elapsed() < CLIENT_TIMEOUT);
+                    let removed = before - clients.len();
+                    if removed > 0 {
+                        log::info!("removed {} stale client(s), {} active", removed, clients.len());
                     }
                 },
 
