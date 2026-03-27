@@ -207,8 +207,10 @@ impl RadioServer {
                                 log::error!("can't send module-rx event");
                             }
                         }
-                        Err(_) => {
-                            stats.rx_errors.fetch_add(1, Ordering::Relaxed);
+                        Err(e) => {
+                            if e != KaonicError::Timeout {
+                                stats.rx_errors.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     }
                 },

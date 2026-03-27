@@ -1,4 +1,7 @@
-use kaonic_ctrl::{protocol::{MessageCoder, RADIO_FRAME_SIZE}, server::Server};
+use kaonic_ctrl::{
+    protocol::{MessageCoder, RADIO_FRAME_SIZE},
+    server::Server,
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -31,8 +34,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (client_send, client_recv) = mpsc::channel(16);
 
     let serial = read_serial();
-    let radio_server = RadioServer::new(client_send, cancel.clone(), serial.clone(), RADIO_FRAME_SIZE)
-        .expect("radio server");
+    let radio_server = RadioServer::new(
+        client_send,
+        cancel.clone(),
+        serial.clone(),
+        RADIO_FRAME_SIZE,
+    )
+    .expect("radio server");
 
     // Capture shared state before the UDP server takes ownership of radio_server
     let module_count = radio_server.module_count();
@@ -52,7 +60,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .expect("UDP server");
 
     // Start gRPC server sharing the same radio hardware
-    let device_service = DeviceService::new(module_count, serial, RADIO_FRAME_SIZE as u32, shared_stats);
+    let device_service =
+        DeviceService::new(module_count, serial, RADIO_FRAME_SIZE as u32, shared_stats);
     let radio_service = RadioService::new(shared_radios, rx_sender);
 
     {
@@ -76,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // SIGTERM (Unix only)
         #[cfg(unix)]
         let terminate = async {
-            use tokio::signal::unix::{signal, SignalKind};
+            use tokio::signal::unix::{SignalKind, signal};
             let mut sigterm =
                 signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
             sigterm.recv().await;
@@ -99,7 +108,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Shutdown signal received. Cancelling tasks...");
     })
     .await;
-
 
     Ok(())
 }

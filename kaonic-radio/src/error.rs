@@ -1,6 +1,6 @@
 use kaonic_frame::error::FrameError;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KaonicError {
     HardwareError,
     IncorrectSettings,
