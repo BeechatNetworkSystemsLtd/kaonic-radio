@@ -14,7 +14,7 @@ pub fn system_time() -> NetworkTime {
 
     let duration_since_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards");
+        .unwrap_or_default();
 
     duration_since_epoch.as_millis()
 }
