@@ -38,7 +38,7 @@ impl fmt::Display for Hertz {
 
         let khz = khz - (mhz * 1000);
 
-        writeln!(f, "{}.{}kHz", mhz, khz)?;
+        writeln!(f, "{}.{}MHz", mhz, khz)?;
         Ok(())
     }
 }
