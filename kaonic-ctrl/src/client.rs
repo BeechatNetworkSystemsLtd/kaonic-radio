@@ -1,10 +1,10 @@
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use kaonic_net::request::RequestQueue;
-use rand::{rngs::OsRng, RngCore};
+use rand::{RngCore, rngs::OsRng};
 use tokio::{
     net::UdpSocket,
-    sync::{broadcast, mpsc, oneshot, Mutex},
+    sync::{Mutex, broadcast, mpsc, oneshot},
 };
 use tokio_util::sync::CancellationToken;
 

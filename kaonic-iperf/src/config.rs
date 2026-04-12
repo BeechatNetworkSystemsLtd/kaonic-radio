@@ -1,11 +1,14 @@
+use radio_common::{
+    modulation::{
+        OfdmBandwidthOption, OfdmMcs, OfdmModulation, QpskChipFrequency, QpskModulation,
+        QpskRateMode,
+    },
+    Hertz, Modulation, RadioConfig, RadioConfigBuilder,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs;
 use std::error::Error;
-use radio_common::{
-    RadioConfig, RadioConfigBuilder, Hertz, Modulation,
-    modulation::{OfdmModulation, OfdmMcs, OfdmBandwidthOption, QpskModulation, QpskChipFrequency, QpskRateMode}
-};
+use std::fs;
 
 #[derive(Debug)]
 pub struct IperfConfig {
@@ -66,7 +69,11 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
     }
 
     // Collect radio keys in sorted order for deterministic mapping
-    let mut radio_keys: Vec<String> = table.keys().filter(|k| k.starts_with("radio-")).cloned().collect();
+    let mut radio_keys: Vec<String> = table
+        .keys()
+        .filter(|k| k.starts_with("radio-"))
+        .cloned()
+        .collect();
     radio_keys.sort();
 
     let mut radios: Vec<RadioConfigWithModule> = Vec::new();
@@ -86,14 +93,15 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
                 }
 
                 let config = builder.build();
-                
+
                 // Parse modulation from preset if specified
-                let mod_config = if let Some(mod_name) = rtab.get("modulation").and_then(|x| x.as_str()) {
-                    parse_modulation(&modulation, mod_name)
-                } else {
-                    None
-                };
-                
+                let mod_config =
+                    if let Some(mod_name) = rtab.get("modulation").and_then(|x| x.as_str()) {
+                        parse_modulation(&modulation, mod_name)
+                    } else {
+                        None
+                    };
+
                 radios.push(RadioConfigWithModule {
                     module: i,
                     config,
@@ -107,10 +115,18 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
     let iperf = if let Some(v) = table.get("iperf") {
         let mut d = IperfConfig::default();
         if let Ok(partial) = v.clone().try_into::<IperfPartial>() {
-            if let Some(x) = partial.duration { d.duration = x; }
-            if let Some(x) = partial.payload_size { d.payload_size = x; }
-            if let Some(x) = partial.timeout { d.timeout = x; }
-            if let Some(x) = partial.ip { d.ip = Some(x); }
+            if let Some(x) = partial.duration {
+                d.duration = x;
+            }
+            if let Some(x) = partial.payload_size {
+                d.payload_size = x;
+            }
+            if let Some(x) = partial.timeout {
+                d.timeout = x;
+            }
+            if let Some(x) = partial.ip {
+                d.ip = Some(x);
+            }
             if let Some(m) = partial.module {
                 d.module = m as usize;
             }
@@ -128,20 +144,26 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
         }
     }
 
-
-    Ok(Config { radios, iperf, modulation })
+    Ok(Config {
+        radios,
+        iperf,
+        modulation,
+    })
 }
 
 fn parse_modulation(presets: &HashMap<String, toml::Value>, name: &str) -> Option<Modulation> {
     let preset = presets.get(name)?;
     let mod_type = preset.get("type")?.as_str()?;
-    
+
     match mod_type {
         "ofdm" => {
             let mcs_val = preset.get("mcs")?.as_integer()? as u8;
             let opt_val = preset.get("opt")?.as_integer()? as u8;
-            let tx_power = preset.get("tx_power").and_then(|v| v.as_integer()).unwrap_or(10) as u8;
-            
+            let tx_power = preset
+                .get("tx_power")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(10) as u8;
+
             let mcs = match mcs_val {
                 0 => OfdmMcs::BpskC1_2_4x,
                 1 => OfdmMcs::BpskC1_2_2x,
@@ -152,7 +174,7 @@ fn parse_modulation(presets: &HashMap<String, toml::Value>, name: &str) -> Optio
                 6 => OfdmMcs::QamC3_4,
                 _ => return None,
             };
-            
+
             let opt = match opt_val {
                 0 => OfdmBandwidthOption::Option1,
                 1 => OfdmBandwidthOption::Option2,
@@ -160,7 +182,7 @@ fn parse_modulation(presets: &HashMap<String, toml::Value>, name: &str) -> Optio
                 3 => OfdmBandwidthOption::Option4,
                 _ => return None,
             };
-            
+
             Some(Modulation::Ofdm(OfdmModulation {
                 mcs,
                 opt,
@@ -171,8 +193,11 @@ fn parse_modulation(presets: &HashMap<String, toml::Value>, name: &str) -> Optio
         "qpsk" => {
             let chip_val = preset.get("chip_freq")?.as_integer()? as u32;
             let rate_val = preset.get("rate")?.as_integer()? as u8;
-            let tx_power = preset.get("tx_power").and_then(|v| v.as_integer()).unwrap_or(10) as u8;
-            
+            let tx_power = preset
+                .get("tx_power")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(10) as u8;
+
             let fchip = match chip_val {
                 100 => QpskChipFrequency::Fchip100,
                 200 => QpskChipFrequency::Fchip200,
@@ -180,7 +205,7 @@ fn parse_modulation(presets: &HashMap<String, toml::Value>, name: &str) -> Optio
                 2000 => QpskChipFrequency::Fchip2000,
                 _ => return None,
             };
-            
+
             let mode = match rate_val {
                 0 => QpskRateMode::RateMode0,
                 1 => QpskRateMode::RateMode1,
@@ -189,7 +214,7 @@ fn parse_modulation(presets: &HashMap<String, toml::Value>, name: &str) -> Optio
                 4 => QpskRateMode::RateMode4,
                 _ => return None,
             };
-            
+
             Some(Modulation::Qpsk(QpskModulation {
                 fchip,
                 mode,

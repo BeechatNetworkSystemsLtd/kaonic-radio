@@ -1,7 +1,3 @@
 pub mod platform;
 
-pub trait KaonicFpga {
-
-
-}
-
+pub trait KaonicFpga {}

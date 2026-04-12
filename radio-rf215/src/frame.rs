@@ -1,6 +1,5 @@
 use core::fmt;
 
-
 #[derive(Debug)]
 pub struct Frame<const S: usize> {
     data: [u8; S],

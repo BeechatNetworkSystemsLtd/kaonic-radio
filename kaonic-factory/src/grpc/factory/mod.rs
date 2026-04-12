@@ -1,26 +1,26 @@
 use std::collections::HashMap;
+use std::fs;
 use std::sync::Arc;
 use tokio::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use std::fs;
 
 pub mod kaonic {
     tonic::include_proto!("kaonic");
 }
 
 use kaonic::{
-    Empty, FactoryTestCaseResponse, RunAllTestsRequest, RunTestRequest, TestCase, TestResult,
-    TestStatus, TestStatusUpdate, DeviceInfoResponse, factory_server::Factory,
+    factory_server::Factory, DeviceInfoResponse, Empty, FactoryTestCaseResponse,
+    RunAllTestsRequest, RunTestRequest, TestCase, TestResult, TestStatus, TestStatusUpdate,
 };
 
 pub mod bluetooth;
-pub mod wifi;
-pub mod vendor;
-pub mod pmic;
-pub mod memory;
 pub mod i2c;
+pub mod memory;
+pub mod pmic;
 pub mod rf215;
+pub mod vendor;
+pub mod wifi;
 
 #[tonic::async_trait]
 pub trait FactoryTest: Send + Sync {
@@ -72,18 +72,17 @@ impl Default for FactoryService {
 }
 
 impl FactoryService {
-
     fn read_device_info() -> Result<(String, String), String> {
         let serial = fs::read_to_string("/etc/kaonic/kaonic_serial")
             .map_err(|e| format!("Failed to read serial: {}", e))?
             .trim()
             .to_string();
-            
+
         let machine = fs::read_to_string("/etc/kaonic/kaonic_machine")
             .map_err(|e| format!("Failed to read machine: {}", e))?
             .trim()
             .to_string();
-            
+
         Ok((serial, machine))
     }
 
@@ -214,7 +213,10 @@ impl Factory for FactoryService {
                 let response = DeviceInfoResponse { serial, machine };
                 Ok(Response::new(response))
             }
-            Err(err) => Err(Status::internal(format!("Failed to read device info: {}", err))),
+            Err(err) => Err(Status::internal(format!(
+                "Failed to read device info: {}",
+                err
+            ))),
         }
     }
 }

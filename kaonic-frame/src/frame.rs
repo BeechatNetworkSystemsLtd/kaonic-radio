@@ -10,7 +10,6 @@ pub struct FrameSegment<const S: usize, const R: usize> {
     len: usize,
 }
 
-
 pub type Frame<const S: usize> = FrameSegment<S, 1>;
 
 impl<const S: usize, const R: usize> FrameSegment<S, R> {

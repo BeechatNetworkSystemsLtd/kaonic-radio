@@ -100,17 +100,15 @@ impl Rf215Test {
         let radio_names = ["RF215-A", "RF215-B"];
 
         let results = machine
-            .for_each_radio(|idx, radio| {
-                match radio {
-                    Some(r) => self
-                        .test_rf215_instance(r, radio_names[idx])
-                        .map(|info| format!("{}: {}", radio_names[idx], info))
-                        .map_err(|_| KaonicError::IncorrectSettings),
-                    None => Ok(format!(
-                        "{}: not connected (hardware missing or configuration error)",
-                        radio_names[idx]
-                    )),
-                }
+            .for_each_radio(|idx, radio| match radio {
+                Some(r) => self
+                    .test_rf215_instance(r, radio_names[idx])
+                    .map(|info| format!("{}: {}", radio_names[idx], info))
+                    .map_err(|_| KaonicError::IncorrectSettings),
+                None => Ok(format!(
+                    "{}: not connected (hardware missing or configuration error)",
+                    radio_names[idx]
+                )),
             })
             .map_err(|e| format!("RF215 iteration error: {:?}", e))?;
 
@@ -139,6 +137,9 @@ impl Rf215Test {
             ));
         }
 
-        Ok(format!("PN=0x{:02X}, VN=0x{:02X}", part_number as u8, version_number))
+        Ok(format!(
+            "PN=0x{:02X}, VN=0x{:02X}",
+            part_number as u8, version_number
+        ))
     }
 }

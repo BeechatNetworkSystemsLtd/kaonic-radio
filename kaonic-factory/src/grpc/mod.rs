@@ -1,6 +1,6 @@
 pub mod factory;
 
-use factory::{FactoryService, kaonic::factory_server::FactoryServer};
+use factory::{kaonic::factory_server::FactoryServer, FactoryService};
 use tonic::transport::Server;
 
 pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {

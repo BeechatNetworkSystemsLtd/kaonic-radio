@@ -1,6 +1,6 @@
+use super::FactoryTest;
 use std::fs;
 use std::process::Command;
-use super::FactoryTest;
 
 pub struct BluetoothInitTest;
 
@@ -9,11 +9,11 @@ impl FactoryTest for BluetoothInitTest {
     fn name(&self) -> &str {
         "Bluetooth Module Initialization Test"
     }
-    
+
     fn description(&self) -> &str {
         "Verify Bluetooth module is properly initialized by Linux kernel"
     }
-    
+
     async fn execute(&self) -> Result<String, String> {
         // Check if Bluetooth kernel modules are loaded
         let lsmod_output = Command::new("lsmod")

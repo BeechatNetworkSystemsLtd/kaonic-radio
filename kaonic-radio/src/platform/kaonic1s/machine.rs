@@ -1,7 +1,7 @@
 use std::sync::{atomic::AtomicUsize, Arc};
 
 use linux_embedded_hal::spidev::SpidevOptions;
-use radio_common::{Hertz, Modulation, RadioConfigBuilder, modulation::OfdmModulation};
+use radio_common::{modulation::OfdmModulation, Hertz, Modulation, RadioConfigBuilder};
 use radio_rf215::{
     bus::{Bus, BusError, SpiBus},
     error::RadioError,

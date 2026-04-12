@@ -163,4 +163,3 @@ impl FactoryTest for WiFiInitTest {
         Ok(result_parts.join(" | "))
     }
 }
-

@@ -4,9 +4,7 @@ pub mod kaonic {
     tonic::include_proto!("kaonic");
 }
 
-use kaonic::{
-    factory_client::FactoryClient, Empty, RunAllTestsRequest, TestStatus,
-};
+use kaonic::{factory_client::FactoryClient, Empty, RunAllTestsRequest, TestStatus};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -61,15 +59,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match update {
             Ok(status) => {
                 let status_enum = TestStatus::try_from(status.status).unwrap_or(TestStatus::Failed);
-                
+
                 match status_enum {
                     TestStatus::Running => {
                         println!(
                             "\n⏳ [{}/{}] {} - {}",
-                            status.current_test,
-                            status.total_tests,
-                            status.test_id,
-                            status.message
+                            status.current_test, status.total_tests, status.test_id, status.message
                         );
                     }
                     TestStatus::Passed => {
@@ -121,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Passed: {}", passed);
     println!("❌ Failed: {}", failed);
     println!("🕒 Total Duration: {} ms", total_duration);
-    
+
     let success_rate = if (passed + failed) > 0 {
         (passed as f64 / (passed + failed) as f64) * 100.0
     } else {

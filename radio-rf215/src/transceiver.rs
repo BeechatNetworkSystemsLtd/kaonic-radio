@@ -8,7 +8,6 @@ use crate::regs::{
     self, BasebandInterrupt, BasebandInterruptMask, RadioInterruptMask, RegisterAddress,
 };
 
-
 #[derive(Debug)]
 pub struct Band09;
 #[derive(Debug)]
