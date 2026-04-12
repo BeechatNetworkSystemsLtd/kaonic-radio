@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use kaonic_frame::frame::FrameSegment;
 use radio_common::{Modulation, RadioConfig};
 use rand::{CryptoRng, RngCore};
@@ -39,7 +37,16 @@ impl RadioFrame {
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        &self.data[..(self.len as usize)]
+        let len = core::cmp::min(usize::from(self.len), self.data.len());
+        &self.data[..len]
+    }
+
+    pub fn validate(&self) -> Result<(), ControllerError> {
+        if usize::from(self.len) > self.data.len() {
+            return Err(ControllerError::DecodeError);
+        }
+
+        Ok(())
     }
 }
 
@@ -132,6 +139,7 @@ pub enum Payload {
     Pong,
     TransmitModuleRequest(TransmitModule),
     TransmitModuleResponse,
+    TransmitModuleEvent(TransmitModule),
     ReceiveModule(ReceiveModule),
     ScanRequest,
     SetRadioConfigRequest(SetRadioConfigRequest),
@@ -168,6 +176,21 @@ impl Message {
             id: 0,
             flags: 0,
             payload: Payload::ScanRequest,
+        }
+    }
+
+    fn validate(&self) -> Result<(), ControllerError> {
+        self.payload.validate()
+    }
+}
+
+impl Payload {
+    fn validate(&self) -> Result<(), ControllerError> {
+        match self {
+            Payload::TransmitModuleRequest(tx) => tx.frame.validate(),
+            Payload::TransmitModuleEvent(tx) => tx.frame.validate(),
+            Payload::ReceiveModule(rx) => rx.frame.validate(),
+            _ => Ok(()),
         }
     }
 }
@@ -275,12 +298,14 @@ impl<const MTU: usize, const R: usize> PeerCoder<Message, MTU, R> for MessageCod
         packet: &kaonic_net::packet::AssembledPacket<'a, MTU, R>,
     ) -> Result<Message, ControllerError> {
         let mut message = Message::new();
-
         let input_data = packet.as_slice();
-
         let mut offset = 0usize;
+        let header_size = core::mem::size_of_val(&message.pattern)
+            + core::mem::size_of_val(&message.version)
+            + core::mem::size_of_val(&message.id)
+            + core::mem::size_of_val(&message.flags);
 
-        if input_data.len() < offset {
+        if input_data.len() < header_size {
             return Err(ControllerError::DecodeError);
         }
 
@@ -293,17 +318,9 @@ impl<const MTU: usize, const R: usize> PeerCoder<Message, MTU, R> for MessageCod
 
         offset += 2;
 
-        if input_data.len() < offset {
-            return Err(ControllerError::DecodeError);
-        }
-
         message.version = u16::from_le_bytes([input_data[offset + 0], input_data[offset + 1]]);
 
         offset += 2;
-
-        if input_data.len() < offset {
-            return Err(ControllerError::DecodeError);
-        }
 
         message.id = u32::from_le_bytes([
             input_data[offset + 0],
@@ -314,10 +331,6 @@ impl<const MTU: usize, const R: usize> PeerCoder<Message, MTU, R> for MessageCod
 
         offset += 4;
 
-        if input_data.len() < offset {
-            return Err(ControllerError::DecodeError);
-        }
-
         message.flags = u32::from_le_bytes([
             input_data[offset + 0],
             input_data[offset + 1],
@@ -327,14 +340,11 @@ impl<const MTU: usize, const R: usize> PeerCoder<Message, MTU, R> for MessageCod
 
         offset += 4;
 
-        if input_data.len() < offset {
-            return Err(ControllerError::DecodeError);
-        }
-
         let payload_data = &input_data[offset..];
 
         message.payload =
             rmp_serde::from_slice(payload_data).map_err(|_| ControllerError::DecodeError)?;
+        message.validate()?;
 
         Ok(message)
     }

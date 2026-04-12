@@ -1,5 +1,9 @@
 use core::fmt;
-use std::{collections::HashMap, net::SocketAddr, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use kaonic_frame::frame::{Frame, FrameSegment};
 use kaonic_net::{packet::AssembledPacket, request::Responder};
@@ -119,11 +123,11 @@ pub struct Peer<
 }
 
 impl<
-        T: PeerMessage + std::fmt::Debug,
-        const MTU: usize,
-        const R: usize,
-        C: PeerCoder<T, MTU, R> + std::fmt::Debug,
-    > Peer<T, MTU, R, C>
+    T: PeerMessage + std::fmt::Debug,
+    const MTU: usize,
+    const R: usize,
+    C: PeerCoder<T, MTU, R> + std::fmt::Debug,
+> Peer<T, MTU, R, C>
 {
     pub fn new(socket: UdpSocket, coder: C, filter_rx_addr: Option<SocketAddr>) -> Self {
         let (tx_send, tx_recv) = mpsc::channel(128);

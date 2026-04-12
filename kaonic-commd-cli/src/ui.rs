@@ -1,11 +1,9 @@
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{
-        Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap,
-    },
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
 use crate::app::{App, Field, FieldItem, TX_POWER_MAX, TX_POWER_MIN};
@@ -46,7 +44,10 @@ fn draw_branding(frame: &mut Frame, area: Rect) {
         Span::styled("Powered by ", Style::default().fg(DIM)),
         Span::styled("Beechat Network", Style::default().fg(ACCENT).bold()),
         Span::styled("  ·  ", Style::default().fg(DIM)),
-        Span::styled("beechat.network", Style::default().fg(DIM).add_modifier(Modifier::UNDERLINED)),
+        Span::styled(
+            "beechat.network",
+            Style::default().fg(DIM).add_modifier(Modifier::UNDERLINED),
+        ),
     ]))
     .alignment(Alignment::Center);
     frame.render_widget(line, area);
@@ -64,11 +65,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(outer_block, area);
 
     // Split inner area: left (status + info) | right (animation)
-    let cols = Layout::horizontal([
-        Constraint::Min(0),
-        Constraint::Length(14),
-    ])
-    .split(inner);
+    let cols = Layout::horizontal([Constraint::Min(0), Constraint::Length(14)]).split(inner);
 
     // ── Left: status + device info ────────────────────────────────────────
     let (status_text, status_style) = if app.connected {
@@ -83,9 +80,21 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    let serial_str  = if app.serial.is_empty()  { "–".to_string() } else { app.serial.clone() };
-    let version_str = if app.version.is_empty() { "–".to_string() } else { app.version.clone() };
-    let mtu_str     = if app.mtu == 0           { "–".to_string() } else { app.mtu.to_string() };
+    let serial_str = if app.serial.is_empty() {
+        "–".to_string()
+    } else {
+        app.serial.clone()
+    };
+    let version_str = if app.version.is_empty() {
+        "–".to_string()
+    } else {
+        app.version.clone()
+    };
+    let mtu_str = if app.mtu == 0 {
+        "–".to_string()
+    } else {
+        app.mtu.to_string()
+    };
 
     let left = Paragraph::new(Text::from(vec![
         Line::from(vec![
@@ -108,7 +117,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let anim_color = if app.connected { ACCENT } else { DIM };
 
     let right = Paragraph::new(Text::from(vec![
-        Line::from(Span::styled(bars,    Style::default().fg(anim_color))),
+        Line::from(Span::styled(bars, Style::default().fg(anim_color))),
         Line::from(vec![
             Span::styled(spinner, Style::default().fg(anim_color).bold()),
             Span::styled(" RF SCAN", Style::default().fg(DIM)),
@@ -139,21 +148,15 @@ fn radio_anim(tick: u64) -> (String, &'static str) {
 // ─── Body: left config panel + right RX log ─────────────────────────────────
 
 fn draw_body(frame: &mut Frame, app: &App, area: Rect) {
-    let cols = Layout::horizontal([
-        Constraint::Percentage(45),
-        Constraint::Percentage(55),
-    ])
-    .split(area);
+    let cols =
+        Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)]).split(area);
 
     draw_config_panel(frame, app, cols[0]);
 
     // Right column: RX log on top, stats at bottom
     let stats_height = 2 + app.module_count.max(1) as u16 + 2; // border + header line + N module rows + border
-    let right_rows = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(stats_height),
-    ])
-    .split(cols[1]);
+    let right_rows =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(stats_height)]).split(cols[1]);
 
     draw_rx_panel(frame, app, right_rows[0]);
     draw_stats_panel(frame, app, right_rows[1]);
@@ -175,17 +178,21 @@ fn draw_config_panel(frame: &mut Frame, app: &App, area: Rect) {
     let focused_idx = app.focused_index();
     let fields = app.visible_fields();
 
-    let items: Vec<ListItem> = app.visible_items()
+    let items: Vec<ListItem> = app
+        .visible_items()
         .into_iter()
         .map(|item| match item {
             // ── Section header ──
-            FieldItem::Section(title) => {
-                ListItem::new(Line::from(vec![
-                    Span::styled("── ", Style::default().fg(DIM)),
-                    Span::styled(title, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::styled(" ──", Style::default().fg(DIM)),
-                ]))
-            }
+            FieldItem::Section(title) => ListItem::new(Line::from(vec![
+                Span::styled("── ", Style::default().fg(DIM)),
+                Span::styled(
+                    title,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ──", Style::default().fg(DIM)),
+            ])),
 
             // ── Regular field ──
             FieldItem::Field(field) => {
@@ -204,19 +211,19 @@ fn draw_config_panel(frame: &mut Frame, app: &App, area: Rect) {
                     // ── Slider ──
                     let bar_width: u32 = 20;
                     let range = TX_POWER_MAX - TX_POWER_MIN;
-                    let filled = ((app.tx_power - TX_POWER_MIN) * bar_width / range.max(1)) as usize;
-                    let empty  = (bar_width as usize).saturating_sub(filled);
-                    let bar = format!("{}{}",
-                        "█".repeat(filled),
-                        "░".repeat(empty),
-                    );
+                    let filled =
+                        ((app.tx_power - TX_POWER_MIN) * bar_width / range.max(1)) as usize;
+                    let empty = (bar_width as usize).saturating_sub(filled);
+                    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty),);
                     let bar_style = if focused {
                         Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(DIM)
                     };
                     let val_style = if focused {
-                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(DIM)
                     };
@@ -227,9 +234,23 @@ fn draw_config_panel(frame: &mut Frame, app: &App, area: Rect) {
                         ]),
                         Line::from(vec![
                             Span::raw("    "),
-                            Span::styled("◄ ", if focused { Style::default().fg(ACCENT) } else { Style::default().fg(DIM) }),
+                            Span::styled(
+                                "◄ ",
+                                if focused {
+                                    Style::default().fg(ACCENT)
+                                } else {
+                                    Style::default().fg(DIM)
+                                },
+                            ),
                             Span::styled(bar, bar_style),
-                            Span::styled(" ►  ", if focused { Style::default().fg(ACCENT) } else { Style::default().fg(DIM) }),
+                            Span::styled(
+                                " ►  ",
+                                if focused {
+                                    Style::default().fg(ACCENT)
+                                } else {
+                                    Style::default().fg(DIM)
+                                },
+                            ),
                             Span::styled(format!("{} dBm", app.tx_power), val_style),
                         ]),
                     ])
@@ -239,11 +260,17 @@ fn draw_config_panel(frame: &mut Frame, app: &App, area: Rect) {
                     let value_style = if focused && app.editing && app.is_text_field() {
                         Style::default().fg(EDIT_FG).add_modifier(Modifier::BOLD)
                     } else if focused {
-                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(DIM)
                     };
-                    let cursor = if focused && app.editing && app.is_text_field() { "▌" } else { "" };
+                    let cursor = if focused && app.editing && app.is_text_field() {
+                        "▌"
+                    } else {
+                        ""
+                    };
 
                     ListItem::new(vec![
                         Line::from(vec![
@@ -268,7 +295,7 @@ fn draw_config_panel(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_rx_panel(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
-        .title(format!(" 📡  Received Frames ({}) ", app.rx_log.len()))
+        .title(format!(" 📡  Frame Events ({}) ", app.rx_log.len()))
         .title_alignment(Alignment::Left)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -278,7 +305,7 @@ fn draw_rx_panel(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
 
     if app.rx_log.is_empty() {
-        let placeholder = Paragraph::new("  No frames received yet…")
+        let placeholder = Paragraph::new("  No frame events yet…")
             .style(Style::default().fg(DIM))
             .wrap(Wrap { trim: false });
         frame.render_widget(placeholder, inner);
@@ -289,7 +316,10 @@ fn draw_rx_panel(frame: &mut Frame, app: &App, area: Rect) {
     let log_len = app.rx_log.len();
 
     // Window of entries that fit in the panel
-    let start = app.rx_log_scroll.saturating_sub(height.saturating_sub(1)).min(log_len.saturating_sub(height));
+    let start = app
+        .rx_log_scroll
+        .saturating_sub(height.saturating_sub(1))
+        .min(log_len.saturating_sub(height));
     let visible: Vec<&crate::app::RxEntry> = app.rx_log.iter().skip(start).take(height).collect();
 
     let items: Vec<ListItem> = visible
@@ -298,35 +328,42 @@ fn draw_rx_panel(frame: &mut Frame, app: &App, area: Rect) {
         .map(|(i, entry)| {
             let abs_idx = start + i + 1;
             let mod_label = if entry.module == 0 { "A" } else { "B" };
-            let rssi_style = if entry.rssi < -90 {
+            let event_label = if entry.is_tx { "TX" } else { "RX" };
+            let rssi = entry.rssi.unwrap_or_default();
+            let rssi_style = if entry.is_tx {
+                Style::default().fg(DIM)
+            } else if rssi < -90 {
                 Style::default().fg(ERR)
-            } else if entry.rssi < -70 {
+            } else if rssi < -70 {
                 Style::default().fg(Color::Yellow)
             } else {
                 Style::default().fg(OK)
             };
 
             ListItem::new(Line::from(vec![
+                Span::styled(format!("{:>4} ", abs_idx), Style::default().fg(DIM)),
+                Span::styled(format!("[{}] ", mod_label), Style::default().fg(ACCENT)),
                 Span::styled(
-                    format!("{:>4} ", abs_idx),
-                    Style::default().fg(DIM),
-                ),
-                Span::styled(
-                    format!("[{}] ", mod_label),
-                    Style::default().fg(ACCENT),
+                    format!("{} ", event_label),
+                    if entry.is_tx {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default().fg(OK)
+                    },
                 ),
                 Span::styled(
                     format!("{:>4}B ", entry.len),
                     Style::default().fg(Color::White),
                 ),
                 Span::styled(
-                    format!("{:>4}dBm ", entry.rssi),
+                    if let Some(rssi) = entry.rssi {
+                        format!("{:>4}dBm ", rssi)
+                    } else {
+                        "   --dBm ".to_string()
+                    },
                     rssi_style,
                 ),
-                Span::styled(
-                    entry.preview.as_str(),
-                    Style::default().fg(DIM),
-                ),
+                Span::styled(entry.preview.as_str(), Style::default().fg(DIM)),
             ]))
         })
         .collect();
@@ -350,7 +387,10 @@ fn draw_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
 
     // Header row
     let header = Line::from(vec![
-        Span::styled(format!("{:<4}", "Mod"), Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{:<4}", "Mod"),
+            Style::default().fg(DIM).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(format!(" {:>8}", "RX pkts"), Style::default().fg(DIM)),
         Span::styled(format!(" {:>8}", "TX pkts"), Style::default().fg(DIM)),
         Span::styled(format!(" {:>9}", "RX bytes"), Style::default().fg(DIM)),
@@ -371,17 +411,32 @@ fn draw_stats_panel(frame: &mut Frame, app: &App, area: Rect) {
 
         lines.push(Line::from(vec![
             Span::styled(format!("[{:<2}]", mod_label), Style::default().fg(ACCENT)),
-            Span::styled(format!(" {:>8}", snap.rx_packets), Style::default().fg(Color::White)),
-            Span::styled(format!(" {:>8}", snap.tx_packets), Style::default().fg(Color::White)),
-            Span::styled(format!(" {:>9}", fmt_bytes(snap.rx_bytes)), Style::default().fg(Color::White)),
-            Span::styled(format!(" {:>9}", fmt_bytes(snap.tx_bytes)), Style::default().fg(Color::White)),
+            Span::styled(
+                format!(" {:>8}", snap.rx_packets),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!(" {:>8}", snap.tx_packets),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!(" {:>9}", fmt_bytes(snap.rx_bytes)),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!(" {:>9}", fmt_bytes(snap.tx_bytes)),
+                Style::default().fg(Color::White),
+            ),
             Span::styled(format!(" {:>6}", snap.rx_errors), err_style),
             Span::styled(format!(" {:>6}", snap.tx_errors), err_style),
         ]));
     }
 
     if app.stats.is_empty() {
-        lines.push(Line::from(Span::styled("  No data yet…", Style::default().fg(DIM))));
+        lines.push(Line::from(Span::styled(
+            "  No data yet…",
+            Style::default().fg(DIM),
+        )));
     }
 
     let para = Paragraph::new(lines);
@@ -405,7 +460,12 @@ fn draw_compose_popup(frame: &mut Frame, app: &App, area: Rect) {
     let popup_h = 5u16;
     let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
-    let popup_area = Rect { x, y, width: popup_w, height: popup_h };
+    let popup_area = Rect {
+        x,
+        y,
+        width: popup_w,
+        height: popup_h,
+    };
 
     let mod_label = if app.module == 0 { "A" } else { "B" };
     let title = format!(" ✉  Transmit on Module {} ", mod_label);
@@ -432,7 +492,10 @@ fn draw_compose_popup(frame: &mut Frame, app: &App, area: Rect) {
 
     // Hint
     let hint = Paragraph::new(Line::from(vec![
-        Span::styled(" Enter", Style::default().fg(Color::Black).bg(ACCENT).bold()),
+        Span::styled(
+            " Enter",
+            Style::default().fg(Color::Black).bg(ACCENT).bold(),
+        ),
         Span::styled(" send  ", Style::default().fg(Color::Gray)),
         Span::styled(" Esc", Style::default().fg(Color::Black).bg(ACCENT).bold()),
         Span::styled(" cancel", Style::default().fg(Color::Gray)),
@@ -467,16 +530,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     if app.compose_text.is_some() {
-        hints = vec![
-            (" Enter ", "send"),
-            (" Esc ", "cancel"),
-        ];
+        hints = vec![(" Enter ", "send"), (" Esc ", "cancel")];
     } else if app.editing {
         if app.focused_field == Field::ServerAddr {
-            hints = vec![
-                (" Enter ", "reconnect"),
-                (" Esc ", "cancel"),
-            ];
+            hints = vec![(" Enter ", "reconnect"), (" Esc ", "cancel")];
         } else {
             hints = vec![
                 (" Enter ", "confirm"),
@@ -499,11 +556,13 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let status_right = if !app.status_msg.is_empty() {
         Span::styled(
             format!(" {} ", app.status_msg),
-            Style::default().fg(if app.status_msg.starts_with("Configure OK") || app.status_msg.contains("TX") {
-                OK
-            } else {
-                ERR
-            }),
+            Style::default().fg(
+                if app.status_msg.starts_with("Configure OK") || app.status_msg.contains("TX") {
+                    OK
+                } else {
+                    ERR
+                },
+            ),
         )
     } else {
         Span::raw("")

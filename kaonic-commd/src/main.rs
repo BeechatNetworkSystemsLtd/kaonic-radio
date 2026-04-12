@@ -47,6 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shared_radios = radio_server.radios();
     let shared_stats = radio_server.stats();
     let rx_sender = radio_server.rx_sender();
+    let tx_sender = radio_server.tx_sender();
 
     // Start UDP server
     let server = Server::listen(
@@ -62,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start gRPC server sharing the same radio hardware
     let device_service =
         DeviceService::new(module_count, serial, RADIO_FRAME_SIZE as u32, shared_stats);
-    let radio_service = RadioService::new(shared_radios, rx_sender);
+    let radio_service = RadioService::new(shared_radios, rx_sender, tx_sender);
 
     {
         let cancel = cancel.clone();

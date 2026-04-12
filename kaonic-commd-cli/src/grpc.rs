@@ -5,11 +5,9 @@ pub mod proto {
 }
 
 pub use proto::{
-    device_client::DeviceClient,
-    radio_client::RadioClient,
-    BandwidthFilter, Empty, ModuleRequest, RadioConfig, RadioFrame,
-    RadioModulation, RadioModulationFsk, RadioModulationOfdm, RadioModulationQpsk,
-    ReceiveRequest, TransmitRequest,
+    BandwidthFilter, Empty, ModuleRequest, RadioConfig, RadioFrame, RadioModulation,
+    RadioModulationFsk, RadioModulationOfdm, RadioModulationQpsk, ReceiveRequest,
+    TransmitEventRequest, TransmitRequest, device_client::DeviceClient, radio_client::RadioClient,
     radio_modulation::Modulation as ProtoModulation,
 };
 
@@ -18,11 +16,24 @@ use crate::app::{App, ModType, ModuleStatsSnapshot, RxEntry};
 /// Events sent from background gRPC tasks to the TUI.
 #[derive(Debug)]
 pub enum GrpcEvent {
-    Connected { module_count: usize, serial: String, mtu: u32, version: String },
-    Disconnected { reason: String },
+    Connected {
+        module_count: usize,
+        serial: String,
+        mtu: u32,
+        version: String,
+    },
+    Disconnected {
+        reason: String,
+    },
     RxFrame(RxEntry),
-    TxResult { latency_us: u32 },
-    Statistics { module: usize, snapshot: ModuleStatsSnapshot },
+    TxFrame(RxEntry),
+    TxResult {
+        latency_us: u32,
+    },
+    Statistics {
+        module: usize,
+        snapshot: ModuleStatsSnapshot,
+    },
     Error(String),
 }
 
@@ -31,14 +42,17 @@ pub enum GrpcEvent {
 pub enum GrpcCommand {
     /// Apply both radio config and modulation in one shot (mirrors the CLI "configure" action).
     Configure {
-        config:     RadioConfig,
+        config: RadioConfig,
         modulation: RadioModulation,
     },
     Transmit {
         module: i32,
-        data:   Vec<u8>,
+        data: Vec<u8>,
     },
     SubscribeRx {
+        module: i32,
+    },
+    SubscribeTx {
         module: i32,
     },
     Reconnect {
@@ -47,11 +61,9 @@ pub enum GrpcCommand {
 }
 
 /// Spawns the gRPC background task.  Returns (command sender, event receiver).
-pub fn spawn(
-    addr: String,
-) -> (mpsc::Sender<GrpcCommand>, mpsc::Receiver<GrpcEvent>) {
+pub fn spawn(addr: String) -> (mpsc::Sender<GrpcCommand>, mpsc::Receiver<GrpcEvent>) {
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<GrpcCommand>(32);
-    let (evt_tx, evt_rx)     = mpsc::channel::<GrpcEvent>(64);
+    let (evt_tx, evt_rx) = mpsc::channel::<GrpcEvent>(64);
 
     tokio::spawn(async move {
         let mut current_addr = addr;
@@ -59,54 +71,77 @@ pub fn spawn(
         'reconnect: loop {
             // ── Connect ───────────────────────────────────────────────────
             let endpoint = match tonic::transport::Endpoint::from_shared(current_addr.clone()) {
-                Ok(e)  => e,
+                Ok(e) => e,
                 Err(e) => {
-                    let _ = evt_tx.send(GrpcEvent::Disconnected { reason: e.to_string() }).await;
+                    let _ = evt_tx
+                        .send(GrpcEvent::Disconnected {
+                            reason: e.to_string(),
+                        })
+                        .await;
                     loop {
                         match cmd_rx.recv().await {
-                            Some(GrpcCommand::Reconnect { addr }) => { current_addr = addr; continue 'reconnect; }
+                            Some(GrpcCommand::Reconnect { addr }) => {
+                                current_addr = addr;
+                                continue 'reconnect;
+                            }
                             Some(_) => {}
-                            None    => return,
+                            None => return,
                         }
                     }
                 }
             };
 
             let channel = match endpoint.connect().await {
-                Ok(c)  => c,
+                Ok(c) => c,
                 Err(e) => {
-                    let _ = evt_tx.send(GrpcEvent::Disconnected { reason: e.to_string() }).await;
+                    let _ = evt_tx
+                        .send(GrpcEvent::Disconnected {
+                            reason: e.to_string(),
+                        })
+                        .await;
                     loop {
                         match cmd_rx.recv().await {
-                            Some(GrpcCommand::Reconnect { addr }) => { current_addr = addr; continue 'reconnect; }
+                            Some(GrpcCommand::Reconnect { addr }) => {
+                                current_addr = addr;
+                                continue 'reconnect;
+                            }
                             Some(_) => {}
-                            None    => return,
+                            None => return,
                         }
                     }
                 }
             };
 
             let mut device = DeviceClient::new(channel.clone());
-            let mut radio  = RadioClient::new(channel.clone());
+            let mut radio = RadioClient::new(channel.clone());
 
             // Get device info
             match device.get_info(Empty {}).await {
                 Ok(resp) => {
                     let info = resp.into_inner();
-                    let _ = evt_tx.send(GrpcEvent::Connected {
-                        module_count: info.module_count as usize,
-                        serial: info.serial,
-                        mtu: info.mtu,
-                        version: info.version,
-                    }).await;
+                    let _ = evt_tx
+                        .send(GrpcEvent::Connected {
+                            module_count: info.module_count as usize,
+                            serial: info.serial,
+                            mtu: info.mtu,
+                            version: info.version,
+                        })
+                        .await;
                 }
                 Err(e) => {
-                    let _ = evt_tx.send(GrpcEvent::Disconnected { reason: e.to_string() }).await;
+                    let _ = evt_tx
+                        .send(GrpcEvent::Disconnected {
+                            reason: e.to_string(),
+                        })
+                        .await;
                     loop {
                         match cmd_rx.recv().await {
-                            Some(GrpcCommand::Reconnect { addr }) => { current_addr = addr; continue 'reconnect; }
+                            Some(GrpcCommand::Reconnect { addr }) => {
+                                current_addr = addr;
+                                continue 'reconnect;
+                            }
                             Some(_) => {}
-                            None    => return,
+                            None => return,
                         }
                     }
                 }
@@ -115,11 +150,12 @@ pub fn spawn(
             // Spawn statistics polling task (every 1 s, all modules)
             {
                 let channel2 = channel.clone();
-                let evt_tx2  = evt_tx.clone();
+                let evt_tx2 = evt_tx.clone();
                 let module_count_for_stats = {
                     // We just stored it inside GrpcEvent::Connected; re-fetch quickly
                     let mut dc = DeviceClient::new(channel.clone());
-                    dc.get_info(Empty {}).await
+                    dc.get_info(Empty {})
+                        .await
                         .map(|r| r.into_inner().module_count as usize)
                         .unwrap_or(2)
                 };
@@ -136,12 +172,19 @@ pub fn spawn(
                                     let snap = ModuleStatsSnapshot {
                                         rx_packets: s.rx_packets,
                                         tx_packets: s.tx_packets,
-                                        rx_bytes:   s.rx_bytes,
-                                        tx_bytes:   s.tx_bytes,
-                                        rx_errors:  s.rx_errors,
-                                        tx_errors:  s.tx_errors,
+                                        rx_bytes: s.rx_bytes,
+                                        tx_bytes: s.tx_bytes,
+                                        rx_errors: s.rx_errors,
+                                        tx_errors: s.tx_errors,
                                     };
-                                    if evt_tx2.send(GrpcEvent::Statistics { module: m, snapshot: snap }).await.is_err() {
+                                    if evt_tx2
+                                        .send(GrpcEvent::Statistics {
+                                            module: m,
+                                            snapshot: snap,
+                                        })
+                                        .await
+                                        .is_err()
+                                    {
                                         return;
                                     }
                                 }
@@ -157,7 +200,11 @@ pub fn spawn(
                 match cmd {
                     GrpcCommand::Reconnect { addr } => {
                         current_addr = addr;
-                        let _ = evt_tx.send(GrpcEvent::Disconnected { reason: "Reconnecting…".into() }).await;
+                        let _ = evt_tx
+                            .send(GrpcEvent::Disconnected {
+                                reason: "Reconnecting…".into(),
+                            })
+                            .await;
                         continue 'reconnect;
                     }
 
@@ -165,14 +212,25 @@ pub fn spawn(
                         // SetConfig then SetModulation — mirrors the UDP set_config / set_modulation calls
                         match radio.set_config(config).await {
                             Err(e) => {
-                                let _ = evt_tx.send(GrpcEvent::Error(format!("SetConfig: {}", e.message()))).await;
+                                let _ = evt_tx
+                                    .send(GrpcEvent::Error(format!("SetConfig: {}", e.message())))
+                                    .await;
                                 continue;
                             }
                             Ok(_) => {}
                         }
                         match radio.set_modulation(modulation).await {
-                            Ok(_)  => { let _ = evt_tx.send(GrpcEvent::Error("Configure OK".into())).await; }
-                            Err(e) => { let _ = evt_tx.send(GrpcEvent::Error(format!("SetModulation: {}", e.message()))).await; }
+                            Ok(_) => {
+                                let _ = evt_tx.send(GrpcEvent::Error("Configure OK".into())).await;
+                            }
+                            Err(e) => {
+                                let _ = evt_tx
+                                    .send(GrpcEvent::Error(format!(
+                                        "SetModulation: {}",
+                                        e.message()
+                                    )))
+                                    .await;
+                            }
                         }
                     }
 
@@ -183,19 +241,23 @@ pub fn spawn(
                         };
                         match radio.transmit(req).await {
                             Ok(resp) => {
-                                let _ = evt_tx.send(GrpcEvent::TxResult {
-                                    latency_us: resp.into_inner().latency,
-                                }).await;
+                                let _ = evt_tx
+                                    .send(GrpcEvent::TxResult {
+                                        latency_us: resp.into_inner().latency,
+                                    })
+                                    .await;
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(GrpcEvent::Error(format!("Transmit: {}", e.message()))).await;
+                                let _ = evt_tx
+                                    .send(GrpcEvent::Error(format!("Transmit: {}", e.message())))
+                                    .await;
                             }
                         }
                     }
 
                     GrpcCommand::SubscribeRx { module } => {
                         let req = ReceiveRequest { module, timeout: 0 };
-                        let mut radio2  = RadioClient::new(channel.clone());
+                        let mut radio2 = RadioClient::new(channel.clone());
                         let evt_tx2 = evt_tx.clone();
 
                         tokio::spawn(async move {
@@ -207,18 +269,28 @@ pub fn spawn(
                                     while let Some(item) = stream.next().await {
                                         match item {
                                             Ok(rx) => {
-                                                let bytes = rx.frame.map(|f| f.data.to_vec()).unwrap_or_default();
-                                                let preview = bytes.iter().take(8)
+                                                let bytes = rx
+                                                    .frame
+                                                    .map(|f| f.data.to_vec())
+                                                    .unwrap_or_default();
+                                                let preview = bytes
+                                                    .iter()
+                                                    .take(8)
                                                     .map(|b| format!("{:02X}", b))
                                                     .collect::<Vec<_>>()
                                                     .join(" ");
                                                 let entry = RxEntry {
-                                                    module:  rx.module as u8,
-                                                    len:     bytes.len(),
-                                                    rssi:    rx.rssi,
+                                                    is_tx: false,
+                                                    module: rx.module as u8,
+                                                    len: bytes.len(),
+                                                    rssi: Some(rx.rssi),
                                                     preview,
                                                 };
-                                                if evt_tx2.send(GrpcEvent::RxFrame(entry)).await.is_err() {
+                                                if evt_tx2
+                                                    .send(GrpcEvent::RxFrame(entry))
+                                                    .await
+                                                    .is_err()
+                                                {
                                                     break;
                                                 }
                                             }
@@ -227,7 +299,67 @@ pub fn spawn(
                                     }
                                 }
                                 Err(e) => {
-                                    let _ = evt_tx2.send(GrpcEvent::Error(format!("RxStream: {}", e.message()))).await;
+                                    let _ = evt_tx2
+                                        .send(GrpcEvent::Error(format!(
+                                            "RxStream: {}",
+                                            e.message()
+                                        )))
+                                        .await;
+                                }
+                            }
+                        });
+                    }
+
+                    GrpcCommand::SubscribeTx { module } => {
+                        let req = TransmitEventRequest { module };
+                        let mut radio2 = RadioClient::new(channel.clone());
+                        let evt_tx2 = evt_tx.clone();
+
+                        tokio::spawn(async move {
+                            use tokio_stream::StreamExt;
+
+                            match radio2.transmit_event_stream(req).await {
+                                Ok(resp) => {
+                                    let mut stream = resp.into_inner();
+                                    while let Some(item) = stream.next().await {
+                                        match item {
+                                            Ok(tx) => {
+                                                let bytes = tx
+                                                    .frame
+                                                    .map(|f| f.data.to_vec())
+                                                    .unwrap_or_default();
+                                                let preview = bytes
+                                                    .iter()
+                                                    .take(8)
+                                                    .map(|b| format!("{:02X}", b))
+                                                    .collect::<Vec<_>>()
+                                                    .join(" ");
+                                                let entry = RxEntry {
+                                                    is_tx: true,
+                                                    module: tx.module as u8,
+                                                    len: bytes.len(),
+                                                    rssi: None,
+                                                    preview,
+                                                };
+                                                if evt_tx2
+                                                    .send(GrpcEvent::TxFrame(entry))
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                            Err(_) => break,
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = evt_tx2
+                                        .send(GrpcEvent::Error(format!(
+                                            "TxStream: {}",
+                                            e.message()
+                                        )))
+                                        .await;
                                 }
                             }
                         });
@@ -244,16 +376,16 @@ pub fn spawn(
 
 /// Build `GrpcCommand::Configure` from current app state.
 pub fn configure_from_app(app: &App) -> Option<GrpcCommand> {
-    let freq: u64          = (app.freq_mhz.parse::<f64>().ok()? * 1_000_000.0) as u64;
-    let channel: u32       = app.channel.parse().ok()?;
-    let ch_spacing: u64    = (app.channel_spacing_khz.parse::<f64>().ok()? * 1_000.0) as u64;
-    let tx_power: u32      = app.tx_power;
-    let module_idx: i32    = app.module as i32;
+    let freq: u64 = (app.freq_mhz.parse::<f64>().ok()? * 1_000_000.0) as u64;
+    let channel: u32 = app.channel.parse().ok()?;
+    let ch_spacing: u64 = (app.channel_spacing_khz.parse::<f64>().ok()? * 1_000.0) as u64;
+    let tx_power: u32 = app.tx_power;
+    let module_idx: i32 = app.module as i32;
 
     let config = RadioConfig {
-        module:           module_idx,
+        module: module_idx,
         freq,
-        channel_spacing:  ch_spacing,
+        channel_spacing: ch_spacing,
         channel,
         bandwidth_filter: if app.bw_wide {
             BandwidthFilter::Wide as i32
@@ -264,9 +396,9 @@ pub fn configure_from_app(app: &App) -> Option<GrpcCommand> {
 
     let modulation_variant = match app.mod_type {
         ModType::Ofdm => Some(ProtoModulation::Ofdm(RadioModulationOfdm {
-            mcs:      app.ofdm_mcs.index() as u32,
-            opt:      app.ofdm_opt.index() as u32,
-            pdt:      0x03,
+            mcs: app.ofdm_mcs.index() as u32,
+            opt: app.ofdm_opt.index() as u32,
+            pdt: 0x03,
             tx_power,
         })),
         ModType::Qpsk => Some(ProtoModulation::Qpsk(RadioModulationQpsk {

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use kaonic_frame::frame::Frame;
 use radio_common::{Modulation, RadioConfig};
 use tokio::sync::broadcast;
@@ -8,7 +6,10 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     client::Client,
     error::ControllerError,
-    protocol::{Message, MessageBuilder, Payload, RadioFrame, ReceiveModule, RADIO_FRAME_SIZE},
+    protocol::{
+        Message, MessageBuilder, Payload, RADIO_FRAME_SIZE, RadioFrame, ReceiveModule,
+        TransmitModule,
+    },
 };
 
 pub use crate::protocol::GetInfoResponse;
@@ -22,6 +23,7 @@ pub const DEFAULT_TIMEOUT: core::time::Duration = core::time::Duration::from_sec
 /// querying/configuring radio modules, and receiving incoming frames via a broadcast channel.
 pub struct RadioClient {
     module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
+    module_tx_send: broadcast::Sender<Box<TransmitModule>>,
     cancel: CancellationToken,
     client: Client<Message>,
     timeout: core::time::Duration,
@@ -39,15 +41,18 @@ impl RadioClient {
         let rx_recv = client.receive();
 
         let (module_rx_send, _) = broadcast::channel(8);
+        let (module_tx_send, _) = broadcast::channel(8);
 
-        tokio::spawn(Self::listen_rx(
+        tokio::spawn(Self::listen_events(
             rx_recv,
             module_rx_send.clone(),
+            module_tx_send.clone(),
             cancel.clone(),
         ));
 
         Ok(Self {
             module_rx_send,
+            module_tx_send,
             client,
             cancel,
             timeout: DEFAULT_TIMEOUT,
@@ -63,6 +68,12 @@ impl RadioClient {
     /// from all radio modules. Multiple callers can each subscribe independently.
     pub fn module_receive(&self) -> broadcast::Receiver<Box<ReceiveModule>> {
         self.module_rx_send.subscribe()
+    }
+
+    /// Returns a broadcast receiver that yields outgoing [`TransmitModule`] frames
+    /// from all radio modules. Multiple callers can each subscribe independently.
+    pub fn module_transmit(&self) -> broadcast::Receiver<Box<TransmitModule>> {
+        self.module_tx_send.subscribe()
     }
 
     /// Sends a ping to the device and waits for a pong response.
@@ -236,9 +247,10 @@ impl RadioClient {
         self.cancel.cancel();
     }
 
-    async fn listen_rx(
+    async fn listen_events(
         mut rx_recv: broadcast::Receiver<Box<Message>>,
         module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
+        module_tx_send: broadcast::Sender<Box<TransmitModule>>,
         cancel: CancellationToken,
     ) {
         loop {
@@ -247,6 +259,9 @@ impl RadioClient {
                     match message.payload {
                         Payload::ReceiveModule(rx) => {
                             let _ = module_rx_send.send(Box::new(rx));
+                        },
+                        Payload::TransmitModuleEvent(tx) => {
+                            let _ = module_tx_send.send(Box::new(tx));
                         },
                         _ => {}
                     }

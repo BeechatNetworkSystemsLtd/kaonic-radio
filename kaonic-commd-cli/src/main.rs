@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, EventStream},
+    event::{DisableMouseCapture, EnableMouseCapture, EventStream},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -20,7 +20,10 @@ use app::App;
 use grpc::GrpcEvent;
 
 #[derive(Parser)]
-#[command(name = "kaonic-commd-cli", about = "TUI for kaonic-commd gRPC interface")]
+#[command(
+    name = "kaonic-commd-cli",
+    about = "TUI for kaonic-commd gRPC interface"
+)]
 struct Args {
     /// gRPC server address
     #[arg(default_value = "http://192.168.10.1:50051")]
@@ -95,9 +98,18 @@ async fn run(
     Ok(())
 }
 
-async fn handle_grpc_event(app: &mut App, evt: GrpcEvent, cmd_tx: &mpsc::Sender<grpc::GrpcCommand>) {
+async fn handle_grpc_event(
+    app: &mut App,
+    evt: GrpcEvent,
+    cmd_tx: &mpsc::Sender<grpc::GrpcCommand>,
+) {
     match evt {
-        GrpcEvent::Connected { module_count, serial, mtu, version } => {
+        GrpcEvent::Connected {
+            module_count,
+            serial,
+            mtu,
+            version,
+        } => {
             app.connected = true;
             app.module_count = module_count;
             app.serial = serial;
@@ -112,7 +124,12 @@ async fn handle_grpc_event(app: &mut App, evt: GrpcEvent, cmd_tx: &mpsc::Sender<
 
             // Subscribe to RX stream for each module
             for m in 0..module_count {
-                let _ = cmd_tx.send(grpc::GrpcCommand::SubscribeRx { module: m as i32 }).await;
+                let _ = cmd_tx
+                    .send(grpc::GrpcCommand::SubscribeRx { module: m as i32 })
+                    .await;
+                let _ = cmd_tx
+                    .send(grpc::GrpcCommand::SubscribeTx { module: m as i32 })
+                    .await;
             }
         }
 
@@ -122,6 +139,10 @@ async fn handle_grpc_event(app: &mut App, evt: GrpcEvent, cmd_tx: &mpsc::Sender<
         }
 
         GrpcEvent::RxFrame(entry) => {
+            app.push_rx(entry);
+        }
+
+        GrpcEvent::TxFrame(entry) => {
             app.push_rx(entry);
         }
 

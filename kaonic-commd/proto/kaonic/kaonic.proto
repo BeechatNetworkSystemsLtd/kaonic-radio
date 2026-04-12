@@ -141,6 +141,16 @@ message TransmitResponse {
   uint32 latency = 1;
 }
 
+message TransmitEventRequest {
+  RadioModule module = 1;
+}
+
+message TransmitEventResponse {
+  RadioModule module  = 1;
+  RadioFrame  frame   = 2;
+  uint32      latency = 3;
+}
+
 message ReceiveRequest {
   RadioModule module  = 1;
   uint32      timeout = 2;
@@ -159,6 +169,7 @@ service Radio {
   rpc GetModulation (ModuleRequest)   returns (RadioModulation){}
   rpc SetModulation (RadioModulation) returns (Empty)          {}
   rpc Transmit      (TransmitRequest) returns (TransmitResponse) {}
+  rpc TransmitEventStream (TransmitEventRequest) returns (stream TransmitEventResponse) {}
   rpc ReceiveStream (ReceiveRequest)  returns (stream ReceiveResponse) {}
 }
 

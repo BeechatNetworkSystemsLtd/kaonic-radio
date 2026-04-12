@@ -109,8 +109,12 @@ pub enum QpskFchip {
 }
 
 impl QpskFchip {
-    pub const ALL: &'static [QpskFchip] =
-        &[QpskFchip::F100, QpskFchip::F200, QpskFchip::F1000, QpskFchip::F2000];
+    pub const ALL: &'static [QpskFchip] = &[
+        QpskFchip::F100,
+        QpskFchip::F200,
+        QpskFchip::F1000,
+        QpskFchip::F2000,
+    ];
 
     pub fn label(&self) -> &'static str {
         match self {
@@ -221,19 +225,20 @@ impl Field {
 pub struct ModuleStatsSnapshot {
     pub rx_packets: u64,
     pub tx_packets: u64,
-    pub rx_bytes:   u64,
-    pub tx_bytes:   u64,
-    pub rx_errors:  u64,
-    pub tx_errors:  u64,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_errors: u64,
+    pub tx_errors: u64,
 }
 
 // ─── RX log entry ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct RxEntry {
+    pub is_tx: bool,
     pub module: u8,
     pub len: usize,
-    pub rssi: i32,
+    pub rssi: Option<i32>,
     pub preview: String, // hex preview of first bytes
 }
 
@@ -255,8 +260,8 @@ pub struct App {
     pub stats: Vec<ModuleStatsSnapshot>,
 
     // Radio config fields
-    pub module: usize,          // 0 = A, 1 = B
-    pub freq_mhz: String,       // editable string
+    pub module: usize,    // 0 = A, 1 = B
+    pub freq_mhz: String, // editable string
     pub channel: String,
     pub channel_spacing_khz: String,
     pub bw_wide: bool,
@@ -269,7 +274,7 @@ pub struct App {
 
     // Navigation
     pub focused_field: Field,
-    pub editing: bool,          // text-input mode for numeric fields
+    pub editing: bool, // text-input mode for numeric fields
 
     // RX log
     pub rx_log: VecDeque<RxEntry>,
@@ -394,13 +399,21 @@ impl App {
         match field {
             Field::ServerAddr => self.server_addr.clone(),
             Field::Module => {
-                if self.module == 0 { "MODULE A".into() } else { "MODULE B".into() }
+                if self.module == 0 {
+                    "MODULE A".into()
+                } else {
+                    "MODULE B".into()
+                }
             }
             Field::FreqMhz => self.freq_mhz.clone(),
             Field::Channel => self.channel.clone(),
             Field::ChannelSpacingKhz => self.channel_spacing_khz.clone(),
             Field::BwFilter => {
-                if self.bw_wide { "Wide".into() } else { "Narrow".into() }
+                if self.bw_wide {
+                    "Wide".into()
+                } else {
+                    "Narrow".into()
+                }
             }
             Field::ModType => self.mod_type.label().into(),
             Field::OfdmMcs => self.ofdm_mcs.label().into(),
@@ -438,7 +451,10 @@ impl App {
             }
             Field::BwFilter => self.bw_wide = !self.bw_wide,
             Field::ModType => {
-                let idx = ModType::ALL.iter().position(|m| *m == self.mod_type).unwrap_or(0);
+                let idx = ModType::ALL
+                    .iter()
+                    .position(|m| *m == self.mod_type)
+                    .unwrap_or(0);
                 self.mod_type = ModType::ALL[(idx + 1) % ModType::ALL.len()];
                 self.clamp_focused_field();
             }
@@ -459,7 +475,9 @@ impl App {
                 self.qpsk_mode = QpskMode::from_index(idx);
             }
             Field::TxPower => {
-                if self.tx_power < TX_POWER_MAX { self.tx_power += 1; }
+                if self.tx_power < TX_POWER_MAX {
+                    self.tx_power += 1;
+                }
             }
             _ => {}
         }
@@ -470,12 +488,19 @@ impl App {
             Field::Module => {
                 if self.module_count > 0 {
                     let count = self.module_count.max(1);
-                    self.module = if self.module == 0 { count - 1 } else { self.module - 1 };
+                    self.module = if self.module == 0 {
+                        count - 1
+                    } else {
+                        self.module - 1
+                    };
                 }
             }
             Field::BwFilter => self.bw_wide = !self.bw_wide,
             Field::ModType => {
-                let idx = ModType::ALL.iter().position(|m| *m == self.mod_type).unwrap_or(0);
+                let idx = ModType::ALL
+                    .iter()
+                    .position(|m| *m == self.mod_type)
+                    .unwrap_or(0);
                 let len = ModType::ALL.len();
                 self.mod_type = ModType::ALL[(idx + len - 1) % len];
                 self.clamp_focused_field();
@@ -501,7 +526,9 @@ impl App {
                 self.qpsk_mode = QpskMode::from_index(idx);
             }
             Field::TxPower => {
-                if self.tx_power > TX_POWER_MIN { self.tx_power -= 1; }
+                if self.tx_power > TX_POWER_MIN {
+                    self.tx_power -= 1;
+                }
             }
             _ => {}
         }
@@ -572,8 +599,7 @@ impl App {
 
     pub fn scroll_rx_down(&mut self) {
         if !self.rx_log.is_empty() {
-            self.rx_log_scroll =
-                (self.rx_log_scroll + 1).min(self.rx_log.len().saturating_sub(1));
+            self.rx_log_scroll = (self.rx_log_scroll + 1).min(self.rx_log.len().saturating_sub(1));
         }
     }
 }
