@@ -198,11 +198,14 @@ impl RadioServer {
             tokio::select! {
                 biased;
 
+
                 Ok(tx) = module_tx_recv.recv() => {
-                    let _ = client_send.send(Box::new(MessageBuilder::new()
-                        .with_rnd_id(OsRng)
-                        .with_payload(Payload::TransmitModuleEvent(*tx))
-                        .build())).await;
+                    if false {
+                        let _ = client_send.send(Box::new(MessageBuilder::new()
+                            .with_rnd_id(OsRng)
+                            .with_payload(Payload::TransmitModuleEvent(*tx))
+                            .build())).await;
+                    }
                 },
 
                 _ = cancel.cancelled() => {
