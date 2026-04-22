@@ -16,7 +16,7 @@ pub use crate::protocol::GetInfoResponse;
 
 /// Default timeout for all request/response operations.
 pub const DEFAULT_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(6);
-const MODULE_EVENT_CHANNEL_CAPACITY: usize = 256;
+const MODULE_EVENT_CHANNEL_CAPACITY: usize = 300;
 
 /// High-level client for interacting with a remote radio device over the kaonic-ctrl protocol.
 ///

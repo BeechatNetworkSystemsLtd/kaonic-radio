@@ -186,9 +186,7 @@ impl<
                         Ok((len, addr)) => {
                             if addr != local_addr && (self.filter_rx_addr.is_some_and(|a| a == addr) || self.filter_rx_addr.is_none()) {
 
-                                if let Some(_) = clients.insert(addr, Instant::now()) {
-                                    log::trace!("add client {}", addr);
-                                }
+                                clients.insert(addr, Instant::now());
 
                                 recv_frame.resize(len);
 
