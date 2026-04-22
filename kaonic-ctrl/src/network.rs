@@ -8,7 +8,7 @@ use rand::{CryptoRng, RngCore};
 
 use crate::error::ControllerError;
 
-const CONTROLLER_NETWORK_QUEUE_SIZE: usize = 16;
+const CONTROLLER_NETWORK_QUEUE_SIZE: usize = 24;
 
 pub type ControllerCoder<const MTU: usize> = BinaryPacketCoder<MTU>;
 

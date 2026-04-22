@@ -24,6 +24,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 pub type SharedRadio = Arc<std::sync::Mutex<PlatformRadio>>;
+const MODULE_EVENT_CHANNEL_CAPACITY: usize = 256;
 
 #[derive(Default)]
 pub struct ModuleStats {
@@ -56,8 +57,8 @@ impl RadioServer {
     ) -> Result<Self, KaonicError> {
         let mut machine = create_machine()?;
 
-        let (module_rx_send, module_rx_recv) = broadcast::channel(16);
-        let (module_tx_send, module_tx_recv) = broadcast::channel(16);
+        let (module_rx_send, module_rx_recv) = broadcast::channel(MODULE_EVENT_CHANNEL_CAPACITY);
+        let (module_tx_send, module_tx_recv) = broadcast::channel(MODULE_EVENT_CHANNEL_CAPACITY);
 
         let mut radio_index = 0;
         let mut radios = Vec::new();
@@ -175,11 +176,18 @@ impl RadioServer {
             tokio::select! {
                 biased;
 
-                Ok(rx) = module_rx_recv.recv() => {
-                    let _ = client_send.send(Box::new(MessageBuilder::new()
-                        .with_rnd_id(OsRng)
-                        .with_payload(Payload::ReceiveModule(*rx))
-                        .build())).await;
+                recv_result = module_rx_recv.recv() => match recv_result {
+                    Ok(rx) => {
+                        let _ = client_send.send(Box::new(MessageBuilder::new()
+                            .with_rnd_id(OsRng)
+                            .with_payload(Payload::ReceiveModule(*rx))
+                            .build())).await;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        log::warn!("radio server rx stream lagged by {skipped} messages");
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 },
 
                 _ = cancel.cancelled() => {
@@ -199,13 +207,20 @@ impl RadioServer {
                 biased;
 
 
-                Ok(tx) = module_tx_recv.recv() => {
-                    if false {
-                        let _ = client_send.send(Box::new(MessageBuilder::new()
-                            .with_rnd_id(OsRng)
-                            .with_payload(Payload::TransmitModuleEvent(*tx))
-                            .build())).await;
+                recv_result = module_tx_recv.recv() => match recv_result {
+                    Ok(tx) => {
+                        if false {
+                            let _ = client_send.send(Box::new(MessageBuilder::new()
+                                .with_rnd_id(OsRng)
+                                .with_payload(Payload::TransmitModuleEvent(*tx))
+                                .build())).await;
+                        }
                     }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        log::warn!("radio server tx stream lagged by {skipped} messages");
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 },
 
                 _ = cancel.cancelled() => {
@@ -232,28 +247,34 @@ impl RadioServer {
                 biased;
 
                 _ = event_recv.changed() => {
-
                     let _ = radio.lock().unwrap().update_event();
 
-                    match radio.lock().unwrap()
-                        .receive(rx_frame.clear(), core::time::Duration::from_millis(2))
-                    {
-                        Ok(rr) => {
-                            let frame_len = rx_frame.len() as u64;
-                            stats.rx_packets.fetch_add(1, Ordering::Relaxed);
-                            stats.rx_bytes.fetch_add(frame_len, Ordering::Relaxed);
+                    loop {
+                        match radio.lock().unwrap()
+                            .receive(rx_frame.clear(), core::time::Duration::from_millis(2))
+                        {
+                            Ok(rr) => {
+                                let frame_len = rx_frame.len() as u64;
+                                stats.rx_packets.fetch_add(1, Ordering::Relaxed);
+                                stats.rx_bytes.fetch_add(frame_len, Ordering::Relaxed);
 
-                            receive_module.module = module.into();
-                            receive_module.frame = RadioFrame::new_from_frame(&rx_frame);
-                            receive_module.rssi = rr.rssi;
+                                receive_module.module = module.into();
+                                receive_module.frame = RadioFrame::new_from_frame(&rx_frame);
+                                receive_module.rssi = rr.rssi;
 
-                            if let Err(_) = module_rx_send.send(receive_module) {
-                                log::error!("can't send module-rx event");
+                                if let Err(_) = module_rx_send.send(receive_module) {
+                                    log::error!("can't send module-rx event");
+                                }
+
+                                receive_module = Box::new(ReceiveModule::new());
                             }
-                        }
-                        Err(e) => {
-                            if e != KaonicError::Timeout {
+                            Err(KaonicError::Timeout) => {
+                                break;
+                            }
+                            Err(e) => {
                                 stats.rx_errors.fetch_add(1, Ordering::Relaxed);
+                                log::warn!("radio[{module}] receive error: {e:?}");
+                                break;
                             }
                         }
                     }

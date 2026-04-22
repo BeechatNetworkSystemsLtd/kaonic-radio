@@ -16,6 +16,7 @@ pub use crate::protocol::GetInfoResponse;
 
 /// Default timeout for all request/response operations.
 pub const DEFAULT_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(6);
+const MODULE_EVENT_CHANNEL_CAPACITY: usize = 256;
 
 /// High-level client for interacting with a remote radio device over the kaonic-ctrl protocol.
 ///
@@ -40,8 +41,8 @@ impl RadioClient {
     ) -> Result<Self, ControllerError> {
         let rx_recv = client.receive();
 
-        let (module_rx_send, _) = broadcast::channel(8);
-        let (module_tx_send, _) = broadcast::channel(8);
+        let (module_rx_send, _) = broadcast::channel(MODULE_EVENT_CHANNEL_CAPACITY);
+        let (module_tx_send, _) = broadcast::channel(MODULE_EVENT_CHANNEL_CAPACITY);
 
         tokio::spawn(Self::listen_events(
             rx_recv,
@@ -255,17 +256,24 @@ impl RadioClient {
     ) {
         loop {
             tokio::select! {
-                Ok(message) = rx_recv.recv() => {
-                    match message.payload {
-                        Payload::ReceiveModule(rx) => {
-                            let _ = module_rx_send.send(Box::new(rx));
-                        },
-                        Payload::TransmitModuleEvent(tx) => {
-                            let _ = module_tx_send.send(Box::new(tx));
-                        },
-                        _ => {}
+                recv = rx_recv.recv() => match recv {
+                    Ok(message) => {
+                        match message.payload {
+                            Payload::ReceiveModule(rx) => {
+                                let _ = module_rx_send.send(Box::new(rx));
+                            },
+                            Payload::TransmitModuleEvent(tx) => {
+                                let _ = module_tx_send.send(Box::new(tx));
+                            },
+                            _ => {}
+                        }
                     }
-                }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        log::warn!("radio client event stream lagged by {skipped} messages");
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
                 _ = cancel.cancelled() => {
                     break;
                 }
