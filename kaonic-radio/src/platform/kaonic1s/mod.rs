@@ -196,7 +196,7 @@ impl Radio for Kaonic1SRadio {
     fn set_config(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
         self.fem.adjust(config)?;
 
-        log::trace!("set radio config ({}) = {}", self.radio.name(), config);
+        log::debug!("set radio config ({}) = {}", self.radio.name(), config);
 
         self.radio.set_frequency(config)?;
 
@@ -231,8 +231,8 @@ impl Radio for Kaonic1SRadio {
                 log::error!("tx [{}] {} error", self.radio.name(), i);
                 std::thread::sleep(core::time::Duration::from_millis(4));
             } else {
-                log::trace!(
-                    "tx [{}] -))) |o| {:>4} bytes {:>4}us",
+                log::debug!(
+                    "tx [{}] -) |o| {:>4} bytes {:>4}us",
                     self.radio.name(),
                     frame.len(),
                     start.elapsed().as_micros(),
@@ -262,8 +262,8 @@ impl Radio for Kaonic1SRadio {
 
         match result {
             Ok(_) => {
-                log::trace!(
-                    "rx [{}] (((- |o| {:>4} bytes {:>3}us",
+                log::debug!(
+                    "rx [{}] (- |o| {:>4} bytes {:>3}us",
                     self.radio.name(),
                     self.bb_frame.len(),
                     start.elapsed().as_micros(),

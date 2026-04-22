@@ -20,7 +20,7 @@ const GRPC_ADDR: &str = "0.0.0.0:50051";
 #[tokio::main(flavor = "multi_thread", worker_threads = 12)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Trace)
+        .filter_level(log::LevelFilter::Debug)
         .init();
 
     let version = env!("CARGO_PKG_VERSION");
