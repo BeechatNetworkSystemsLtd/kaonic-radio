@@ -1,0 +1,9 @@
+[kaonic-plugin]
+name = "Kaonic Communication Daemon"
+description = "A modular RF communication system for embedded radio operations with dual-band support (sub-GHz and 2.4 GHz)."
+version = "0.2.0"
+service = "kaonic-commd.service"
+developer = "Beechat Network Systems Ltd"
+github_url = "https://github.com/BeechatNetworkSystemsLtd/kaonic-radio"
+bin_path = "/usr/bin/kaonic-commd"
+
