@@ -27,7 +27,7 @@ struct RadioBusConfig {
     spi: LinuxSpiConfig,
     flt_v1_gpio: LinuxGpioLineConfig,
     flt_v2_gpio: LinuxGpioLineConfig,
-    flt_24_gpio: LinuxGpioLineConfig,
+    flt_24_gpio: Option<LinuxGpioLineConfig>,
     ant_24_gpio: Option<LinuxGpioLineConfig>,
 }
 
@@ -48,10 +48,10 @@ const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip8",
             offset: 11,
         },
-        flt_24_gpio: LinuxGpioLineConfig {
+        flt_24_gpio: Some(LinuxGpioLineConfig {
             chip: "/dev/gpiochip8",
             offset: 12,
-        },
+        }),
         ant_24_gpio: None,
     },
     RadioBusConfig {
@@ -70,10 +70,10 @@ const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip8",
             offset: 1,
         },
-        flt_24_gpio: LinuxGpioLineConfig {
+        flt_24_gpio: Some(LinuxGpioLineConfig {
             chip: "/dev/gpiochip8",
             offset: 2,
-        },
+        }),
         ant_24_gpio: None,
     },
 ];
@@ -95,10 +95,10 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip9",
             offset: 11,
         },
-        flt_24_gpio: LinuxGpioLineConfig {
+        flt_24_gpio: Some(LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
             offset: 12,
-        },
+        }),
         ant_24_gpio: Some(LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
             offset: 13,
@@ -120,10 +120,10 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip9",
             offset: 1,
         },
-        flt_24_gpio: LinuxGpioLineConfig {
+        flt_24_gpio: Some(LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
             offset: 2,
-        },
+        }),
         ant_24_gpio: Some(LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
             offset: 14,
@@ -132,6 +132,54 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
 ];
 
 const RADIO_CONFIG_REV_C: [RadioBusConfig; 2] = RADIO_CONFIG_REV_B;
+const RADIO_CONFIG_REV_24: [RadioBusConfig; 2] = RADIO_CONFIG_REV_C;
+
+const RADIO_CONFIG_REV_30: [RadioBusConfig; 2] = [
+    RadioBusConfig {
+        name: "rfa",
+        rst_gpio: LinuxGpioConfig { line_name: "PD8" },
+        irq_gpio: LinuxGpioConfig { line_name: "PD9" },
+        spi: LinuxSpiConfig {
+            path: "/dev/spidev4.0",
+            max_speed: 12_000_000,
+        },
+        flt_v1_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 10,
+        },
+        flt_v2_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 11,
+        },
+        flt_24_gpio: None,
+        ant_24_gpio: Some(LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 13,
+        }),
+    },
+    RadioBusConfig {
+        name: "rfb",
+        rst_gpio: LinuxGpioConfig { line_name: "PE13" },
+        irq_gpio: LinuxGpioConfig { line_name: "PE15" },
+        spi: LinuxSpiConfig {
+            path: "/dev/spidev3.0",
+            max_speed: 12_000_000,
+        },
+        flt_v1_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 0,
+        },
+        flt_v2_gpio: LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 1,
+        },
+        flt_24_gpio: None,
+        ant_24_gpio: Some(LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 14,
+        }),
+    },
+];
 
 pub fn create_radios() -> Result<[Option<Kaonic1SRadio>; 2], BusError> {
     // Read machine configuration from /etc/kaonic/kaonic_machine
@@ -153,6 +201,8 @@ pub fn create_radios() -> Result<[Option<Kaonic1SRadio>; 2], BusError> {
         "stm32mp1-kaonic-protoa" => &RADIO_CONFIG_REV_A,
         "stm32mp1-kaonic-protob" => &RADIO_CONFIG_REV_B,
         "stm32mp1-kaonic-protoc" => &RADIO_CONFIG_REV_C,
+        "stm32mp1-kaonic1s-r24" => &RADIO_CONFIG_REV_24,
+        "stm32mp1-kaonic1s-r30" => &RADIO_CONFIG_REV_30,
         _ => {
             log::warn!(
                 "Unknown machine configuration '{}', using rev_a as default",
@@ -295,6 +345,17 @@ fn create_radio(index: usize, config: &RadioBusConfig) -> Result<Kaonic1SRadio, 
     // Default configuration for Kaonic1S
     configure_radio(&mut radio, index).map_err(|_| BusError::ControlFailure)?;
 
+    let flt_24 = if let Some(flt_24) = &config.flt_24_gpio {
+        LinuxOutputPin::new_from_line(
+            flt_24.chip,
+            flt_24.offset,
+            &format!("{}-flt-sel-24", config.name),
+        )
+        .ok()
+    } else {
+        None
+    };
+
     let ant_24 = if let Some(ant_24) = &config.ant_24_gpio {
         LinuxOutputPin::new_from_line(
             ant_24.chip,
@@ -319,12 +380,7 @@ fn create_radio(index: usize, config: &RadioBusConfig) -> Result<Kaonic1SRadio, 
             &format!("{}-flt-sel-v2", config.name),
         )
         .map_err(|_| BusError::ControlFailure)?,
-        LinuxOutputPin::new_from_line(
-            config.flt_24_gpio.chip,
-            config.flt_24_gpio.offset,
-            &format!("{}-flt-sel-24", config.name),
-        )
-        .map_err(|_| BusError::ControlFailure)?,
+        flt_24,
         ant_24,
     );
 

@@ -36,7 +36,7 @@ pub type Kaonic1SBus = SpiBus<LinuxSpi, AtomicInterrupt, LinuxClock, LinuxGpioRe
 pub struct Kaonic1SRadioFem {
     flt_v1: LinuxOutputPin,
     flt_v2: LinuxOutputPin,
-    flt_24: LinuxOutputPin,
+    flt_24: Option<LinuxOutputPin>,
     ant_24: Option<LinuxOutputPin>,
 }
 
@@ -44,7 +44,7 @@ impl Kaonic1SRadioFem {
     pub fn new(
         flt_v1: LinuxOutputPin,
         flt_v2: LinuxOutputPin,
-        flt_24: LinuxOutputPin,
+        flt_24: Option<LinuxOutputPin>,
         ant_24: Option<LinuxOutputPin>,
     ) -> Self {
         Self {
@@ -105,7 +105,9 @@ impl Kaonic1SRadioFem {
         self.set_bandwidth_filter(config.bandwidth_filter, config.freq)?;
 
         // NOTE: Should be set to 0
-        let _ = self.flt_24.set_low();
+        if let Some(flt_24) = &mut self.flt_24 {
+            let _ = flt_24.set_low();
+        }
 
         Ok(())
     }
