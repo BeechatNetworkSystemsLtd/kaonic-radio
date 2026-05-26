@@ -21,6 +21,7 @@ const GRPC_ADDR: &str = "0.0.0.0:50051";
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
+        .parse_default_env()
         .init();
 
     let version = env!("CARGO_PKG_VERSION");
