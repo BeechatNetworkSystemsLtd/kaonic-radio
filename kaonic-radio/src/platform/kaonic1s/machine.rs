@@ -309,13 +309,16 @@ fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>, index: usize) -> Result<()
 }
 
 fn create_radio(index: usize, config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
-    let mut spi = LinuxSpi::open(&config.spi.path).map_err(|_| BusError::ControlFailure)?;
+    let mut spi = LinuxSpi::open(&config.spi.path)
+        .inspect_err(|_| log::error!("can't open spi '{}'", config.spi.path))
+        .map_err(|_| BusError::ControlFailure)?;
 
     spi.configure(
         &SpidevOptions::new()
             .max_speed_hz(config.spi.max_speed)
             .build(),
     )
+    .inspect_err(|_| log::error!("can't configure spi '{}'", config.spi.path))
     .map_err(|_| BusError::ControlFailure)?;
 
     // Create GPIO interfaces
@@ -339,11 +342,16 @@ fn create_radio(index: usize, config: &RadioBusConfig) -> Result<Kaonic1SRadio, 
 
     let bus = std::sync::Arc::new(std::sync::Mutex::new(bus));
 
-    // Probe and initialize the RF215
-    let mut radio = Rf215::probe(SharedBus::new(bus), config.name)?;
+    log::debug!("probe radio {} spi:{}@{}Hz", config.name, config.spi.path, config.spi.max_speed);
 
-    // Default configuration for Kaonic1S
-    configure_radio(&mut radio, index).map_err(|_| BusError::ControlFailure)?;
+    let mut radio = Rf215::probe(SharedBus::new(bus), config.name)
+        .inspect_err(|_| log::error!("radio probe fail for {}", config.name))?;
+
+    log::debug!("configure radio {}", config.name);
+
+    configure_radio(&mut radio, index)
+        .inspect_err(|_| log::error!("radio config fail for {}", config.name))
+        .map_err(|_| BusError::ControlFailure)?;
 
     let flt_24 = if let Some(flt_24) = &config.flt_24_gpio {
         LinuxOutputPin::new_from_line(

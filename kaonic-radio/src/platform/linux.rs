@@ -173,7 +173,9 @@ fn create_gpio_by_line(
 
     let mut req_config = libgpiod::request::Config::new()?;
 
-    let request = chip.request_lines(Some(req_config.set_consumer(name)?), &line_config)?;
+    let request = chip
+        .request_lines(Some(req_config.set_consumer(name)?), &line_config)
+        .inspect_err(|_| log::error!("can't request gpio line for {}", name))?;
 
     return Ok((line.offset, request));
 }
@@ -192,10 +194,11 @@ fn create_gpio_by_name(
 
             let mut req_config = libgpiod::request::Config::new()?;
 
-            let request = chip.request_lines(Some(req_config.set_consumer(name)?), &line_config)?;
+            let request = chip
+                .request_lines(Some(req_config.set_consumer(name)?), &line_config)
+                .inspect_err(|_| log::error!("can't request gpio line for {}", name))?;
 
             return Ok((offset, request));
-        } else {
         }
     }
 
