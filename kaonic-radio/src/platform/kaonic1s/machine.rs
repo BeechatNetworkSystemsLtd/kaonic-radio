@@ -1,4 +1,4 @@
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::{Arc, Mutex, atomic::AtomicUsize};
 
 use linux_embedded_hal::spidev::SpidevOptions;
 use radio_common::{modulation::OfdmModulation, Hertz, Modulation, RadioConfigBuilder};
@@ -12,7 +12,7 @@ use radio_rf215::{
 };
 
 use crate::platform::{
-    kaonic1s::{Kaonic1SRadio, Kaonic1SRadioEvent, Kaonic1SRadioFem},
+    kaonic1s::{fpga::Kaonic1SFpga, Kaonic1SRadio, Kaonic1SRadioEvent, Kaonic1SRadioFem},
     linux::{
         LinuxClock, LinuxGpioConfig, LinuxGpioInterrupt, LinuxGpioLineConfig, LinuxGpioReset,
         LinuxOutputPin, LinuxSpi, LinuxSpiConfig, SharedBus,
@@ -181,7 +181,9 @@ const RADIO_CONFIG_REV_30: [RadioBusConfig; 2] = [
     },
 ];
 
-pub fn create_radios() -> Result<[Option<Kaonic1SRadio>; 2], BusError> {
+pub fn create_radios(
+    fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
+) -> Result<[Option<Kaonic1SRadio>; 2], BusError> {
     // Read machine configuration from /etc/kaonic/kaonic_machine
     let machine_config = match std::fs::read_to_string("/etc/kaonic/kaonic_machine") {
         Ok(content) => content.trim().to_string(),
@@ -216,7 +218,7 @@ pub fn create_radios() -> Result<[Option<Kaonic1SRadio>; 2], BusError> {
 
     // Create radios based on selected configuration
     for (index, config) in radio_configs.iter().enumerate() {
-        match create_radio(index, config) {
+        match create_radio(index, fpga.clone(), config) {
             Ok(radio) => {
                 radios[index] = Some(radio);
             }
@@ -308,7 +310,11 @@ fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>, index: usize) -> Result<()
     Ok(())
 }
 
-fn create_radio(index: usize, config: &RadioBusConfig) -> Result<Kaonic1SRadio, BusError> {
+fn create_radio(
+    index: usize,
+    fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
+    config: &RadioBusConfig,
+) -> Result<Kaonic1SRadio, BusError> {
     let mut spi = LinuxSpi::open(&config.spi.path)
         .inspect_err(|_| log::error!("can't open spi '{}'", config.spi.path))
         .map_err(|_| BusError::ControlFailure)?;
@@ -342,7 +348,12 @@ fn create_radio(index: usize, config: &RadioBusConfig) -> Result<Kaonic1SRadio, 
 
     let bus = std::sync::Arc::new(std::sync::Mutex::new(bus));
 
-    log::debug!("probe radio {} spi:{}@{}Hz", config.name, config.spi.path, config.spi.max_speed);
+    log::debug!(
+        "probe radio {} spi:{}@{}Hz",
+        config.name,
+        config.spi.path,
+        config.spi.max_speed
+    );
 
     let mut radio = Rf215::probe(SharedBus::new(bus), config.name)
         .inspect_err(|_| log::error!("radio probe fail for {}", config.name))?;
@@ -392,5 +403,5 @@ fn create_radio(index: usize, config: &RadioBusConfig) -> Result<Kaonic1SRadio, 
         ant_24,
     );
 
-    Ok(Kaonic1SRadio::new(radio, radio_event, fem))
+    Ok(Kaonic1SRadio::new(radio, radio_event, fem, fpga))
 }

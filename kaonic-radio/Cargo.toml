@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["machine-kaonic1s"]
-machine-kaonic1s = ["dep:libgpiod", "dep:linux-embedded-hal"]
+machine-kaonic1s = ["dep:libgpiod", "dep:linux-embedded-hal", "dep:memmap2"]
 machine-host = []
 
 [dependencies]
@@ -19,4 +19,5 @@ log = "0.4"
 # Optional dependencies for kaonic1s hardware
 libgpiod = { version = "0.2.2", optional = true }
 linux-embedded-hal = { version = "0.4.0", default-features = false, features = [ "spi" ], optional = true }
+memmap2 = { version = "0.9.8", optional = true }
 

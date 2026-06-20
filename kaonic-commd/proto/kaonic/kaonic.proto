@@ -129,6 +129,20 @@ message RadioModulation {
 }
 
 //***************************************************************************//
+// Acceleration
+//***************************************************************************//
+
+enum Acceleration {
+  ACCELERATION_NATIVE   = 0; // on-chip baseband
+  ACCELERATION_HARDWARE = 1; // external FPGA accelerator
+}
+
+message RadioAcceleration {
+  RadioModule  module       = 1;
+  Acceleration acceleration = 2;
+}
+
+//***************************************************************************//
 // Radio service
 //***************************************************************************//
 
@@ -168,6 +182,8 @@ service Radio {
   rpc SetConfig     (RadioConfig)     returns (Empty)          {}
   rpc GetModulation (ModuleRequest)   returns (RadioModulation){}
   rpc SetModulation (RadioModulation) returns (Empty)          {}
+  rpc GetAcceleration (ModuleRequest)     returns (RadioAcceleration) {}
+  rpc SetAcceleration (RadioAcceleration) returns (Empty)             {}
   rpc Transmit      (TransmitRequest) returns (TransmitResponse) {}
   rpc TransmitEventStream (TransmitEventRequest) returns (stream TransmitEventResponse) {}
   rpc ReceiveStream (ReceiveRequest)  returns (stream ReceiveResponse) {}

@@ -377,6 +377,32 @@ impl ServerHandler<Message> for RadioServer {
                     response.payload = Payload::Error;
                 }
             }
+            Payload::SetAccelerationRequest(set) => {
+                if set.module < self.radios.len() {
+                    let _ = self.radios[set.module]
+                        .lock()
+                        .unwrap()
+                        .set_accelerator(&set.acceleration);
+
+                    response.payload = Payload::SetAccelerationResponse;
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
+            Payload::GetAccelerationRequest(get) => {
+                if get.module < self.radios.len() {
+                    let acceleration = self.radios[get.module].lock().unwrap().get_accelerator();
+
+                    response.payload = Payload::GetAccelerationResponse(
+                        kaonic_ctrl::protocol::GetAccelerationResponse {
+                            module: get.module,
+                            acceleration,
+                        },
+                    );
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
             Payload::GetInfoRequest => {
                 response.payload =
                     Payload::GetInfoResponse(kaonic_ctrl::protocol::GetInfoResponse {

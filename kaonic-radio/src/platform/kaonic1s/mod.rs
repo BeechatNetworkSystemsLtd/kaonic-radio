@@ -11,21 +11,22 @@ use radio_common::{
 use radio_rf215::{
     baseband::BasebandFrame,
     bus::{BusInterrupt, SpiBus},
-    Rf215,
+    ChipMode, Rf215,
 };
 
 use crate::{
     error::KaonicError,
     platform::{
-        kaonic1s::machine::create_radios,
+        kaonic1s::{fpga::Kaonic1SFpga, machine::create_radios},
         linux::{
             LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
         },
         linux_rf215::AtomicInterrupt,
     },
-    radio::{Radio, ReceiveResult, ScanResult},
+    radio::{Accelerator, Radio, ReceiveResult, ScanResult},
 };
 
+pub mod fpga;
 mod machine;
 
 pub const FRAME_SIZE: usize = 2048usize;
@@ -144,9 +145,10 @@ pub struct Kaonic1SRadio {
     radio: Kaonic1SRf215,
     event: Arc<Mutex<Kaonic1SRadioEvent>>,
     bb_frame: BasebandFrame,
-
     config: RadioConfig,
     modulation: Modulation,
+    accelerator: Accelerator,
+    fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
 
     noise_dbm: i8,
 }
@@ -156,6 +158,7 @@ impl Kaonic1SRadio {
         radio: Rf215<SharedBus<Kaonic1SBus>>,
         event: Kaonic1SRadioEvent,
         fem: Kaonic1SRadioFem,
+        fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
     ) -> Self {
         Self {
             radio,
@@ -164,6 +167,8 @@ impl Kaonic1SRadio {
             bb_frame: BasebandFrame::new(),
             config: RadioConfigBuilder::new().build(),
             modulation: Modulation::Ofdm(OfdmModulation::default()),
+            accelerator: Accelerator::Native,
+            fpga,
             noise_dbm: -127,
         }
     }
@@ -302,18 +307,62 @@ impl Radio for Kaonic1SRadio {
 
         Ok(ScanResult { rssi, snr: 0 })
     }
+
+    fn set_accelerator(&mut self, accelerator: &Accelerator) -> Result<(), KaonicError> {
+        match accelerator {
+            Accelerator::Hardware => {
+                let fpga = self.fpga.clone().ok_or(KaonicError::HardwareError)?;
+
+                // Route I/Q to the FPGA: external loopback + I/Q radio mode, then power it on.
+                // self.radio.set_iq_loopback(true)?;
+                self.radio.set_mode(ChipMode::Radio)?;
+                fpga.lock().unwrap().enable()?;
+            }
+            Accelerator::Native => {
+                // Back to on-chip baseband; power the FPGA down.
+                self.radio.set_mode(ChipMode::BasebandRadio)?;
+                self.radio.set_iq_loopback(false)?;
+                if let Some(fpga) = &self.fpga {
+                    fpga.lock().unwrap().disable()?;
+                }
+            }
+        }
+
+        self.accelerator = *accelerator;
+
+        Ok(())
+    }
+
+    fn get_accelerator(&self) -> Accelerator {
+        self.accelerator
+    }
 }
 
 pub const KAONIC1S_RADIO_COUNT: usize = 2;
 pub struct Kaonic1SMachine {
     radios: [Option<Kaonic1SRadio>; KAONIC1S_RADIO_COUNT],
+    fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
 }
 
 impl Kaonic1SMachine {
     pub fn new() -> Result<Self, KaonicError> {
-        let radios = create_radios().map_err(|_| KaonicError::HardwareError)?;
+        let fpga = Kaonic1SFpga::new()
+            .map(|fpga| Arc::new(Mutex::new(fpga)))
+            .ok();
 
-        Ok(Self { radios })
+        if fpga.is_none() {
+            log::warn!("fpga module wasn't found");
+        } else {
+            log::info!("fpga module found");
+        }
+
+        let radios = create_radios(fpga.clone()).map_err(|_| KaonicError::HardwareError)?;
+
+        Ok(Self { radios, fpga })
+    }
+
+    pub fn fpga(&self) -> Option<Arc<Mutex<Kaonic1SFpga>>> {
+        self.fpga.clone()
     }
 
     pub fn take_radio(&mut self, index: usize) -> Option<Kaonic1SRadio> {

@@ -3,7 +3,7 @@ use std::time::Instant;
 use kaonic_ctrl::protocol::{ReceiveModule, TransmitModule};
 use kaonic_radio::{platform::PlatformRadioFrame, radio::Radio};
 use radio_common::{
-    RadioConfig,
+    Accelerator, RadioConfig,
     frequency::{BandwidthFilter, Hertz},
     modulation::{
         Modulation, OfdmBandwidthOption, OfdmMcs, OfdmModulation, QpskChipFrequency,
@@ -24,11 +24,12 @@ pub use kaonic::device_server::DeviceServer;
 pub use kaonic::radio_server::RadioServer as GrpcRadioServer;
 
 use kaonic::{
-    Empty, InfoResponse, ModuleRequest, RadioConfig as ProtoRadioConfig, RadioFrame as ProtoFrame,
-    RadioModulation, RadioModulationFsk, RadioModulationOfdm, RadioModulationQpsk, ReceiveRequest,
-    ReceiveResponse, StatisticsResponse, TransmitEventRequest, TransmitEventResponse,
-    TransmitRequest, TransmitResponse, device_server::Device,
-    radio_modulation::Modulation as ProtoModulation, radio_server::Radio as RadioTrait,
+    Acceleration as ProtoAcceleration, Empty, InfoResponse, ModuleRequest,
+    RadioAcceleration, RadioConfig as ProtoRadioConfig, RadioFrame as ProtoFrame, RadioModulation,
+    RadioModulationFsk, RadioModulationOfdm, RadioModulationQpsk, ReceiveRequest, ReceiveResponse,
+    StatisticsResponse, TransmitEventRequest, TransmitEventResponse, TransmitRequest,
+    TransmitResponse, device_server::Device, radio_modulation::Modulation as ProtoModulation,
+    radio_server::Radio as RadioTrait,
 };
 
 //***********************************************************************************************//
@@ -130,6 +131,20 @@ fn qpsk_mode_to_u32(mode: &QpskRateMode) -> u32 {
         QpskRateMode::RateMode2 => 2,
         QpskRateMode::RateMode3 => 3,
         QpskRateMode::RateMode4 => 4,
+    }
+}
+
+fn acceleration_from_proto(v: i32) -> Accelerator {
+    match ProtoAcceleration::try_from(v) {
+        Ok(ProtoAcceleration::Hardware) => Accelerator::Hardware,
+        _ => Accelerator::Native,
+    }
+}
+
+fn acceleration_to_proto(accelerator: &Accelerator) -> i32 {
+    match accelerator {
+        Accelerator::Native => ProtoAcceleration::Native as i32,
+        Accelerator::Hardware => ProtoAcceleration::Hardware as i32,
     }
 }
 
@@ -355,6 +370,38 @@ impl RadioTrait for RadioService {
             .unwrap()
             .set_modulation(&modulation)
             .map_err(|e| Status::internal(format!("set_modulation: {:?}", e)))?;
+        Ok(Response::new(Empty {}))
+    }
+
+    // ── GetAcceleration ───────────────────────────────────────────────────────
+
+    async fn get_acceleration(
+        &self,
+        request: Request<ModuleRequest>,
+    ) -> Result<Response<RadioAcceleration>, Status> {
+        let module = request.into_inner().module;
+        let idx = self.module_index(module)?;
+        let accelerator = self.radios[idx].lock().unwrap().get_accelerator();
+        Ok(Response::new(RadioAcceleration {
+            module,
+            acceleration: acceleration_to_proto(&accelerator),
+        }))
+    }
+
+    // ── SetAcceleration ───────────────────────────────────────────────────────
+
+    async fn set_acceleration(
+        &self,
+        request: Request<RadioAcceleration>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        let idx = self.module_index(req.module)?;
+        let accelerator = acceleration_from_proto(req.acceleration);
+        self.radios[idx]
+            .lock()
+            .unwrap()
+            .set_accelerator(&accelerator)
+            .map_err(|e| Status::internal(format!("set_acceleration: {:?}", e)))?;
         Ok(Response::new(Empty {}))
     }
 

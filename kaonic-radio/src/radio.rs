@@ -1,5 +1,7 @@
 use radio_common::{Modulation, RadioConfig};
 
+pub use radio_common::Accelerator;
+
 use crate::error::KaonicError;
 
 /// Result of a successful frame reception.
@@ -42,6 +44,10 @@ pub trait Radio {
 
     /// Returns the current modulation scheme.
     fn get_modulation(&self) -> Modulation;
+
+    fn set_accelerator(&mut self, accelerator: &Accelerator) -> Result<(), KaonicError>;
+
+    fn get_accelerator(&self) -> Accelerator;
 
     /// Transmits a frame over the air.
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError>;

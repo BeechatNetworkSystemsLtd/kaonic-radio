@@ -1,14 +1,16 @@
-use kaonic_radio::{error::KaonicError, platform::linux::LinuxOutputPin};
-use memmap2::{MmapMut, MmapOptions};
 use std::fs::OpenOptions;
+
+use memmap2::{MmapMut, MmapOptions};
+
+use crate::{error::KaonicError, platform::linux::LinuxOutputPin};
+
+const PSRAM_SIZE: usize = 1;
+const PSRAM_OFFSET: u64 = 0x64000000;
 
 pub struct Kaonic1SFpga {
     enable_gpio: LinuxOutputPin,
     mmap: MmapMut,
 }
-
-const PSRAM_SIZE: usize = 1;
-const PSRAM_OFFSET: u64 = 0x64000000;
 
 impl Kaonic1SFpga {
     pub fn new() -> Result<Self, KaonicError> {
@@ -18,14 +20,16 @@ impl Kaonic1SFpga {
             .read(true)
             .write(true)
             .open("/dev/mem")
-            .map_err(|_| KaonicError::IncorrectSettings)?;
+            .map_err(|_| KaonicError::IncorrectSettings)
+            .inspect_err(|_| log::error!("can't open psram"))?;
 
         let mmap = unsafe {
             MmapOptions::new()
                 .offset(PSRAM_OFFSET as u64)
                 .len(PSRAM_SIZE)
                 .map_mut(&file)
-                .map_err(|_| KaonicError::HardwareError)?
+                .map_err(|_| KaonicError::HardwareError)
+                .inspect_err(|_| log::error!("can't create fpga mmap"))?
         };
 
         enable_gpio.set_low()?;

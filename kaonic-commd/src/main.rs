@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx_sender = radio_server.tx_sender();
 
     // Start UDP server
-    let server = Server::listen(
+    let _server = Server::listen(
         udp_addr,
         MessageCoder::<SERVER_MTU, SERVER_SEGMENTS>::new(),
         radio_server,
