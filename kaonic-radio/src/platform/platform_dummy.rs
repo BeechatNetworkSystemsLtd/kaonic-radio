@@ -5,7 +5,7 @@ use radio_common::{modulation::OfdmModulation, Modulation, RadioConfig, RadioCon
 
 use crate::{
     error::KaonicError,
-    radio::{Radio, ReceiveResult, ScanResult},
+    radio::{Accelerator, Radio, ReceiveResult, ScanResult},
 };
 
 pub type DummyFrame = Frame<2048>;
@@ -94,6 +94,18 @@ impl Radio for DummyRadio {
 
     fn scan(&mut self, _timeout: core::time::Duration) -> Result<ScanResult, KaonicError> {
         Err(KaonicError::HardwareError)
+    }
+
+    fn set_accelerator(&mut self, accelerator: &Accelerator) -> Result<(), KaonicError> {
+        // The host platform has no FPGA accelerator.
+        match accelerator {
+            Accelerator::Native => Ok(()),
+            Accelerator::Hardware => Err(KaonicError::NotSupported),
+        }
+    }
+
+    fn get_accelerator(&self) -> Accelerator {
+        Accelerator::Native
     }
 }
 

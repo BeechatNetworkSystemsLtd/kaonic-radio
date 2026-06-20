@@ -952,8 +952,6 @@ dependencies = [
  "toml 0.8.23",
  "tonic",
  "tonic-build",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1008,18 +1006,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kaonic-fpga"
-version = "0.1.0"
-dependencies = [
- "kaonic-radio",
- "log",
- "memmap2",
- "radio-common",
- "radio-rf215",
- "simple_logger",
-]
-
-[[package]]
 name = "kaonic-frame"
 version = "0.1.0"
 dependencies = [
@@ -1063,6 +1049,7 @@ dependencies = [
  "libgpiod",
  "linux-embedded-hal",
  "log",
+ "memmap2",
  "radio-common",
  "radio-rf215",
 ]

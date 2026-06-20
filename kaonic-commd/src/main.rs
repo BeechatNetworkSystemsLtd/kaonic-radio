@@ -17,10 +17,12 @@ const SERVER_SEGMENTS: usize = 5;
 const UDP_ADDR: &str = "0.0.0.0:9090";
 const GRPC_ADDR: &str = "0.0.0.0:50051";
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 12)]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Default to Info; honor RUST_LOG so Debug can be re-enabled in the field without a rebuild.
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
         .init();
 
     let version = env!("CARGO_PKG_VERSION");
@@ -50,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx_sender = radio_server.tx_sender();
 
     // Start UDP server
-    let server = Server::listen(
+    let _server = Server::listen(
         udp_addr,
         MessageCoder::<SERVER_MTU, SERVER_SEGMENTS>::new(),
         radio_server,

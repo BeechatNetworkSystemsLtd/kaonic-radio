@@ -11,7 +11,6 @@ members = [
     "kaonic-ctrl", 
 
     # Hardware BSP
-    "kaonic-fpga",
     "kaonic-radio",
 
     # Algorithms
@@ -24,4 +23,11 @@ members = [
 ]
 
 # exclude = ["kaonic-gui"]
+
+[profile.release]
+opt-level = 3          # max speed (default for release; explicit)
+lto = "fat"            # whole-program inlining across crates
+codegen-units = 1      # let LTO see everything; better codegen, slower compile
+panic = "abort"        # drop unwinding tables/landing pads: smaller + slightly faster
+strip = true           # strip symbols from the shipped binary
 

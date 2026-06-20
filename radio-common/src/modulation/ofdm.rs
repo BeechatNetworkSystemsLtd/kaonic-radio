@@ -22,11 +22,23 @@ pub enum OfdmBandwidthOption {
     Option4 = 0x03,
 }
 
+impl OfdmBandwidthOption {
+    /// Recommended preamble detection threshold (OFDMSW.PDT) for this bandwidth option,
+    /// per AT86RF215 datasheet Table 6-93.
+    pub const fn recommended_pdt(&self) -> u8 {
+        match self {
+            OfdmBandwidthOption::Option1 => 5,
+            OfdmBandwidthOption::Option2 => 5,
+            OfdmBandwidthOption::Option3 => 4,
+            OfdmBandwidthOption::Option4 => 3,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct OfdmModulation {
     pub mcs: OfdmMcs,
     pub opt: OfdmBandwidthOption,
-    pub pdt: u8, // Preamble Detection Threshold
     pub tx_power: u8,
 }
 
@@ -35,7 +47,6 @@ impl Default for OfdmModulation {
         Self {
             mcs: OfdmMcs::QamC3_4,
             opt: OfdmBandwidthOption::Option1,
-            pdt: 0x03,
             tx_power: 10,
         }
     }

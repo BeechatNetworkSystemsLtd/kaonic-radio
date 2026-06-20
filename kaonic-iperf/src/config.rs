@@ -186,7 +186,6 @@ fn parse_modulation(presets: &HashMap<String, toml::Value>, name: &str) -> Optio
             Some(Modulation::Ofdm(OfdmModulation {
                 mcs,
                 opt,
-                pdt: 0x03,
                 tx_power,
             }))
         }

@@ -1,5 +1,5 @@
 use kaonic_frame::frame::FrameSegment;
-use radio_common::{Modulation, RadioConfig};
+use radio_common::{Accelerator, Modulation, RadioConfig};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 
@@ -131,6 +131,23 @@ pub struct GetRadioConfigResponse {
     pub config: RadioConfig,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SetAccelerationRequest {
+    pub module: usize,
+    pub acceleration: Accelerator,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GetAccelerationRequest {
+    pub module: usize,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GetAccelerationResponse {
+    pub module: usize,
+    pub acceleration: Accelerator,
+}
+
 //***********************************************************************************************//
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -156,6 +173,11 @@ pub enum Payload {
     GetStatisticsResponse(GetStatisticsResponse),
     NotImplemented,
     Error,
+    // New variants appended at the end to keep rmp-serde's index-based variant encoding stable.
+    SetAccelerationRequest(SetAccelerationRequest),
+    SetAccelerationResponse,
+    GetAccelerationRequest(GetAccelerationRequest),
+    GetAccelerationResponse(GetAccelerationResponse),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

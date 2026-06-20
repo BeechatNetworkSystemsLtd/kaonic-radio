@@ -2,7 +2,7 @@ use std::{net::SocketAddr, time::Duration};
 
 use kaonic_frame::frame::Frame;
 use rand::rngs::OsRng;
-use radio_common::{Modulation, RadioConfig};
+use radio_common::{Accelerator, Modulation, RadioConfig};
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -196,6 +196,43 @@ impl RadioClient {
         .await?;
 
         Ok(())
+    }
+
+    /// Sets the acceleration mode (native baseband vs FPGA hardware) for the specified module.
+    pub async fn set_accelerator(
+        &mut self,
+        module: usize,
+        acceleration: Accelerator,
+    ) -> Result<(), ControllerError> {
+        let response = self
+            .request(Payload::SetAccelerationRequest(
+                crate::protocol::SetAccelerationRequest {
+                    module,
+                    acceleration,
+                },
+            ))
+            .await?;
+
+        match response.payload {
+            Payload::Error => Err(ControllerError::MethodError),
+            Payload::SetAccelerationResponse => Ok(()),
+            _ => Err(ControllerError::DecodeError),
+        }
+    }
+
+    /// Retrieves the current acceleration mode of the specified radio module.
+    pub async fn get_accelerator(&mut self, module: usize) -> Result<Accelerator, ControllerError> {
+        let response = self
+            .request(Payload::GetAccelerationRequest(
+                crate::protocol::GetAccelerationRequest { module },
+            ))
+            .await?;
+
+        match response.payload {
+            Payload::Error => Err(ControllerError::MethodError),
+            Payload::GetAccelerationResponse(r) => Ok(r.acceleration),
+            _ => Err(ControllerError::DecodeError),
+        }
     }
 
     /// Queries the device for general info (e.g. number of radio modules).
