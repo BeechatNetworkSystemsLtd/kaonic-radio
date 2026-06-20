@@ -138,7 +138,8 @@ fn modulation_to_proto(module: i32, modulation: &Modulation) -> RadioModulation 
         Modulation::Ofdm(o) => Some(ProtoModulation::Ofdm(RadioModulationOfdm {
             mcs: ofdm_mcs_to_u32(&o.mcs),
             opt: ofdm_opt_to_u32(&o.opt),
-            pdt: o.pdt as u32,
+            // PDT is derived from the bandwidth option; report the value actually used.
+            pdt: o.opt.recommended_pdt() as u32,
             tx_power: o.tx_power as u32,
         })),
         Modulation::Qpsk(q) => Some(ProtoModulation::Qpsk(RadioModulationQpsk {
@@ -160,7 +161,7 @@ fn modulation_from_proto(req: &RadioModulation) -> Modulation {
         Some(ProtoModulation::Ofdm(o)) => Modulation::Ofdm(OfdmModulation {
             mcs: ofdm_mcs_from_u32(o.mcs),
             opt: ofdm_opt_from_u32(o.opt),
-            pdt: o.pdt as u8,
+            // PDT is no longer a user parameter; it is derived from the bandwidth option.
             tx_power: o.tx_power as u8,
         }),
         Some(ProtoModulation::Qpsk(q)) => Modulation::Qpsk(QpskModulation {

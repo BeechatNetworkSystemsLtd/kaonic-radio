@@ -293,7 +293,6 @@ impl GrpcClient {
                 Modulation::Ofdm(OfdmModulation {
                     mcs,
                     opt,
-                    pdt: 0x03,
                     tx_power: tx_power as u8,
                 })
             }

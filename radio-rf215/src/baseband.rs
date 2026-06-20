@@ -230,7 +230,9 @@ where
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_BBCX_OFDMPHRTX), modulation.mcs as u8)?;
 
-        let ofdm_switches: u8 = (modulation.pdt << 5) | 0b10000;
+        // PDT (OFDMSW.PDT, bits 7:5) is derived per bandwidth option per datasheet Table 6-93;
+        // bit 4 (RXO) enables receiver override.
+        let ofdm_switches: u8 = (modulation.opt.recommended_pdt() << 5) | 0b10000;
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_BBCX_OFDMSW), ofdm_switches)?;
 
