@@ -952,8 +952,6 @@ dependencies = [
  "toml 0.8.23",
  "tonic",
  "tonic-build",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

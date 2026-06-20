@@ -8,7 +8,6 @@ default = ["machine-kaonic1s"]
 machine-kaonic1s = ["kaonic-radio/machine-kaonic1s"]
 machine-host = ["kaonic-radio/machine-host"]
 
-
 [dependencies]
 
 # Kaonic
@@ -21,17 +20,15 @@ rand = { version = "=0.8.5" }
 
 # Logging
 env_logger = "0.11.9"
-log = "0.4"
+# release_max_level_info compiles out debug!/trace! (and their arg formatting) in release builds.
+log = { version = "0.4", features = ["release_max_level_info"] }
 
 # Protobuf and gRPC
 tonic = "0.13.0"
 prost = "0.13.5"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal", "tracing"] }
+tokio = { version = "1.0", features = ["macros", "rt", "signal"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = "0.7.15"
-tracing = { version = "0.1", features = ["max_level_trace", "release_max_level_trace"] }
-tracing-subscriber = "0.3"
-# console-subscriber = "=0.4.1"
 
 # Additional dependencies
 serde = { version = "1.0", features = ["derive"] }
