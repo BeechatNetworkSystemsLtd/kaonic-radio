@@ -476,13 +476,17 @@ where
             return Err(RadioError::IncorrectConfig);
         }
 
-        let cs = config.channel_spacing.as_khz() as u32 / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
+        let cs = config.channel_spacing.as_hz() as u32 / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
         if cs > 0xFF {
             return Err(RadioError::IncorrectConfig);
         }
 
         let freq = (config.freq.as_hz() - B::FREQUENCY_OFFSET.as_hz()) as u32
             / regs::RG_RFXX_FREQ_RESOLUTION_HZ;
+
+        if freq > u16::MAX as u32 {
+            return Err(RadioError::IncorrectConfig);
+        }
 
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_RFXX_CS), cs as u8)?;
@@ -540,7 +544,7 @@ where
         let expected_duration = duration.as_micros() as u32;
         for i in 0..dtb_mul.len() {
             let df = expected_duration / dtb_mul[i];
-            if df < 63 {
+            if df <= 63 {
                 let edd = ((df as u8) << 2) | (i as u8);
 
                 self.bus
