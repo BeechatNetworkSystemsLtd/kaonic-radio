@@ -1,9 +1,9 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use kaonic_frame::frame::Frame;
 use rand::rngs::OsRng;
 use radio_common::{Modulation, RadioConfig};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -11,8 +11,8 @@ use crate::{
     error::ControllerError,
     peer::{PeerSender, PeerTx},
     protocol::{
-        Message, MessageBuilder, Payload, RADIO_FRAME_SIZE, RadioFrame, ReceiveModule,
-        TransmitModule,
+        MAX_USER_FRAME, Message, MessageBuilder, Payload, RADIO_FRAME_SIZE, RadioFrame,
+        ReceiveModule, SUBFRAME_HEADER_SIZE, TransmitModule,
     },
 };
 
@@ -34,6 +34,8 @@ pub struct RadioClient {
     cancel: CancellationToken,
     client: Client<Message>,
     timeout: core::time::Duration,
+    batcher_send: mpsc::Sender<(usize, Vec<u8>)>,
+    batch_budget: Arc<[Semaphore]>,
 }
 
 impl RadioClient {
@@ -56,6 +58,7 @@ impl RadioClient {
         let rx_recv = client.receive();
         let keepalive_send = client.tx_sender();
         let server_addr = client.server_addr();
+        let batcher_client = client.clone();
 
         let (module_rx_send, _) = broadcast::channel(MODULE_EVENT_CHANNEL_CAPACITY);
         let (module_tx_send, _) = broadcast::channel(MODULE_EVENT_CHANNEL_CAPACITY);
@@ -78,6 +81,40 @@ impl RadioClient {
             keepalive_timeout,
         ));
 
+        // discover module count so the batcher can size its per-module state
+        let info_response = client
+            .request(
+                MessageBuilder::new()
+                    .with_id(client.gen_id())
+                    .with_payload(Payload::GetInfoRequest)
+                    .build(),
+                DEFAULT_TIMEOUT,
+            )
+            .await?;
+        let module_count = match info_response.payload {
+            Payload::GetInfoResponse(info) => info.module_count,
+            _ => return Err(ControllerError::DecodeError),
+        };
+
+        let batch_budget: Arc<[Semaphore]> = (0..module_count)
+            .map(|_| Semaphore::new(RADIO_FRAME_SIZE))
+            .collect();
+
+        // Smallest possible sub-frame is just the header (with an empty payload),
+        // so the absolute worst-case message count per module is
+        // RADIO_FRAME_SIZE / SUBFRAME_HEADER_SIZE. Size the channel for that across
+        // all modules so try_send never falsely rejects when the per-module
+        // atomic budget says go.
+        let channel_cap = (RADIO_FRAME_SIZE / SUBFRAME_HEADER_SIZE) * module_count.max(1);
+        let (batcher_send, batcher_recv) = mpsc::channel(channel_cap);
+
+        tokio::spawn(Self::batcher(
+            batcher_recv,
+            batch_budget.clone(),
+            batcher_client,
+            cancel.clone(),
+        ));
+
         Ok(Self {
             module_rx_send,
             module_tx_send,
@@ -85,6 +122,8 @@ impl RadioClient {
             client,
             cancel,
             timeout: DEFAULT_TIMEOUT,
+            batcher_send,
+            batch_budget,
         })
     }
 
@@ -117,24 +156,40 @@ impl RadioClient {
         }
     }
 
-    /// Transmits a frame through the specified radio module.
+    /// Enqueues a frame for transmission through the specified radio module.
+    ///
+    /// Awaits per-module budget: if the module's pending bytes (counting
+    /// sub-frame headers) would exceed `RADIO_FRAME_SIZE`, this future yields
+    /// until the batcher has emitted enough of the pending data to make room.
+    /// Multiple pending payloads for the same module may be packed together
+    /// into a single on-air radio frame to amortize the per-frame PHY overhead.
     pub async fn transmit(
         &mut self,
         module: usize,
-        frame: &Frame<RADIO_FRAME_SIZE>,
+        frame: &Frame<MAX_USER_FRAME>,
     ) -> Result<(), ControllerError> {
-        let response = self
-            .request(Payload::TransmitModuleRequest(crate::protocol::TransmitModule {
-                module,
-                frame: RadioFrame::new_from_frame(frame),
-            }))
-            .await?;
-
-        match response.payload {
-            Payload::Error => Err(ControllerError::MethodError),
-            Payload::TransmitModuleResponse => Ok(()),
-            _ => Err(ControllerError::DecodeError),
+        if module >= self.batch_budget.len() {
+            return Err(ControllerError::MethodError);
         }
+
+        let payload = frame.as_slice();
+        let cost = SUBFRAME_HEADER_SIZE + payload.len();
+
+        // Reserve budget; permits are returned to the semaphore by the batcher
+        // task via `add_permits` once the corresponding radio frame is emitted.
+        self.batch_budget[module]
+            .acquire_many(cost as u32)
+            .await
+            .map_err(|_| ControllerError::SocketError)?
+            .forget();
+
+        self.batcher_send
+            .send((module, payload.to_vec()))
+            .await
+            .map_err(|_| ControllerError::SocketError)?;
+
+        self.touch_activity();
+        Ok(())
     }
 
     /// Sets the modulation scheme for the specified radio module.
@@ -251,7 +306,32 @@ impl RadioClient {
                     Ok(message) => {
                         match message.payload {
                             Payload::ReceiveModule(rx) => {
-                                let _ = module_rx_send.send(Box::new(rx));
+                                let frame_data = rx.frame.as_slice();
+                                let mut offset = 0;
+                                while offset + SUBFRAME_HEADER_SIZE <= frame_data.len() {
+                                    let len = u16::from_le_bytes([
+                                        frame_data[offset],
+                                        frame_data[offset + 1],
+                                    ]) as usize;
+                                    offset += SUBFRAME_HEADER_SIZE;
+                                    if offset + len > frame_data.len() {
+                                        log::warn!(
+                                            "malformed sub-frame on module {}: len {} exceeds remaining {}",
+                                            rx.module,
+                                            len,
+                                            frame_data.len() - offset
+                                        );
+                                        break;
+                                    }
+                                    let mut sub = ReceiveModule::new();
+                                    sub.module = rx.module;
+                                    sub.rssi = rx.rssi;
+                                    sub.frame.data[..len]
+                                        .copy_from_slice(&frame_data[offset..offset + len]);
+                                    sub.frame.len = len as u16;
+                                    let _ = module_rx_send.send(Box::new(sub));
+                                    offset += len;
+                                }
                             },
                             Payload::TransmitModuleEvent(tx) => {
                                 let _ = module_tx_send.send(Box::new(tx));
@@ -303,6 +383,77 @@ impl RadioClient {
                         }).await {
                             log::warn!("radio client keepalive send failed");
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Drains the batcher channel and emits one `TransmitModuleRequest` per
+    /// module that has anything pending. Each emitted radio frame contains the
+    /// concatenated `[len:u16][payload]` sub-frames for that module.
+    ///
+    /// Uses `Client::request` for emission: awaiting the daemon's
+    /// `TransmitModuleResponse` provides end-to-end flow control so the
+    /// client does not flood the daemon faster than the radio can transmit.
+    /// Permits are returned to the per-module semaphore *before* awaiting the
+    /// request so producers can begin filling the next batch while this one
+    /// is in flight on the radio.
+    async fn batcher(
+        mut recv: mpsc::Receiver<(usize, Vec<u8>)>,
+        budget: Arc<[Semaphore]>,
+        client: Client<Message>,
+        cancel: CancellationToken,
+    ) {
+        let module_count = budget.len();
+        let mut pending: Vec<Vec<u8>> = (0..module_count)
+            .map(|_| Vec::with_capacity(RADIO_FRAME_SIZE))
+            .collect();
+
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = cancel.cancelled() => break,
+
+                first = recv.recv() => {
+                    let Some((m, payload)) = first else { break };
+                    pending[m].extend_from_slice(&(payload.len() as u16).to_le_bytes());
+                    pending[m].extend_from_slice(&payload);
+
+                    while let Ok((m, payload)) = recv.try_recv() {
+                        pending[m].extend_from_slice(&(payload.len() as u16).to_le_bytes());
+                        pending[m].extend_from_slice(&payload);
+                    }
+
+                    for m in 0..module_count {
+                        if pending[m].is_empty() {
+                            continue;
+                        }
+                        let size = pending[m].len();
+
+                        // Return permits before awaiting the request so the
+                        // next batch for this module can start filling while
+                        // this one is in flight.
+                        budget[m].add_permits(size);
+
+                        let mut frame = RadioFrame::new();
+                        frame.data[..size].copy_from_slice(&pending[m]);
+                        frame.len = size as u16;
+
+                        let msg = MessageBuilder::new()
+                            .with_id(client.gen_id())
+                            .with_payload(Payload::TransmitModuleRequest(TransmitModule {
+                                module: m,
+                                frame,
+                            }))
+                            .build();
+
+                        if let Err(e) = client.request(msg, DEFAULT_TIMEOUT).await {
+                            log::error!("batcher request failed: {:?}", e);
+                        }
+
+                        pending[m].clear();
                     }
                 }
             }

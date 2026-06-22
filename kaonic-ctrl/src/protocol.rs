@@ -11,6 +11,16 @@ use crate::{
 pub const CTRL_PATTERN: u16 = 0xBACE;
 pub const RADIO_FRAME_SIZE: usize = 2048;
 
+// Per-sub-frame header overhead inside a batched radio frame. Currently a
+// little-endian u16 length prefix; will change if the encoding moves to varint.
+pub const SUBFRAME_HEADER_SIZE: usize = 2;
+
+// Max size of a user-supplied frame to `RadioClient::transmit`. The batcher
+// prepends a SUBFRAME_HEADER_SIZE header to each payload before packing it
+// into the on-air radio frame, so the user-visible budget is smaller than
+// the on-air frame by that amount.
+pub const MAX_USER_FRAME: usize = RADIO_FRAME_SIZE - SUBFRAME_HEADER_SIZE;
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct RadioFrame {
     #[serde(with = "serde_bytes")]

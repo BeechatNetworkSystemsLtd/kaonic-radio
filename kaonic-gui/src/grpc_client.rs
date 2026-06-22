@@ -1,4 +1,8 @@
-use kaonic_ctrl::{client::Client, protocol::MessageCoder, radio::RadioClient};
+use kaonic_ctrl::{
+    client::Client,
+    protocol::{MAX_USER_FRAME, MessageCoder},
+    radio::RadioClient,
+};
 use kaonic_frame::frame::Frame;
 use radio_common::{
     frequency::BandwidthFilter,
@@ -126,7 +130,7 @@ impl GrpcClient {
                 };
                 let mut rc = radio_client_worker.lock().await;
                 let res = if let Some(ref mut client) = *rc {
-                    let mut frame = Frame::<2048>::new();
+                    let mut frame = Frame::<MAX_USER_FRAME>::new();
                     frame.copy_from_slice(&req.payload);
                     client
                         .transmit(module_idx, &frame)

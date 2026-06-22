@@ -5,14 +5,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use kaonic_ctrl::{client::Client, protocol::MessageCoder, radio::RadioClient};
+use kaonic_ctrl::{
+    client::Client,
+    protocol::{MAX_USER_FRAME, MessageCoder},
+    radio::RadioClient,
+};
 use kaonic_frame::frame::Frame;
 
 mod config;
 
 const DEFAULT_COMMD_ADDR: &str = "192.168.10.1:9090";
 const MIN_PACKET_SIZE: usize = 24; // MAGIC(4) + SEQ(4) + TIMESTAMP(8) + padding(4) + CRC(4)
-const MAX_PACKET_SIZE: usize = 2048;
+const MAX_PACKET_SIZE: usize = MAX_USER_FRAME;
 const RESPONSE_TIMEOUT_MS: u64 = 500;
 
 #[derive(Parser, Debug)]
@@ -54,7 +58,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn fill_packet(frame: &mut Frame<2048>, seq: u32, size: usize) {
+fn fill_packet(frame: &mut Frame<MAX_USER_FRAME>, seq: u32, size: usize) {
     let size = size.clamp(MIN_PACKET_SIZE, MAX_PACKET_SIZE);
     frame.clear();
 
@@ -222,7 +226,7 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
 
                                 if !cfg.iperf.tx_only {
                                     // Echo back the same packet
-                                    let mut echo_frame = Frame::<2048>::new();
+                                    let mut echo_frame = Frame::<MAX_USER_FRAME>::new();
                                     echo_frame.copy_from_slice(rx_data);
 
                                     match radio_client.transmit(cfg.iperf.module, &echo_frame).await {
@@ -356,7 +360,7 @@ async fn run_client(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
     let mut crc_errors: u64 = 0;
 
     // Pre-allocate reusable packet frame
-    let mut tx_frame = Frame::<2048>::new();
+    let mut tx_frame = Frame::<MAX_USER_FRAME>::new();
 
     while start.elapsed() < test_duration {
         // Send request packet

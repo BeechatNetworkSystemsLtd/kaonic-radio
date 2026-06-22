@@ -26,6 +26,18 @@ pub struct Client<T: PeerMessage> {
     request_queue: Arc<Mutex<ClientRequestQueue<T>>>,
 }
 
+impl<T: PeerMessage> Clone for Client<T> {
+    fn clone(&self) -> Self {
+        Self {
+            tx_send: self.tx_send.clone(),
+            rx_send: self.rx_send.clone(),
+            server_addr: self.server_addr,
+            cancel: self.cancel.clone(),
+            request_queue: self.request_queue.clone(),
+        }
+    }
+}
+
 impl<T: PeerMessage + Send + std::fmt::Debug + 'static> Client<T> {
     pub async fn connect<
         const MTU: usize,
@@ -106,7 +118,7 @@ impl<T: PeerMessage + Send + std::fmt::Debug + 'static> Client<T> {
     }
 
     pub async fn request(
-        &mut self,
+        &self,
         message: T,
         timeout: core::time::Duration,
     ) -> Result<T, ControllerError> {
