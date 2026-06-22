@@ -17,6 +17,7 @@ pub struct IperfConfig {
     pub timeout: u64,
     pub ip: Option<String>,
     pub module: usize,
+    pub tx_only: bool,
 }
 
 impl Default for IperfConfig {
@@ -27,6 +28,7 @@ impl Default for IperfConfig {
             timeout: 10,
             ip: None,
             module: 0,
+            tx_only: false,
         }
     }
 }
@@ -52,6 +54,7 @@ struct IperfPartial {
     timeout: Option<u64>,
     ip: Option<String>,
     module: Option<i64>,
+    tx_only: Option<bool>,
 }
 
 /// Loads configuration from the given TOML file path and maps radio-* sections to protobufs.
@@ -129,6 +132,9 @@ pub fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
             }
             if let Some(m) = partial.module {
                 d.module = m as usize;
+            }
+            if let Some(b) = partial.tx_only {
+                d.tx_only = b;
             }
         }
         d

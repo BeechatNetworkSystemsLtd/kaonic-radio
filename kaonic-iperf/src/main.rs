@@ -177,6 +177,7 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
     let mut crc_errors: u64 = 0;
     let mut bytes_received: u64 = 0;
     let mut start_time: Option<Instant> = None;
+    let mut seqnums = vec![];
 
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
@@ -205,6 +206,7 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
                                     start_time = Some(Instant::now());
                                 }
                                 bytes_received += packet_size;
+                                seqnums.push(seq);
 
                                 // Calculate current receive speed
                                 let speed_kbps = start_time
@@ -218,19 +220,21 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
                                     })
                                     .unwrap_or(0.0);
 
-                                // Echo back the same packet
-                                let mut echo_frame = Frame::<2048>::new();
-                                echo_frame.copy_from_slice(rx_data);
+                                if !cfg.iperf.tx_only {
+                                    // Echo back the same packet
+                                    let mut echo_frame = Frame::<2048>::new();
+                                    echo_frame.copy_from_slice(rx_data);
 
-                                match radio_client.transmit(cfg.iperf.module, &echo_frame).await {
-                                    Ok(_) => {
-                                        count += 1;
-                                        println!(
-                                            "[{}] Echo seq={} size={}  rx={:.2} kb/s",
-                                            count, seq, rx_data.len(), speed_kbps
-                                        );
+                                    match radio_client.transmit(cfg.iperf.module, &echo_frame).await {
+                                        Ok(_) => {
+                                            count += 1;
+                                            println!(
+                                                "[{}] Echo seq={} size={}  rx={:.2} kb/s",
+                                                count, seq, rx_data.len(), speed_kbps
+                                            );
+                                        }
+                                        Err(e) => warn!("Transmit error: {:?}", e),
                                     }
-                                    Err(e) => warn!("Transmit error: {:?}", e),
                                 }
                             }
                             Err(ParseError::TooShort) => {
@@ -259,7 +263,12 @@ async fn run_server(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
 
     radio_client.cancel();
 
-    println!("\nTotal packets echoed: {}", count);
+    if !cfg.iperf.tx_only {
+        println!("\nTotal packets echoed: {}", count);
+    } else if !seqnums.is_empty() {
+        println!("Received {} / {} ({:.2}%)", seqnums.len(), seqnums.last().unwrap()+1,
+            (seqnums.len() as f64 / (seqnums.last().unwrap()+1) as f64) * 100.0);
+    }
     if ignored > 0 {
         println!("Ignored (non-iperf): {}", ignored);
     }
@@ -361,50 +370,52 @@ async fn run_client(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
         }
 
         // Wait for response
-        loop {
-            match timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS), module_rx.recv()).await {
-                Ok(Ok(rx_module)) => {
-                    if rx_module.module != cfg.iperf.module {
-                        continue;
-                    }
+        if !cfg.iperf.tx_only {
+            loop {
+                match timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS), module_rx.recv()).await {
+                    Ok(Ok(rx_module)) => {
+                        if rx_module.module != cfg.iperf.module {
+                            continue;
+                        }
 
-                    let rtt = send_time.elapsed().as_millis() as u64;
-                    let rx_data = rx_module.frame.as_slice();
+                        let rtt = send_time.elapsed().as_millis() as u64;
+                        let rx_data = rx_module.frame.as_slice();
 
-                    match parse_packet(rx_data) {
-                        Ok((resp_seq, _)) => {
-                            if resp_seq == seq {
-                                rtt_min = rtt_min.min(rtt);
-                                rtt_max = rtt_max.max(rtt);
-                                rtt_sum += rtt;
-                                rtt_count += 1;
-                                bytes_transferred += (packet_size * 2) as u64; // req + resp
+                        match parse_packet(rx_data) {
+                            Ok((resp_seq, _)) => {
+                                if resp_seq == seq {
+                                    rtt_min = rtt_min.min(rtt);
+                                    rtt_max = rtt_max.max(rtt);
+                                    rtt_sum += rtt;
+                                    rtt_count += 1;
+                                    bytes_transferred += (packet_size * 2) as u64; // req + resp
 
-                                println!("seq={:<6} rtt={:<4} ms  size={}", seq, rtt, rx_data.len());
+                                    println!("seq={:<6} rtt={:<4} ms  size={}", seq, rtt, rx_data.len());
+                                }
+                            }
+                            Err(ParseError::CrcMismatch { expected, actual }) => {
+                                crc_errors += 1;
+                                println!(
+                                    "seq={:<6} CRC ERROR (expected={:#010x} actual={:#010x})",
+                                    seq, expected, actual
+                                );
+                            }
+                            Err(_) => {
+                                // Ignore non-iperf packets
                             }
                         }
-                        Err(ParseError::CrcMismatch { expected, actual }) => {
-                            crc_errors += 1;
-                            println!(
-                                "seq={:<6} CRC ERROR (expected={:#010x} actual={:#010x})",
-                                seq, expected, actual
-                            );
-                        }
-                        Err(_) => {
-                            // Ignore non-iperf packets
-                        }
+                    }
+                    Ok(Err(_)) => {
+                        // Channel error
+                        timeouts += 1;
+                    }
+                    Err(_) => {
+                        println!("seq={:<6} TIMEOUT", seq);
+                        timeouts += 1;
                     }
                 }
-                Ok(Err(_)) => {
-                    // Channel error
-                    timeouts += 1;
-                }
-                Err(_) => {
-                    println!("seq={:<6} TIMEOUT", seq);
-                    timeouts += 1;
-                }
+                break
             }
-            break
         }
 
         seq = seq.wrapping_add(1);
@@ -433,14 +444,16 @@ async fn run_client(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
         );
     }
 
-    if elapsed > 0.0 {
-        let speed_kbps = (bytes_transferred as f64 * 8.0) / elapsed / 1000.0;
-        println!("Speed:        {:.2} kb/s", speed_kbps);
-    }
+    if !cfg.iperf.tx_only {
+        if elapsed > 0.0 {
+            let speed_kbps = (bytes_transferred as f64 * 8.0) / elapsed / 1000.0;
+            println!("Speed:        {:.2} kb/s", speed_kbps);
+        }
 
-    if packets_sent > 0 {
-        let loss = ((packets_sent - rtt_count) as f64 / packets_sent as f64) * 100.0;
-        println!("Packet loss:  {:.1}%", loss);
+        if packets_sent > 0 {
+            let loss = ((packets_sent - rtt_count) as f64 / packets_sent as f64) * 100.0;
+            println!("Packet loss:  {:.1}%", loss);
+        }
     }
 
     Ok(())
