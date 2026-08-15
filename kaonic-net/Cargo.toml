@@ -5,16 +5,17 @@ edition = "2021"
 rust-version = "1.75"
 
 [features]
-default = []
+default = ["machine-kaonic1s"]
+machine-kaonic1s = ["kaonic-crc/machine-kaonic1s"]
+machine-host = ["kaonic-crc/machine-host"]
 
 [dependencies]
 
 labrador-ldpc = "1.2.1"
-crc = "=3.3.0"
 
 rand = { version = "=0.8.5", default-features = false }
 
 log = "0.4"
 
 kaonic-frame = { path="../kaonic-frame/" }
-
+kaonic-crc = { path="../kaonic-crc/", default-features = false }

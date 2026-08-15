@@ -1,5 +1,4 @@
 use clap::Parser;
-use crc32fast::Hasher;
 use log::{error, warn};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
@@ -42,9 +41,7 @@ struct Args {
 const MAGIC: [u8; 4] = [0x8B, 0x52, 0x54, 0x54];
 
 fn compute_crc(data: &[u8]) -> u32 {
-    let mut hasher = Hasher::new();
-    hasher.update(data);
-    hasher.finalize()
+    kaonic_crc::crc32(data)
 }
 
 fn now_ms() -> u64 {

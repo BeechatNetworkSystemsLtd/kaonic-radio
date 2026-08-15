@@ -4,7 +4,7 @@ use kaonic_net::request::RequestQueue;
 use rand::{RngCore, rngs::OsRng};
 use tokio::{
     net::UdpSocket,
-    sync::{Mutex, broadcast, mpsc, oneshot},
+    sync::{Mutex, broadcast, mpsc},
 };
 use tokio_util::sync::CancellationToken;
 

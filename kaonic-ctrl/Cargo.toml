@@ -3,10 +3,15 @@ name = "kaonic-ctrl"
 version = "0.1.1"
 edition = "2024"
 
+[features]
+default = ["machine-kaonic1s"]
+machine-kaonic1s = ["kaonic-net/machine-kaonic1s"]
+machine-host = ["kaonic-net/machine-host"]
+
 [dependencies]
 
 # Kaonic
-kaonic-net = { path="../kaonic-net/" }
+kaonic-net = { path="../kaonic-net/", default-features = false }
 kaonic-frame = { path="../kaonic-frame/" }
 radio-common = { path="../radio-common/" }
 

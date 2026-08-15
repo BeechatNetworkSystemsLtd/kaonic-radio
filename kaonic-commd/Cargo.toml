@@ -5,8 +5,8 @@ edition = "2024"
 
 [features]
 default = ["machine-kaonic1s"]
-machine-kaonic1s = ["kaonic-radio/machine-kaonic1s"]
-machine-host = ["kaonic-radio/machine-host"]
+machine-kaonic1s = ["kaonic-radio/machine-kaonic1s", "kaonic-ctrl/machine-kaonic1s"]
+machine-host = ["kaonic-radio/machine-host", "kaonic-ctrl/machine-host"]
 
 [dependencies]
 
