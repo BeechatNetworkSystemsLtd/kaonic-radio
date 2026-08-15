@@ -23,7 +23,7 @@ use crate::{
         },
         linux_rf215::AtomicInterrupt,
     },
-    radio::{Accelerator, Radio, ReceiveResult, ScanResult},
+    radio::{Accelerator, Antenna, Radio, RadioBand, ReceiveResult, ScanResult},
 };
 
 pub mod fpga;
@@ -39,6 +39,7 @@ pub struct Kaonic1SRadioFem {
     flt_v2: LinuxOutputPin,
     flt_24: Option<LinuxOutputPin>,
     ant_24: Option<LinuxOutputPin>,
+    ant_24_sel: Antenna,
 }
 
 impl Kaonic1SRadioFem {
@@ -53,7 +54,44 @@ impl Kaonic1SRadioFem {
             flt_v2,
             flt_24,
             ant_24,
+            ant_24_sel: Antenna::default(),
         }
+    }
+
+    pub fn set_antenna(&mut self, band: RadioBand, antenna: &Antenna) -> Result<(), KaonicError> {
+        match band {
+            RadioBand::Band24 => {
+                if self.ant_24.is_none() && *antenna != Antenna::Internal {
+                    return Err(KaonicError::NotSupported);
+                }
+
+                self.ant_24_sel = *antenna;
+                self.apply_ant_24()
+            }
+            // The sub-GHz path has no antenna switch on this board.
+            RadioBand::Band09 => match antenna {
+                Antenna::Internal => Ok(()),
+                Antenna::External => Err(KaonicError::NotSupported),
+            },
+        }
+    }
+
+    pub fn antenna(&self, band: RadioBand) -> Antenna {
+        match band {
+            RadioBand::Band24 => self.ant_24_sel,
+            RadioBand::Band09 => Antenna::Internal,
+        }
+    }
+
+    fn apply_ant_24(&mut self) -> Result<(), KaonicError> {
+        if let Some(ant_24) = &mut self.ant_24 {
+            match self.ant_24_sel {
+                Antenna::Internal => ant_24.set_low()?,
+                Antenna::External => ant_24.set_high()?,
+            }
+        }
+
+        Ok(())
     }
 
     fn set_bandwidth_filter(
@@ -99,9 +137,7 @@ impl Kaonic1SRadioFem {
     }
 
     pub fn adjust(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
-        if let Some(ant_24) = &mut self.ant_24 {
-            ant_24.set_low()?;
-        }
+        self.apply_ant_24()?;
 
         self.set_bandwidth_filter(config.bandwidth_filter, config.freq)?;
 
@@ -335,6 +371,21 @@ impl Radio for Kaonic1SRadio {
 
     fn get_accelerator(&self) -> Accelerator {
         self.accelerator
+    }
+
+    fn set_antenna(&mut self, band: RadioBand, antenna: &Antenna) -> Result<(), KaonicError> {
+        log::debug!(
+            "set antenna ({}) {:?} = {:?}",
+            self.radio.name(),
+            band,
+            antenna
+        );
+
+        self.fem.set_antenna(band, antenna)
+    }
+
+    fn get_antenna(&self, band: RadioBand) -> Antenna {
+        self.fem.antenna(band)
     }
 }
 

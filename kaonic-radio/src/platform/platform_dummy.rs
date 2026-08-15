@@ -5,7 +5,7 @@ use radio_common::{modulation::OfdmModulation, Modulation, RadioConfig, RadioCon
 
 use crate::{
     error::KaonicError,
-    radio::{Accelerator, Radio, ReceiveResult, ScanResult},
+    radio::{Accelerator, Antenna, Radio, RadioBand, ReceiveResult, ScanResult},
 };
 
 pub type DummyFrame = Frame<2048>;
@@ -24,12 +24,21 @@ impl DummyRadioEvent {
 
 pub struct DummyRadio {
     event: Arc<Mutex<DummyRadioEvent>>,
+    antennas: [Antenna; 2],
 }
 
 impl DummyRadio {
     pub fn new() -> Self {
         Self {
             event: Arc::new(Mutex::new(DummyRadioEvent)),
+            antennas: [Antenna::default(); 2],
+        }
+    }
+
+    fn band_index(band: RadioBand) -> usize {
+        match band {
+            RadioBand::Band09 => 0,
+            RadioBand::Band24 => 1,
         }
     }
 
@@ -106,6 +115,15 @@ impl Radio for DummyRadio {
 
     fn get_accelerator(&self) -> Accelerator {
         Accelerator::Native
+    }
+
+    fn set_antenna(&mut self, band: RadioBand, antenna: &Antenna) -> Result<(), KaonicError> {
+        self.antennas[Self::band_index(band)] = *antenna;
+        Ok(())
+    }
+
+    fn get_antenna(&self, band: RadioBand) -> Antenna {
+        self.antennas[Self::band_index(band)]
     }
 }
 

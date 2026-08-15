@@ -3,7 +3,7 @@ use std::time::Instant;
 use kaonic_ctrl::protocol::{ReceiveModule, TransmitModule};
 use kaonic_radio::{platform::PlatformRadioFrame, radio::Radio};
 use radio_common::{
-    Accelerator, RadioConfig,
+    Accelerator, Antenna, RadioBand, RadioConfig,
     frequency::{BandwidthFilter, Hertz},
     modulation::{
         Modulation, OfdmBandwidthOption, OfdmMcs, OfdmModulation, QpskChipFrequency,
@@ -24,8 +24,9 @@ pub use kaonic::device_server::DeviceServer;
 pub use kaonic::radio_server::RadioServer as GrpcRadioServer;
 
 use kaonic::{
-    Acceleration as ProtoAcceleration, Empty, InfoResponse, ModuleRequest,
-    RadioAcceleration, RadioConfig as ProtoRadioConfig, RadioFrame as ProtoFrame, RadioModulation,
+    Acceleration as ProtoAcceleration, Antenna as ProtoAntenna, AntennaRequest, Empty,
+    InfoResponse, ModuleRequest, RadioAcceleration, RadioAntenna, RadioBand as ProtoRadioBand,
+    RadioConfig as ProtoRadioConfig, RadioFrame as ProtoFrame, RadioModulation,
     RadioModulationFsk, RadioModulationOfdm, RadioModulationQpsk, ReceiveRequest, ReceiveResponse,
     StatisticsResponse, TransmitEventRequest, TransmitEventResponse, TransmitRequest,
     TransmitResponse, device_server::Device, radio_modulation::Modulation as ProtoModulation,
@@ -145,6 +146,34 @@ fn acceleration_to_proto(accelerator: &Accelerator) -> i32 {
     match accelerator {
         Accelerator::Native => ProtoAcceleration::Native as i32,
         Accelerator::Hardware => ProtoAcceleration::Hardware as i32,
+    }
+}
+
+fn band_from_proto(v: i32) -> RadioBand {
+    match ProtoRadioBand::try_from(v) {
+        Ok(ProtoRadioBand::Band24) => RadioBand::Band24,
+        _ => RadioBand::Band09,
+    }
+}
+
+fn band_to_proto(band: &RadioBand) -> i32 {
+    match band {
+        RadioBand::Band09 => ProtoRadioBand::Band09 as i32,
+        RadioBand::Band24 => ProtoRadioBand::Band24 as i32,
+    }
+}
+
+fn antenna_from_proto(v: i32) -> Antenna {
+    match ProtoAntenna::try_from(v) {
+        Ok(ProtoAntenna::External) => Antenna::External,
+        _ => Antenna::Internal,
+    }
+}
+
+fn antenna_to_proto(antenna: &Antenna) -> i32 {
+    match antenna {
+        Antenna::Internal => ProtoAntenna::Internal as i32,
+        Antenna::External => ProtoAntenna::External as i32,
     }
 }
 
@@ -402,6 +431,41 @@ impl RadioTrait for RadioService {
             .unwrap()
             .set_accelerator(&accelerator)
             .map_err(|e| Status::internal(format!("set_acceleration: {:?}", e)))?;
+        Ok(Response::new(Empty {}))
+    }
+
+    // ── GetAntenna ────────────────────────────────────────────────────────────
+
+    async fn get_antenna(
+        &self,
+        request: Request<AntennaRequest>,
+    ) -> Result<Response<RadioAntenna>, Status> {
+        let req = request.into_inner();
+        let idx = self.module_index(req.module)?;
+        let band = band_from_proto(req.band);
+        let antenna = self.radios[idx].lock().unwrap().get_antenna(band);
+        Ok(Response::new(RadioAntenna {
+            module: req.module,
+            band: req.band,
+            antenna: antenna_to_proto(&antenna),
+        }))
+    }
+
+    // ── SetAntenna ────────────────────────────────────────────────────────────
+
+    async fn set_antenna(
+        &self,
+        request: Request<RadioAntenna>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        let idx = self.module_index(req.module)?;
+        let band = band_from_proto(req.band);
+        let antenna = antenna_from_proto(req.antenna);
+        self.radios[idx]
+            .lock()
+            .unwrap()
+            .set_antenna(band, &antenna)
+            .map_err(|e| Status::internal(format!("set_antenna: {:?}", e)))?;
         Ok(Response::new(Empty {}))
     }
 
