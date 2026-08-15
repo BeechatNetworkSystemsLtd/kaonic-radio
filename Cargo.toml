@@ -16,6 +16,7 @@ members = [
     # Algorithms
     "kaonic-net",
     "kaonic-frame",
+    "kaonic-crc",
 
     # Drivers
     "radio-rf215",

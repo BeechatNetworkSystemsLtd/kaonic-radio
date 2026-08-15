@@ -261,8 +261,7 @@ impl<const S: usize> Packet<S> {
     }
 
     fn calculate_crc(data: &[u8]) -> u32 {
-        let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-        crc.checksum(data)
+        kaonic_crc::crc32(data)
     }
 }
 

@@ -1,0 +1,18 @@
+[package]
+name = "kaonic-crc"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+
+[features]
+default = ["machine-kaonic1s"]
+machine-kaonic1s = ["dep:libc"]
+machine-host = []
+
+[dependencies]
+
+crc32fast = "1.4"
+
+log = "0.4"
+
+libc = { version = "0.2", optional = true }

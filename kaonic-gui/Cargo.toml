@@ -36,10 +36,10 @@ reqwest = { version = "0.11", features = ["blocking", "multipart", "json"] }
 serde_json = "1.0"
 
 # Local crates
-kaonic-ctrl = { path = "../kaonic-ctrl/" }
+kaonic-ctrl = { path = "../kaonic-ctrl/", default-features = false, features = ["machine-host"] }
 kaonic-frame = { path = "../kaonic-frame/" }
 radio-common = { path = "../radio-common/" }
-kaonic-net = { path = "../kaonic-net/" }
+kaonic-net = { path = "../kaonic-net/", default-features = false, features = ["machine-host"] }
 
 # File dialog
 rfd = "0.12"
