@@ -1,6 +1,7 @@
 use radio_common::{Modulation, RadioConfig};
 
 pub use radio_common::Accelerator;
+pub use radio_common::{Antenna, RadioBand};
 
 use crate::error::KaonicError;
 
@@ -48,6 +49,12 @@ pub trait Radio {
     fn set_accelerator(&mut self, accelerator: &Accelerator) -> Result<(), KaonicError>;
 
     fn get_accelerator(&self) -> Accelerator;
+
+    /// Selects the antenna (internal or external) used for the given frequency band.
+    fn set_antenna(&mut self, band: RadioBand, antenna: Antenna) -> Result<(), KaonicError>;
+
+    /// Returns the currently selected antenna for the given frequency band.
+    fn get_antenna(&self, band: RadioBand) -> Antenna;
 
     /// Transmits a frame over the air.
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError>;

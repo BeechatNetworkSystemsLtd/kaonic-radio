@@ -403,6 +403,35 @@ impl ServerHandler<Message> for RadioServer {
                     response.payload = Payload::Error;
                 }
             }
+            Payload::SetAntennaRequest(set) => {
+                if set.module < self.radios.len() {
+                    let result = self.radios[set.module]
+                        .lock()
+                        .unwrap()
+                        .set_antenna(set.band, set.antenna);
+
+                    response.payload = match result {
+                        Ok(_) => Payload::SetAntennaResponse,
+                        Err(_) => Payload::Error,
+                    };
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
+            Payload::GetAntennaRequest(get) => {
+                if get.module < self.radios.len() {
+                    let antenna = self.radios[get.module].lock().unwrap().get_antenna(get.band);
+
+                    response.payload =
+                        Payload::GetAntennaResponse(kaonic_ctrl::protocol::GetAntennaResponse {
+                            module: get.module,
+                            band: get.band,
+                            antenna,
+                        });
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
             Payload::GetInfoRequest => {
                 response.payload =
                     Payload::GetInfoResponse(kaonic_ctrl::protocol::GetInfoResponse {

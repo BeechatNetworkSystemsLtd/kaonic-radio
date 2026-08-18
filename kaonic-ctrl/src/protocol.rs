@@ -1,5 +1,5 @@
 use kaonic_frame::frame::FrameSegment;
-use radio_common::{Accelerator, Modulation, RadioConfig};
+use radio_common::{Accelerator, Antenna, Modulation, RadioBand, RadioConfig};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 
@@ -148,6 +148,26 @@ pub struct GetAccelerationResponse {
     pub acceleration: Accelerator,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SetAntennaRequest {
+    pub module: usize,
+    pub band: RadioBand,
+    pub antenna: Antenna,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GetAntennaRequest {
+    pub module: usize,
+    pub band: RadioBand,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GetAntennaResponse {
+    pub module: usize,
+    pub band: RadioBand,
+    pub antenna: Antenna,
+}
+
 //***********************************************************************************************//
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -178,6 +198,10 @@ pub enum Payload {
     SetAccelerationResponse,
     GetAccelerationRequest(GetAccelerationRequest),
     GetAccelerationResponse(GetAccelerationResponse),
+    SetAntennaRequest(SetAntennaRequest),
+    SetAntennaResponse,
+    GetAntennaRequest(GetAntennaRequest),
+    GetAntennaResponse(GetAntennaResponse),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

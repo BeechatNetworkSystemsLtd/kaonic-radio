@@ -143,6 +143,31 @@ message RadioAcceleration {
 }
 
 //***************************************************************************//
+// Antenna
+//***************************************************************************//
+
+enum RadioBand {
+  BAND_09 = 0; // sub-GHz band (RF09)
+  BAND_24 = 1; // 2.4 GHz band (RF24)
+}
+
+enum Antenna {
+  ANTENNA_INTERNAL = 0; // on-board antenna
+  ANTENNA_EXTERNAL = 1; // external antenna connector
+}
+
+message RadioAntenna {
+  RadioModule module  = 1;
+  RadioBand   band    = 2;
+  Antenna     antenna = 3;
+}
+
+message AntennaRequest {
+  RadioModule module = 1;
+  RadioBand   band   = 2;
+}
+
+//***************************************************************************//
 // Radio service
 //***************************************************************************//
 
@@ -184,6 +209,8 @@ service Radio {
   rpc SetModulation (RadioModulation) returns (Empty)          {}
   rpc GetAcceleration (ModuleRequest)     returns (RadioAcceleration) {}
   rpc SetAcceleration (RadioAcceleration) returns (Empty)             {}
+  rpc GetAntenna    (AntennaRequest)  returns (RadioAntenna) {}
+  rpc SetAntenna    (RadioAntenna)    returns (Empty)        {}
   rpc Transmit      (TransmitRequest) returns (TransmitResponse) {}
   rpc TransmitEventStream (TransmitEventRequest) returns (stream TransmitEventResponse) {}
   rpc ReceiveStream (ReceiveRequest)  returns (stream ReceiveResponse) {}

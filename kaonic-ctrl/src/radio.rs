@@ -2,7 +2,7 @@ use std::{net::SocketAddr, time::Duration};
 
 use kaonic_frame::frame::Frame;
 use rand::rngs::OsRng;
-use radio_common::{Accelerator, Modulation, RadioConfig};
+use radio_common::{Accelerator, Antenna, Modulation, RadioBand, RadioConfig};
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -231,6 +231,49 @@ impl RadioClient {
         match response.payload {
             Payload::Error => Err(ControllerError::MethodError),
             Payload::GetAccelerationResponse(r) => Ok(r.acceleration),
+            _ => Err(ControllerError::DecodeError),
+        }
+    }
+
+    /// Selects the antenna (internal or external) for the given band of the specified module.
+    pub async fn set_antenna(
+        &mut self,
+        module: usize,
+        band: RadioBand,
+        antenna: Antenna,
+    ) -> Result<(), ControllerError> {
+        let response = self
+            .request(Payload::SetAntennaRequest(
+                crate::protocol::SetAntennaRequest {
+                    module,
+                    band,
+                    antenna,
+                },
+            ))
+            .await?;
+
+        match response.payload {
+            Payload::Error => Err(ControllerError::MethodError),
+            Payload::SetAntennaResponse => Ok(()),
+            _ => Err(ControllerError::DecodeError),
+        }
+    }
+
+    /// Retrieves the currently selected antenna for the given band of the specified module.
+    pub async fn get_antenna(
+        &mut self,
+        module: usize,
+        band: RadioBand,
+    ) -> Result<Antenna, ControllerError> {
+        let response = self
+            .request(Payload::GetAntennaRequest(
+                crate::protocol::GetAntennaRequest { module, band },
+            ))
+            .await?;
+
+        match response.payload {
+            Payload::Error => Err(ControllerError::MethodError),
+            Payload::GetAntennaResponse(r) => Ok(r.antenna),
             _ => Err(ControllerError::DecodeError),
         }
     }
