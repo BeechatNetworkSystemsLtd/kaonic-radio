@@ -51,7 +51,7 @@ pub trait Radio {
     fn get_accelerator(&self) -> Accelerator;
 
     /// Selects the antenna (internal or external) used for the given frequency band.
-    fn set_antenna(&mut self, band: RadioBand, antenna: &Antenna) -> Result<(), KaonicError>;
+    fn set_antenna(&mut self, band: RadioBand, antenna: Antenna) -> Result<(), KaonicError>;
 
     /// Returns the currently selected antenna for the given frequency band.
     fn get_antenna(&self, band: RadioBand) -> Antenna;

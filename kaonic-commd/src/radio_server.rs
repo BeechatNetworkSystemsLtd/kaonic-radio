@@ -408,7 +408,7 @@ impl ServerHandler<Message> for RadioServer {
                     let result = self.radios[set.module]
                         .lock()
                         .unwrap()
-                        .set_antenna(set.band, &set.antenna);
+                        .set_antenna(set.band, set.antenna);
 
                     response.payload = match result {
                         Ok(_) => Payload::SetAntennaResponse,

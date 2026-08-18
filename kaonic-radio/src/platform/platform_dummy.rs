@@ -117,8 +117,8 @@ impl Radio for DummyRadio {
         Accelerator::Native
     }
 
-    fn set_antenna(&mut self, band: RadioBand, antenna: &Antenna) -> Result<(), KaonicError> {
-        self.antennas[Self::band_index(band)] = *antenna;
+    fn set_antenna(&mut self, band: RadioBand, antenna: Antenna) -> Result<(), KaonicError> {
+        self.antennas[Self::band_index(band)] = antenna;
         Ok(())
     }
 

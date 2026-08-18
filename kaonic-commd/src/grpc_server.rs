@@ -464,7 +464,7 @@ impl RadioTrait for RadioService {
         self.radios[idx]
             .lock()
             .unwrap()
-            .set_antenna(band, &antenna)
+            .set_antenna(band, antenna)
             .map_err(|e| Status::internal(format!("set_antenna: {:?}", e)))?;
         Ok(Response::new(Empty {}))
     }

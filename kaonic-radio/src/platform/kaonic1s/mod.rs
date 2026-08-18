@@ -58,14 +58,14 @@ impl Kaonic1SRadioFem {
         }
     }
 
-    pub fn set_antenna(&mut self, band: RadioBand, antenna: &Antenna) -> Result<(), KaonicError> {
+    pub fn set_antenna(&mut self, band: RadioBand, antenna: Antenna) -> Result<(), KaonicError> {
         match band {
             RadioBand::Band24 => {
-                if self.ant_24.is_none() && *antenna != Antenna::Internal {
+                if self.ant_24.is_none() && antenna != Antenna::Internal {
                     return Err(KaonicError::NotSupported);
                 }
 
-                self.ant_24_sel = *antenna;
+                self.ant_24_sel = antenna;
                 self.apply_ant_24()
             }
             // The sub-GHz path has no antenna switch on this board.
@@ -373,7 +373,7 @@ impl Radio for Kaonic1SRadio {
         self.accelerator
     }
 
-    fn set_antenna(&mut self, band: RadioBand, antenna: &Antenna) -> Result<(), KaonicError> {
+    fn set_antenna(&mut self, band: RadioBand, antenna: Antenna) -> Result<(), KaonicError> {
         log::debug!(
             "set antenna ({}) {:?} = {:?}",
             self.radio.name(),
