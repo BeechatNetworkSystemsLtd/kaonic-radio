@@ -2,7 +2,10 @@ mod grpc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    simple_logger::SimpleLogger::new().env().init().unwrap();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Trace)
+        .parse_default_env()
+        .init();
 
     let version = env!("CARGO_PKG_VERSION");
 

@@ -13,7 +13,7 @@ machine-host = ["kaonic-crc/machine-host", "kaonic-ctrl/machine-host"]
 
 [dependencies]
 # Logging
-simple_logger = "=5.0.0"
+env_logger = "0.11.9"
 log = "0.4"
 
 # Kaonic

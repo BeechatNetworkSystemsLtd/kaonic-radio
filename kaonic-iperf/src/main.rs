@@ -442,7 +442,10 @@ async fn run_client(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    simple_logger::init_with_level(log::Level::Trace)?;
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Trace)
+        .parse_default_env()
+        .init();
 
     let args = Args::parse();
 
