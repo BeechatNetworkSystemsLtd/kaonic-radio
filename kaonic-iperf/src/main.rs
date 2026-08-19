@@ -358,47 +358,50 @@ async fn run_client(address: &str, cfg: &config::Config) -> Result<(), Box<dyn s
         }
 
         // Wait for response
-        match timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS), module_rx.recv()).await {
-            Ok(Ok(rx_module)) => {
-                if rx_module.module != cfg.iperf.module {
-                    continue;
-                }
+        loop {
+            match timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS), module_rx.recv()).await {
+                Ok(Ok(rx_module)) => {
+                    if rx_module.module != cfg.iperf.module {
+                        continue;
+                    }
 
-                let rtt = send_time.elapsed().as_millis() as u64;
-                let rx_data = rx_module.frame.as_slice();
+                    let rtt = send_time.elapsed().as_millis() as u64;
+                    let rx_data = rx_module.frame.as_slice();
 
-                match parse_packet(rx_data) {
-                    Ok((resp_seq, _)) => {
-                        if resp_seq == seq {
-                            rtt_min = rtt_min.min(rtt);
-                            rtt_max = rtt_max.max(rtt);
-                            rtt_sum += rtt;
-                            rtt_count += 1;
-                            bytes_transferred += (packet_size * 2) as u64; // req + resp
+                    match parse_packet(rx_data) {
+                        Ok((resp_seq, _)) => {
+                            if resp_seq == seq {
+                                rtt_min = rtt_min.min(rtt);
+                                rtt_max = rtt_max.max(rtt);
+                                rtt_sum += rtt;
+                                rtt_count += 1;
+                                bytes_transferred += (packet_size * 2) as u64; // req + resp
 
-                            println!("seq={:<6} rtt={:<4} ms  size={}", seq, rtt, rx_data.len());
+                                println!("seq={:<6} rtt={:<4} ms  size={}", seq, rtt, rx_data.len());
+                            }
+                        }
+                        Err(ParseError::CrcMismatch { expected, actual }) => {
+                            crc_errors += 1;
+                            println!(
+                                "seq={:<6} CRC ERROR (expected={:#010x} actual={:#010x})",
+                                seq, expected, actual
+                            );
+                        }
+                        Err(_) => {
+                            // Ignore non-iperf packets
                         }
                     }
-                    Err(ParseError::CrcMismatch { expected, actual }) => {
-                        crc_errors += 1;
-                        println!(
-                            "seq={:<6} CRC ERROR (expected={:#010x} actual={:#010x})",
-                            seq, expected, actual
-                        );
-                    }
-                    Err(_) => {
-                        // Ignore non-iperf packets
-                    }
+                }
+                Ok(Err(_)) => {
+                    // Channel error
+                    timeouts += 1;
+                }
+                Err(_) => {
+                    println!("seq={:<6} TIMEOUT", seq);
+                    timeouts += 1;
                 }
             }
-            Ok(Err(_)) => {
-                // Channel error
-                timeouts += 1;
-            }
-            Err(_) => {
-                println!("seq={:<6} TIMEOUT", seq);
-                timeouts += 1;
-            }
+            break
         }
 
         seq = seq.wrapping_add(1);
