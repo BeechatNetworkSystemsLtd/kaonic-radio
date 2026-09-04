@@ -100,21 +100,32 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         self.radio
             .change_state(CHANGE_STATE_DURATION, RadioState::TrxPrep)?;
 
+        // Errata #2: TXPREP can be reached with an unlocked PLL.
+        self.radio.ensure_pll_lock()?;
+
         self.baseband.load_tx(frame)?;
+
+        // Drop stale IRQs so the wait observes this transmission, not history.
+        self.radio.clear_irqs()?;
 
         self.radio.send_command(crate::radio::RadioCommand::Tx)?;
 
-        if let Some(irqs) = self.radio.wait_any_irq(
+        match self.radio.wait_any_irq(
             RadioInterruptMask::new()
                 .add_irq(regs::RadioInterrupt::TransceiverReady)
                 .add_irq(regs::RadioInterrupt::TransceiverError)
                 .build(),
             core::time::Duration::from_millis(500),
         ) {
-            if irqs.has_irq(regs::RadioInterrupt::TransceiverReady) {}
-        }
+            Some(irqs) => {
+                if irqs.has_irq(regs::RadioInterrupt::TransceiverError) {
+                    return Err(RadioError::IncorrectState);
+                }
 
-        Ok(())
+                Ok(())
+            }
+            None => Err(RadioError::Timeout),
+        }
     }
 
     pub fn measure_ed(&mut self) -> Result<i8, RadioError> {

@@ -6,10 +6,9 @@ use radio_rf215::bus::BusInterrupt;
 use radio_rf215::bus::BusReset;
 use radio_rf215::error::RadioError;
 
-use core::sync::atomic::AtomicUsize;
-use core::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Instant;
+use std::sync::Condvar;
+use std::sync::Mutex;
 
 use super::linux::LinuxClock;
 use super::linux::LinuxGpioReset;
@@ -39,7 +38,23 @@ impl<T: Bus> Bus for SharedBus<T> {
     }
 
     #[inline]
+    fn irq_poll(
+        &mut self,
+        reg: radio_rf215::regs::RegisterAddress,
+    ) -> Result<u8, BusError> {
+        let mut bus = self.bus.lock().unwrap();
+        bus.irq_poll(reg)
+    }
+
+    #[inline]
     fn wait_interrupt(&mut self, timeout: Option<std::time::Duration>) -> bool {
+        // Never hold the bus mutex while sleeping: it would stall SPI access.
+        if let Some(irq) = &self.irq {
+            let (count, signaled) = irq.wait(self.irq_count, timeout);
+            self.irq_count = count;
+            return signaled;
+        }
+
         let mut bus = self.bus.lock().unwrap();
         bus.wait_interrupt(timeout)
     }
@@ -105,16 +120,60 @@ impl BusClock for LinuxClock {
     }
 }
 
+/// Hand-off between the GPIO edge-wait thread and blocking waiters.
+#[derive(Debug, Default)]
+pub struct IrqSignal {
+    count: Mutex<usize>,
+    condvar: Condvar,
+}
+
+impl IrqSignal {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn notify(&self) {
+        {
+            let mut count = self.count.lock().unwrap();
+            *count = count.wrapping_add(1);
+        }
+
+        // Notify outside the lock so woken waiters don't block on it.
+        self.condvar.notify_all();
+    }
+
+    /// Returns the observed counter value and whether it advanced past `prev`.
+    pub(crate) fn wait(&self, prev: usize, timeout: Option<core::time::Duration>) -> (usize, bool) {
+        let count = self.count.lock().unwrap();
+
+        match timeout {
+            Some(timeout) => {
+                let (count, result) = self
+                    .condvar
+                    .wait_timeout_while(count, timeout, |c| *c == prev)
+                    .unwrap();
+
+                (*count, !result.timed_out())
+            }
+            None => {
+                let count = self.condvar.wait_while(count, |c| *c == prev).unwrap();
+
+                (*count, true)
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct AtomicInterrupt {
-    counter: Arc<AtomicUsize>,
+    signal: Arc<IrqSignal>,
     prev_count: usize,
 }
 
 impl AtomicInterrupt {
-    pub fn new(counter: Arc<AtomicUsize>) -> Self {
+    pub fn new(signal: Arc<IrqSignal>) -> Self {
         Self {
-            counter,
+            signal,
             prev_count: 0,
         }
     }
@@ -122,24 +181,9 @@ impl AtomicInterrupt {
 
 impl BusInterrupt for AtomicInterrupt {
     fn wait_on_interrupt(&mut self, timeout: Option<core::time::Duration>) -> bool {
-        let deadline = timeout.map(|t| Instant::now() + t);
-
-        loop {
-            let current = self.counter.load(Ordering::Acquire);
-
-            if current != self.prev_count {
-                self.prev_count = current;
-                return true;
-            }
-
-            if let Some(deadline) = deadline {
-                if Instant::now() >= deadline {
-                    return false;
-                }
-            }
-
-            std::thread::yield_now();
-        }
+        let (count, signaled) = self.signal.wait(self.prev_count, timeout);
+        self.prev_count = count;
+        signaled
     }
 }
 
@@ -150,6 +194,7 @@ impl From<RadioError> for KaonicError {
             RadioError::IncorrectState => Self::HardwareError,
             RadioError::CommunicationFailure => Self::HardwareError,
             RadioError::Timeout => Self::Timeout,
+            RadioError::ChannelBusy => Self::TryAgain,
         }
     }
 }

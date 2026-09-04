@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, atomic::AtomicUsize};
+use std::sync::{Arc, Mutex};
 
 use linux_embedded_hal::spidev::SpidevOptions;
 use radio_common::{modulation::OfdmModulation, Hertz, Modulation, RadioConfigBuilder};
@@ -17,7 +17,7 @@ use crate::platform::{
         LinuxClock, LinuxGpioConfig, LinuxGpioInterrupt, LinuxGpioLineConfig, LinuxGpioReset,
         LinuxOutputPin, LinuxSpi, LinuxSpiConfig, SharedBus,
     },
-    linux_rf215::AtomicInterrupt,
+    linux_rf215::{AtomicInterrupt, IrqSignal},
 };
 
 struct RadioBusConfig {
@@ -334,11 +334,11 @@ fn create_radio(
     let interrupt_gpio = LinuxGpioInterrupt::new(&config.irq_gpio.line_name, config.name)
         .map_err(|_| BusError::ControlFailure)?;
 
-    let irq_counter = Arc::new(AtomicUsize::new(0));
+    let irq_signal = Arc::new(IrqSignal::new());
 
-    let radio_event = Kaonic1SRadioEvent::new(irq_counter.clone(), interrupt_gpio);
+    let radio_event = Kaonic1SRadioEvent::new(irq_signal.clone(), interrupt_gpio);
 
-    let interrupt_atomic = AtomicInterrupt::new(irq_counter.clone());
+    let interrupt_atomic = AtomicInterrupt::new(irq_signal.clone());
 
     // Create clock (system clock)
     let clock = LinuxClock::new();
@@ -355,7 +355,7 @@ fn create_radio(
         config.spi.max_speed
     );
 
-    let mut radio = Rf215::probe(SharedBus::new(bus), config.name)
+    let mut radio = Rf215::probe(SharedBus::new_with_interrupt(bus, irq_signal), config.name)
         .inspect_err(|_| log::error!("radio probe fail for {}", config.name))?;
 
     log::debug!("configure radio {}", config.name);

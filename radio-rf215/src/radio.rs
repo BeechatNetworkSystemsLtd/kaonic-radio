@@ -393,9 +393,58 @@ where
         timeout: core::time::Duration,
         state: RadioState,
     ) -> Result<RadioState, RadioError> {
-        self.set_state(state)?;
+        // Errata #2/#6: a state command may silently fail; verify and retry.
+        for _ in 0..3 {
+            self.set_state(state)?;
 
-        self.wait_on_state(timeout, |s| s == state)
+            if let Ok(reached) = self.wait_on_state(timeout, |s| s == state) {
+                return Ok(reached);
+            }
+
+            if state == RadioState::TrxPrep || state == RadioState::Rx {
+                let _ = self.kick_pll();
+            }
+        }
+
+        Err(RadioError::CommunicationFailure)
+    }
+
+    /// Errata #2 workaround: restart a stuck PLL/state transition.
+    fn kick_pll(&mut self) -> Result<(), RadioError> {
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL), 0x09)?;
+        self.bus.delay(core::time::Duration::from_micros(20));
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL), 0x08)?;
+
+        Ok(())
+    }
+
+    /// Reads PLL.LS (RFn_PLL bit 1): `true` when the PLL is locked.
+    pub fn is_pll_locked(&mut self) -> Result<bool, RadioError> {
+        const PLL_LS: u8 = 0b0000_0010;
+
+        let pll = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL))?;
+
+        Ok((pll & PLL_LS) != 0)
+    }
+
+    /// Waits for PLL lock, applying the errata #2 workaround as needed —
+    /// an unlocked PLL leaves the radio silently off-channel.
+    pub fn ensure_pll_lock(&mut self) -> Result<(), RadioError> {
+        for _ in 0..4 {
+            for _ in 0..10 {
+                if self.is_pll_locked()? {
+                    return Ok(());
+                }
+
+                self.bus.delay(core::time::Duration::from_micros(20));
+            }
+
+            self.kick_pll()?;
+        }
+
+        Err(RadioError::IncorrectState)
     }
 
     pub fn read_state(&mut self) -> Result<RadioState, RadioError> {
@@ -443,15 +492,24 @@ where
             }
         }
 
-        if !already_in_rx {
-            self.bus.delay(core::time::Duration::from_micros(200));
+        if already_in_rx {
+            if self.is_pll_locked()? {
+                return Ok(());
+            }
 
-            self.set_state(RadioState::Rx)?;
-
-            self.wait_on_state(core::time::Duration::from_millis(100), |s| {
-                s == RadioState::Rx
-            })?;
+            // Errata #2: unlocked PLL in RX — relock via TXPREP.
+            self.change_state(core::time::Duration::from_millis(100), RadioState::TrxPrep)?;
         }
+
+        self.ensure_pll_lock()?;
+
+        self.bus.delay(core::time::Duration::from_micros(200));
+
+        self.set_state(RadioState::Rx)?;
+
+        self.wait_on_state(core::time::Duration::from_millis(100), |s| {
+            s == RadioState::Rx
+        })?;
 
         Ok(())
     }
@@ -579,7 +637,8 @@ where
                 }
             }
 
-            self.bus.wait_interrupt_until(deadline);
+            self.bus
+                .wait_interrupt(Some(core::time::Duration::from_micros(500)));
         }
 
         return None;
@@ -603,7 +662,8 @@ where
                 }
             }
 
-            self.bus.wait_interrupt_until(deadline);
+            self.bus
+                .wait_interrupt(Some(core::time::Duration::from_micros(500)));
         }
 
         return None;
@@ -629,7 +689,7 @@ where
     }
 
     fn read_irqs(&mut self) -> Result<RadioInterruptMask, RadioError> {
-        let irq_status = self.bus.read_reg_u8(B::RADIO_IRQ_ADDRESS)?;
+        let irq_status = self.bus.irq_poll(B::RADIO_IRQ_ADDRESS)?;
         Ok(RadioInterruptMask::new_from_mask(irq_status))
     }
 

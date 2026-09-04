@@ -80,6 +80,14 @@ pub trait Bus {
         values: &mut [RegisterValue],
     ) -> Result<(), BusError>;
 
+    /// Reads IRQ status register `reg` (0x00..=0x03) and returns its pending
+    /// bits. Hardware-backed impls should burst-read all four registers: the
+    /// RF215 holds its IRQ pin until every pending IRQS register is read, so
+    /// separate reads can leave the pin high with no fresh edge.
+    fn irq_poll(&mut self, reg: RegisterAddress) -> Result<u8, BusError> {
+        self.read_reg_u8(reg)
+    }
+
     /// Helper method for waiting on event interrupt with timeout
     fn wait_interrupt(&mut self, timeout: Option<Duration>) -> bool;
 
@@ -95,19 +103,6 @@ pub trait Bus {
 
     fn deadline_reached(&mut self, deadline: u128) -> bool {
         (self.current_time() as u128) > deadline
-    }
-
-    /// Waits for an interrupt, bounded by the remaining time before `deadline`
-    /// and a safety-net poll interval. An interrupt signal wakes the wait
-    /// immediately; the interval only sets how often the caller gets to
-    /// re-check state when no signal arrives.
-    fn wait_interrupt_until(&mut self, deadline: u128) -> bool {
-        const POLL_INTERVAL_MS: u128 = 5;
-
-        let now = self.current_time() as u128;
-        let wait_ms = deadline.saturating_sub(now).min(POLL_INTERVAL_MS).max(1);
-
-        self.wait_interrupt(Some(Duration::from_millis(wait_ms as u64)))
     }
 
     /// Executes hardware reset of RF215 module
@@ -126,6 +121,8 @@ where
     interrupt: I,
     clock: C,
     reset: R,
+    /// Unclaimed IRQ bits per IRQS register, filled by `irq_poll` burst reads.
+    irq_pending: [u8; 4],
 }
 
 impl<S, I, C, R> SpiBus<S, I, C, R>
@@ -141,6 +138,7 @@ where
             interrupt,
             clock,
             reset,
+            irq_pending: [0; 4],
         }
     }
 }
@@ -174,6 +172,19 @@ where
         self.spi
             .transaction(&mut [spi::Operation::Write(&addr), spi::Operation::Read(values)])
             .map_err(|_| BusError::Timeout)
+    }
+
+    fn irq_poll(&mut self, reg: RegisterAddress) -> Result<u8, BusError> {
+        // Burst-reading all four IRQS registers guarantees the IRQ pin
+        // de-asserts, so the next IRQ always produces a fresh edge.
+        let mut regs = [0u8; 4];
+        self.read_regs(0x0000, &mut regs)?;
+
+        for (pending, fresh) in self.irq_pending.iter_mut().zip(regs.iter()) {
+            *pending |= fresh;
+        }
+
+        Ok(core::mem::take(&mut self.irq_pending[(reg & 0x3) as usize]))
     }
 
     fn wait_interrupt(&mut self, timeout: Option<Duration>) -> bool {

@@ -271,7 +271,7 @@ where
     }
 
     fn read_irqs(&mut self) -> Result<BasebandInterruptMask, RadioError> {
-        let irq_status = self.bus.read_reg_u8(B::BASEBAND_IRQ_ADDRESS)?;
+        let irq_status = self.bus.irq_poll(B::BASEBAND_IRQ_ADDRESS)?;
         Ok(BasebandInterruptMask::new_from_mask(irq_status))
     }
 
@@ -303,7 +303,8 @@ where
                 }
             }
 
-            self.bus.wait_interrupt_until(deadline);
+            self.bus
+                .wait_interrupt(Some(core::time::Duration::from_micros(100)));
         }
 
         return false;

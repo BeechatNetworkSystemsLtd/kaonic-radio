@@ -1,5 +1,5 @@
 use std::{
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{Arc, Mutex},
     time::Instant,
 };
 
@@ -21,7 +21,7 @@ use crate::{
         linux::{
             LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
         },
-        linux_rf215::AtomicInterrupt,
+        linux_rf215::{AtomicInterrupt, IrqSignal},
     },
     radio::{Accelerator, Antenna, Radio, RadioBand, ReceiveResult, ScanResult},
 };
@@ -155,19 +155,18 @@ pub type Kaonic1SRf215 = Rf215<SharedBus<Kaonic1SBus>>;
 
 #[derive(Debug)]
 pub struct Kaonic1SRadioEvent {
-    counter: Arc<AtomicUsize>,
+    signal: Arc<IrqSignal>,
     irq: LinuxGpioInterrupt,
 }
 
 impl Kaonic1SRadioEvent {
-    pub fn new(counter: Arc<AtomicUsize>, irq: LinuxGpioInterrupt) -> Self {
-        Self { counter, irq }
+    pub fn new(signal: Arc<IrqSignal>, irq: LinuxGpioInterrupt) -> Self {
+        Self { signal, irq }
     }
 
     pub fn wait_for_event(&mut self, timeout: Option<core::time::Duration>) -> bool {
         if self.irq.wait_on_interrupt(timeout) {
-            self.counter
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.signal.notify();
 
             return true;
         }

@@ -11,13 +11,34 @@ use crate::error::KaonicError;
 #[derive(Debug)]
 pub struct SharedBus<T> {
     pub(super) bus: std::sync::Arc<std::sync::Mutex<T>>,
+    /// Waited on directly, without holding the bus mutex.
+    pub(super) irq: Option<std::sync::Arc<super::linux_rf215::IrqSignal>>,
+    /// Last observed signal generation (per clone).
+    pub(super) irq_count: usize,
 }
 
 impl<T> SharedBus<T> {
     /// Create a new `SharedDevice`.
     #[inline]
     pub fn new(bus: std::sync::Arc<std::sync::Mutex<T>>) -> Self {
-        Self { bus }
+        Self {
+            bus,
+            irq: None,
+            irq_count: 0,
+        }
+    }
+
+    /// Creates a `SharedBus` that waits for interrupts on `irq` directly.
+    #[inline]
+    pub fn new_with_interrupt(
+        bus: std::sync::Arc<std::sync::Mutex<T>>,
+        irq: std::sync::Arc<super::linux_rf215::IrqSignal>,
+    ) -> Self {
+        Self {
+            bus,
+            irq: Some(irq),
+            irq_count: 0,
+        }
     }
 }
 
@@ -25,6 +46,8 @@ impl<T> Clone for SharedBus<T> {
     fn clone(&self) -> Self {
         Self {
             bus: self.bus.clone(),
+            irq: self.irq.clone(),
+            irq_count: self.irq_count,
         }
     }
 }
