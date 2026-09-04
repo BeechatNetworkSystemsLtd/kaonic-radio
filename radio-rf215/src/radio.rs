@@ -457,8 +457,12 @@ where
     }
 
     pub fn set_pll(&mut self, pll: PllLoopBandwidth) -> Result<(), RadioError> {
+        // Only bits 5:4 (PLL.LBW) are writable; the rest (including reserved bit 3,
+        // whose reset value of 1 must be preserved per the datasheet) are left untouched.
+        const LBW_MASK: u8 = 0b0011_0000;
+
         self.bus
-            .write_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL), pll as u8)?;
+            .modify_reg_u8(Self::abs_reg(regs::RG_RFXX_PLL), LBW_MASK, pll as u8)?;
 
         Ok(())
     }
@@ -575,8 +579,7 @@ where
                 }
             }
 
-            self.bus
-                .wait_interrupt(Some(core::time::Duration::from_micros(500)));
+            self.bus.wait_interrupt_until(deadline);
         }
 
         return None;
@@ -600,11 +603,23 @@ where
                 }
             }
 
-            self.bus
-                .wait_interrupt(Some(core::time::Duration::from_micros(500)));
+            self.bus.wait_interrupt_until(deadline);
         }
 
         return None;
+    }
+
+    pub fn bus_deadline(&mut self, after: core::time::Duration) -> u128 {
+        self.bus.deadline(after)
+    }
+
+    pub fn bus_time_until(&mut self, deadline: u128) -> core::time::Duration {
+        let now = self.bus.current_time() as u128;
+        if now >= deadline {
+            core::time::Duration::ZERO
+        } else {
+            core::time::Duration::from_millis((deadline - now) as u64)
+        }
     }
 
     pub fn update_irqs(&mut self) -> Result<&mut Self, RadioError> {

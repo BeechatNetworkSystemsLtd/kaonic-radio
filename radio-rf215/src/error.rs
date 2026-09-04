@@ -6,6 +6,7 @@ pub enum RadioError {
     IncorrectState,
     CommunicationFailure,
     Timeout,
+    ChannelBusy,
 }
 
 impl From<BusError> for RadioError {

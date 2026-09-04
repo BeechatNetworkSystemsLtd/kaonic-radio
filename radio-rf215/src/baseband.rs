@@ -129,6 +129,15 @@ where
         Ok(())
     }
 
+    /// Reads AMCS.CCAED: `true` if the last CCA found the channel busy.
+    pub fn is_cca_busy(&mut self) -> Result<bool, RadioError> {
+        const CCAED_BIT: u8 = 0b0000_0100;
+
+        let amcs = self.bus.read_reg_u8(Self::abs_reg(regs::RG_BBCX_AMCS))?;
+
+        Ok((amcs & CCAED_BIT) != 0)
+    }
+
     pub fn set_auto_edt(&mut self, threshold: i8) -> Result<(), RadioError> {
         let amedt: u8 = threshold as u8;
 
@@ -294,8 +303,7 @@ where
                 }
             }
 
-            self.bus
-                .wait_interrupt(Some(core::time::Duration::from_micros(100)));
+            self.bus.wait_interrupt_until(deadline);
         }
 
         return false;

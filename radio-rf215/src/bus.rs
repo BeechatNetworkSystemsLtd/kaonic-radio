@@ -97,6 +97,19 @@ pub trait Bus {
         (self.current_time() as u128) > deadline
     }
 
+    /// Waits for an interrupt, bounded by the remaining time before `deadline`
+    /// and a safety-net poll interval. An interrupt signal wakes the wait
+    /// immediately; the interval only sets how often the caller gets to
+    /// re-check state when no signal arrives.
+    fn wait_interrupt_until(&mut self, deadline: u128) -> bool {
+        const POLL_INTERVAL_MS: u128 = 5;
+
+        let now = self.current_time() as u128;
+        let wait_ms = deadline.saturating_sub(now).min(POLL_INTERVAL_MS).max(1);
+
+        self.wait_interrupt(Some(Duration::from_millis(wait_ms as u64)))
+    }
+
     /// Executes hardware reset of RF215 module
     fn hardware_reset(&mut self) -> Result<(), BusError>;
 }
