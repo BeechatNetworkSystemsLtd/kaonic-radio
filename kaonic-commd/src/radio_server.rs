@@ -473,10 +473,27 @@ impl ServerHandler<Message> for RadioServer {
     }
 }
 
+/// Puts the calling thread on SCHED_FIFO so it preempts normal (EEVDF)
+/// threads immediately on wakeup. Requires CAP_SYS_NICE.
+fn set_realtime_priority(priority: i32) -> bool {
+    let param = libc::sched_param {
+        sched_priority: priority,
+    };
+
+    unsafe { libc::pthread_setschedparam(libc::pthread_self(), libc::SCHED_FIFO, &param) == 0 }
+}
+
 fn radio_event_thread(
     event: Arc<std::sync::Mutex<PlatformRadioEvent>>,
     notify: tokio::sync::watch::Sender<bool>,
 ) {
+    // GPIO IRQ servicing must not wait out a timeslice behind CPU-bound
+    // work (gRPC, UI); modest RT priority keeps edge-to-notify latency
+    // in the microsecond range. Priority stays below kernel irq threads (50).
+    if !set_realtime_priority(10) {
+        log::warn!("radio event thread: can't set SCHED_FIFO priority");
+    }
+
     loop {
         if event.lock().unwrap().wait_for_event(None) {
             let _ = notify.send(true);
