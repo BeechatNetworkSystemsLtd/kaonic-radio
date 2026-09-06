@@ -36,6 +36,14 @@ impl<const S: usize, const R: usize, const Q: usize, C: PacketCoder<S>> Network<
         }
     }
 
+    pub fn coder(&self) -> &C {
+        &self.coder
+    }
+
+    pub fn coder_mut(&mut self) -> &mut C {
+        &mut self.coder
+    }
+
     pub fn receive(
         &mut self,
         current_time: NetworkTime,

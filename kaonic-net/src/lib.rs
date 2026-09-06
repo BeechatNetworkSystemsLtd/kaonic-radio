@@ -83,14 +83,15 @@ mod tests {
         }
 
         let received_data = muxer
-            .process(1, &mut received_frame)
+            .process(&mut received_frame)
             .expect("received full frame")
-            .as_slice();
+            .as_slice()
+            .to_vec();
 
         assert_eq!(received_data.len(), original_data.len());
         assert_eq!(received_data, original_data);
 
-        assert!(muxer.process(1, &mut received_frame).is_err());
+        assert!(muxer.process(&mut received_frame).is_err());
     }
 
     #[test]
@@ -104,17 +105,22 @@ mod tests {
         };
 
         type Coder = LdpcPacketCoder<FRAME_SIZE>;
-        let mut coder = Coder::new();
-
-        let mut network =
-            Network::<FRAME_SIZE, MAX_SEGMENTS_COUNT, 6, { Coder::MAX_PAYLOAD_SIZE }, Coder>::new(
-                coder,
-            );
+        let mut tx = Network::<FRAME_SIZE, MAX_SEGMENTS_COUNT, 6, Coder>::new(Coder::new());
+        let mut rx = Network::<FRAME_SIZE, MAX_SEGMENTS_COUNT, 6, Coder>::new(Coder::new());
 
         let mut frames = [Frame::new(); MAX_SEGMENTS_COUNT];
-
-        network
-            .transmit(&original_data[..], rng, &mut frames, &mut trx)
+        let frames = tx
+            .transmit(&original_data[..], rng, &mut frames)
             .expect("demuxed frames");
+
+        let mut segment = FrameSegment::<FRAME_SIZE, MAX_SEGMENTS_COUNT>::new();
+        let mut received = None;
+        for (i, frame) in frames.iter().enumerate() {
+            rx.receive(i as u128, frame).expect("frame accepted");
+            if let Ok(packet) = rx.process(i as u128, &mut segment) {
+                received = Some(packet.as_slice().to_vec());
+            }
+        }
+        assert_eq!(received.as_deref(), Some(&original_data[..]));
     }
 }

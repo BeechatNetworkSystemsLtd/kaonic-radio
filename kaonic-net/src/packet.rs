@@ -47,6 +47,10 @@ pub struct Header {
 
     // CRC
     crc: u32,
+
+    /// Payload FEC code id ([`crate::coder::FecCode`]); lives in a formerly
+    /// reserved byte, so `0` (TM2048) is what older firmware sends.
+    fec: u8,
 }
 
 impl Header {
@@ -59,6 +63,7 @@ impl Header {
             seq_count: 0,
             len: 0,
             crc: 0,
+            fec: 0,
         }
     }
 
@@ -121,6 +126,15 @@ impl Header {
         self.crc
     }
 
+    pub fn set_fec(&mut self, fec: u8) -> &mut Self {
+        self.fec = fec;
+        self
+    }
+
+    pub fn fec(&self) -> u8 {
+        self.fec
+    }
+
     pub fn pack(&self) -> [u8; HEADER_SIZE] {
         let mut buffer: [u8; HEADER_SIZE] = [0; HEADER_SIZE];
 
@@ -138,7 +152,8 @@ impl Header {
         buffer[offset..offset + 4].copy_from_slice(&self.id.to_le_bytes());
         offset += 4;
 
-        // Reserved
+        // FEC code id + 2 reserved bytes
+        buffer[offset] = self.fec;
         offset += 3;
 
         buffer[offset..offset + 2].copy_from_slice(&self.len.to_le_bytes());
@@ -177,7 +192,8 @@ impl Header {
         ]);
         offset += 4;
 
-        // Reserved
+        // FEC code id + 2 reserved bytes
+        self.fec = data[offset];
         offset += 3;
 
         self.len = u16::from_le_bytes([data[offset + 0], data[offset + 1]]);

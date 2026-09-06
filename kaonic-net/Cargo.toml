@@ -19,3 +19,6 @@ log = "0.4"
 
 kaonic-frame = { path="../kaonic-frame/" }
 kaonic-crc = { path="../kaonic-crc/", default-features = false }
+
+[dev-dependencies]
+rand = { version = "=0.8.5", features = ["getrandom"] }
