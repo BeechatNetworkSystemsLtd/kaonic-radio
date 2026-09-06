@@ -6,6 +6,8 @@ members = [
     "kaonic-commd-cli",
     "kaonic-factory",
     "kaonic-iperf",
+    "kaonic-linktest",
+    "kaonic-spitest",
 
     # Integration
     "kaonic-ctrl", 

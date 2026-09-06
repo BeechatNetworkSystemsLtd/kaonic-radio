@@ -906,6 +906,7 @@ dependencies = [
  "env_logger",
  "kaonic-ctrl",
  "kaonic-radio",
+ "libc",
  "log",
  "prost",
  "radio-common",
@@ -1003,6 +1004,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaonic-linktest"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "env_logger",
+ "kaonic-ctrl",
+ "kaonic-frame",
+ "log",
+ "radio-common",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "kaonic-net"
 version = "0.1.0"
 dependencies = [
@@ -1024,6 +1039,15 @@ dependencies = [
  "memmap2",
  "radio-common",
  "radio-rf215",
+]
+
+[[package]]
+name = "kaonic-spitest"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "embedded-hal",
+ "linux-embedded-hal",
 ]
 
 [[package]]
