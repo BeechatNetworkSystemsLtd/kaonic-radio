@@ -8,22 +8,21 @@ use std::{
 
 use kaonic_ctrl::{
     protocol::{
-        GetStatisticsResponse, Message, MessageBuilder, Payload, RadioFrame, ReceiveModule,
-        TransmitModule,
+        GetStatisticsResponse, Message, MessageBuilder, Payload, ReceiveModule, TransmitModule,
     },
     server::ServerHandler,
 };
 use kaonic_radio::{
     error::KaonicError,
-    platform::{PlatformRadio, PlatformRadioEvent, PlatformRadioFrame, create_machine},
-    radio::Radio,
+    platform::{PlatformRadioEvent, PlatformRadioFrame, create_machine},
 };
 
 use rand::rngs::OsRng;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
-pub type SharedRadio = Arc<std::sync::Mutex<PlatformRadio>>;
+use crate::radio_worker::{self, RadioHandle, WorkerSignal};
+
 const MODULE_EVENT_CHANNEL_CAPACITY: usize = 256;
 
 #[derive(Default)]
@@ -39,7 +38,7 @@ pub struct ModuleStats {
 pub type SharedModuleStats = Arc<ModuleStats>;
 
 pub struct RadioServer {
-    radios: Vec<SharedRadio>,
+    radios: Vec<RadioHandle>,
     stats: Vec<SharedModuleStats>,
     module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
     module_tx_send: broadcast::Sender<Box<TransmitModule>>,
@@ -71,42 +70,32 @@ impl RadioServer {
 
             log::debug!("setup radio[{}]", radio_index);
 
-            let (event_send, event_recv) = watch::channel(false);
-
             let radio = radio.unwrap();
             let event = radio.event();
 
-            let radio = Arc::new(std::sync::Mutex::new(radio));
             let module_stats: SharedModuleStats = Arc::new(ModuleStats::default());
-
-            std::thread::Builder::new()
-                .name(format!("kaonic-radio-event-{}", radio_index))
-                .spawn(move || {
-                    radio_event_thread(event, event_send);
-                })
-                .unwrap();
+            let signal = WorkerSignal::new();
 
             {
-                let cancel = cancel.clone();
-                let module_rx_send = module_rx_send.clone();
-                let radio = radio.clone();
-                let module_stats = module_stats.clone();
-
-                tokio::spawn(Box::pin(async move {
-                    Self::manage_radio(
-                        radio_index as u16,
-                        radio,
-                        module_rx_send,
-                        event_recv,
-                        cancel,
-                        module_stats,
-                    )
-                    .await;
-                }));
+                let signal = signal.clone();
+                std::thread::Builder::new()
+                    .name(format!("kaonic-radio-event-{}", radio_index))
+                    .spawn(move || {
+                        radio_event_thread(event, signal);
+                    })
+                    .unwrap();
             }
 
+            let handle = radio_worker::spawn(
+                radio_index,
+                radio,
+                signal,
+                module_rx_send.clone(),
+                module_stats.clone(),
+            );
+
             radio_index += 1;
-            radios.push(radio);
+            radios.push(handle);
             stats.push(module_stats);
         }
 
@@ -137,8 +126,8 @@ impl RadioServer {
         })
     }
 
-    /// Returns clones of the shared radio handles.
-    pub fn radios(&self) -> Vec<SharedRadio> {
+    /// Returns clones of the radio worker handles.
+    pub fn radios(&self) -> Vec<RadioHandle> {
         self.radios.clone()
     }
 
@@ -229,63 +218,6 @@ impl RadioServer {
             }
         }
     }
-
-    async fn manage_radio(
-        module: u16,
-        radio: SharedRadio,
-        module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
-        mut event_recv: watch::Receiver<bool>,
-        cancel: CancellationToken,
-        stats: SharedModuleStats,
-    ) {
-        let mut rx_frame = PlatformRadioFrame::new();
-
-        loop {
-            let mut receive_module = Box::new(ReceiveModule::new());
-
-            tokio::select! {
-                biased;
-
-                _ = event_recv.changed() => {
-                    let _ = radio.lock().unwrap().update_event();
-
-                    loop {
-                        match radio.lock().unwrap()
-                            .receive(rx_frame.clear(), core::time::Duration::from_millis(2))
-                        {
-                            Ok(rr) => {
-                                let frame_len = rx_frame.len() as u64;
-                                stats.rx_packets.fetch_add(1, Ordering::Relaxed);
-                                stats.rx_bytes.fetch_add(frame_len, Ordering::Relaxed);
-
-                                receive_module.module = module.into();
-                                receive_module.frame = RadioFrame::new_from_frame(&rx_frame);
-                                receive_module.rssi = rr.rssi;
-
-                                if let Err(_) = module_rx_send.send(receive_module) {
-                                    log::error!("can't send module-rx event");
-                                }
-
-                                receive_module = Box::new(ReceiveModule::new());
-                            }
-                            Err(KaonicError::Timeout) => {
-                                break;
-                            }
-                            Err(e) => {
-                                stats.rx_errors.fetch_add(1, Ordering::Relaxed);
-                                log::warn!("radio[{module}] receive error: {e:?}");
-                                break;
-                            }
-                        }
-                    }
-                },
-
-                _ = cancel.cancelled() => {
-                    break;
-                }
-            }
-        }
-    }
 }
 
 impl ServerHandler<Message> for RadioServer {
@@ -301,24 +233,12 @@ impl ServerHandler<Message> for RadioServer {
         match request.payload {
             Payload::TransmitModuleRequest(tx) => {
                 if tx.module < self.radios.len() {
-                    let mut radio = self.radios[tx.module].lock().unwrap();
-                    let frame_len = tx.frame.as_slice().len() as u64;
+                    let frame = PlatformRadioFrame::new_from_slice(tx.frame.as_slice());
 
-                    if let Ok(_) =
-                        radio.transmit(&PlatformRadioFrame::new_from_slice(tx.frame.as_slice()))
-                    {
-                        self.stats[tx.module]
-                            .tx_packets
-                            .fetch_add(1, Ordering::Relaxed);
-                        self.stats[tx.module]
-                            .tx_bytes
-                            .fetch_add(frame_len, Ordering::Relaxed);
+                    if let Ok(_) = self.radios[tx.module].transmit(frame) {
                         let _ = self.module_tx_send.send(Box::new(tx));
                         response.payload = Payload::TransmitModuleResponse;
                     } else {
-                        self.stats[tx.module]
-                            .tx_errors
-                            .fetch_add(1, Ordering::Relaxed);
                         response.payload = Payload::Error;
                     }
                 } else {
@@ -327,10 +247,7 @@ impl ServerHandler<Message> for RadioServer {
             }
             Payload::SetRadioConfigRequest(set) => {
                 if set.module < self.radios.len() {
-                    let _ = self.radios[set.module]
-                        .lock()
-                        .unwrap()
-                        .set_config(&set.config);
+                    let _ = self.radios[set.module].set_config(set.config);
 
                     response.payload = Payload::SetRadioConfigResponse;
                 } else {
@@ -339,24 +256,24 @@ impl ServerHandler<Message> for RadioServer {
             }
             Payload::GetRadioConfigRequest(get) => {
                 if get.module < self.radios.len() {
-                    let config = self.radios[get.module].lock().unwrap().get_config();
-
-                    response.payload = Payload::GetRadioConfigResponse(
-                        kaonic_ctrl::protocol::GetRadioConfigResponse {
-                            module: get.module,
-                            config,
-                        },
-                    );
+                    match self.radios[get.module].get_config() {
+                        Ok(config) => {
+                            response.payload = Payload::GetRadioConfigResponse(
+                                kaonic_ctrl::protocol::GetRadioConfigResponse {
+                                    module: get.module,
+                                    config,
+                                },
+                            );
+                        }
+                        Err(_) => response.payload = Payload::Error,
+                    }
                 } else {
                     response.payload = Payload::Error;
                 }
             }
             Payload::SetModulationRequest(set) => {
                 if set.module < self.radios.len() {
-                    let _ = self.radios[set.module]
-                        .lock()
-                        .unwrap()
-                        .set_modulation(&set.modulation);
+                    let _ = self.radios[set.module].set_modulation(set.modulation);
 
                     response.payload = Payload::SetModulationResponse;
                 } else {
@@ -365,24 +282,24 @@ impl ServerHandler<Message> for RadioServer {
             }
             Payload::GetModulationRequest(get) => {
                 if get.module < self.radios.len() {
-                    let modulation = self.radios[get.module].lock().unwrap().get_modulation();
-
-                    response.payload = Payload::GetModulationResponse(
-                        kaonic_ctrl::protocol::GetModulationResponse {
-                            module: get.module,
-                            modulation,
-                        },
-                    );
+                    match self.radios[get.module].get_modulation() {
+                        Ok(modulation) => {
+                            response.payload = Payload::GetModulationResponse(
+                                kaonic_ctrl::protocol::GetModulationResponse {
+                                    module: get.module,
+                                    modulation,
+                                },
+                            );
+                        }
+                        Err(_) => response.payload = Payload::Error,
+                    }
                 } else {
                     response.payload = Payload::Error;
                 }
             }
             Payload::SetAccelerationRequest(set) => {
                 if set.module < self.radios.len() {
-                    let _ = self.radios[set.module]
-                        .lock()
-                        .unwrap()
-                        .set_accelerator(&set.acceleration);
+                    let _ = self.radios[set.module].set_accelerator(set.acceleration);
 
                     response.payload = Payload::SetAccelerationResponse;
                 } else {
@@ -391,26 +308,25 @@ impl ServerHandler<Message> for RadioServer {
             }
             Payload::GetAccelerationRequest(get) => {
                 if get.module < self.radios.len() {
-                    let acceleration = self.radios[get.module].lock().unwrap().get_accelerator();
-
-                    response.payload = Payload::GetAccelerationResponse(
-                        kaonic_ctrl::protocol::GetAccelerationResponse {
-                            module: get.module,
-                            acceleration,
-                        },
-                    );
+                    match self.radios[get.module].get_accelerator() {
+                        Ok(acceleration) => {
+                            response.payload = Payload::GetAccelerationResponse(
+                                kaonic_ctrl::protocol::GetAccelerationResponse {
+                                    module: get.module,
+                                    acceleration,
+                                },
+                            );
+                        }
+                        Err(_) => response.payload = Payload::Error,
+                    }
                 } else {
                     response.payload = Payload::Error;
                 }
             }
             Payload::SetAntennaRequest(set) => {
                 if set.module < self.radios.len() {
-                    let result = self.radios[set.module]
-                        .lock()
-                        .unwrap()
-                        .set_antenna(set.band, set.antenna);
-
-                    response.payload = match result {
+                    response.payload = match self.radios[set.module].set_antenna(set.band, set.antenna)
+                    {
                         Ok(_) => Payload::SetAntennaResponse,
                         Err(_) => Payload::Error,
                     };
@@ -420,14 +336,18 @@ impl ServerHandler<Message> for RadioServer {
             }
             Payload::GetAntennaRequest(get) => {
                 if get.module < self.radios.len() {
-                    let antenna = self.radios[get.module].lock().unwrap().get_antenna(get.band);
-
-                    response.payload =
-                        Payload::GetAntennaResponse(kaonic_ctrl::protocol::GetAntennaResponse {
-                            module: get.module,
-                            band: get.band,
-                            antenna,
-                        });
+                    match self.radios[get.module].get_antenna(get.band) {
+                        Ok(antenna) => {
+                            response.payload = Payload::GetAntennaResponse(
+                                kaonic_ctrl::protocol::GetAntennaResponse {
+                                    module: get.module,
+                                    band: get.band,
+                                    antenna,
+                                },
+                            );
+                        }
+                        Err(_) => response.payload = Payload::Error,
+                    }
                 } else {
                     response.payload = Payload::Error;
                 }
@@ -475,7 +395,7 @@ impl ServerHandler<Message> for RadioServer {
 
 /// Puts the calling thread on SCHED_FIFO so it preempts normal (EEVDF)
 /// threads immediately on wakeup. Requires CAP_SYS_NICE.
-fn set_realtime_priority(priority: i32) -> bool {
+pub(crate) fn set_realtime_priority(priority: i32) -> bool {
     let param = libc::sched_param {
         sched_priority: priority,
     };
@@ -485,7 +405,7 @@ fn set_realtime_priority(priority: i32) -> bool {
 
 fn radio_event_thread(
     event: Arc<std::sync::Mutex<PlatformRadioEvent>>,
-    notify: tokio::sync::watch::Sender<bool>,
+    signal: Arc<WorkerSignal>,
 ) {
     // GPIO IRQ servicing must not wait out a timeslice behind CPU-bound
     // work (gRPC, UI); modest RT priority keeps edge-to-notify latency
@@ -496,7 +416,7 @@ fn radio_event_thread(
 
     loop {
         if event.lock().unwrap().wait_for_event(None) {
-            let _ = notify.send(true);
+            signal.notify();
         }
     }
 }

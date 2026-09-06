@@ -10,6 +10,7 @@ use crate::radio_server::RadioServer;
 
 mod grpc_server;
 mod radio_server;
+mod radio_worker;
 
 const SERVER_MTU: usize = 1400;
 const SERVER_SEGMENTS: usize = 5;

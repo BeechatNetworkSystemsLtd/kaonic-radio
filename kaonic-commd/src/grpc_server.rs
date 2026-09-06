@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use kaonic_ctrl::protocol::{ReceiveModule, TransmitModule};
-use kaonic_radio::{platform::PlatformRadioFrame, radio::Radio};
+use kaonic_radio::platform::PlatformRadioFrame;
 use radio_common::{
     Accelerator, Antenna, RadioBand, RadioConfig,
     frequency::{BandwidthFilter, Hertz},
@@ -14,7 +14,8 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
-use crate::radio_server::{SharedModuleStats, SharedRadio};
+use crate::radio_server::SharedModuleStats;
+use crate::radio_worker::RadioHandle;
 
 pub mod kaonic {
     tonic::include_proto!("kaonic");
@@ -312,14 +313,14 @@ impl Device for DeviceService {
 //***********************************************************************************************//
 
 pub struct RadioService {
-    radios: Vec<SharedRadio>,
+    radios: Vec<RadioHandle>,
     module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
     module_tx_send: broadcast::Sender<Box<TransmitModule>>,
 }
 
 impl RadioService {
     pub fn new(
-        radios: Vec<SharedRadio>,
+        radios: Vec<RadioHandle>,
         module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
         module_tx_send: broadcast::Sender<Box<TransmitModule>>,
     ) -> Self {
@@ -328,6 +329,19 @@ impl RadioService {
             module_rx_send,
             module_tx_send,
         }
+    }
+
+    /// Runs a blocking radio-worker call off the async runtime.
+    async fn with_radio<T: Send + 'static>(
+        &self,
+        idx: usize,
+        op: impl FnOnce(RadioHandle) -> T + Send + 'static,
+    ) -> Result<T, Status> {
+        let handle = self.radios[idx].clone();
+
+        tokio::task::spawn_blocking(move || op(handle))
+            .await
+            .map_err(|_| Status::internal("radio worker join"))
     }
 
     fn module_index(&self, module: i32) -> Result<usize, Status> {
@@ -352,7 +366,10 @@ impl RadioTrait for RadioService {
     ) -> Result<Response<ProtoRadioConfig>, Status> {
         let module = request.into_inner().module;
         let idx = self.module_index(module)?;
-        let cfg = self.radios[idx].lock().unwrap().get_config();
+        let cfg = self
+            .with_radio(idx, |r| r.get_config())
+            .await?
+            .map_err(|e| Status::internal(format!("get_config: {:?}", e)))?;
         Ok(Response::new(config_to_proto(module, &cfg)))
     }
 
@@ -365,10 +382,8 @@ impl RadioTrait for RadioService {
         let req = request.into_inner();
         let idx = self.module_index(req.module)?;
         let cfg = config_from_proto(&req);
-        self.radios[idx]
-            .lock()
-            .unwrap()
-            .set_config(&cfg)
+        self.with_radio(idx, move |r| r.set_config(cfg))
+            .await?
             .map_err(|e| Status::internal(format!("set_config: {:?}", e)))?;
         Ok(Response::new(Empty {}))
     }
@@ -381,7 +396,10 @@ impl RadioTrait for RadioService {
     ) -> Result<Response<RadioModulation>, Status> {
         let module = request.into_inner().module;
         let idx = self.module_index(module)?;
-        let modulation = self.radios[idx].lock().unwrap().get_modulation();
+        let modulation = self
+            .with_radio(idx, |r| r.get_modulation())
+            .await?
+            .map_err(|e| Status::internal(format!("get_modulation: {:?}", e)))?;
         Ok(Response::new(modulation_to_proto(module, &modulation)))
     }
 
@@ -394,10 +412,8 @@ impl RadioTrait for RadioService {
         let req = request.into_inner();
         let idx = self.module_index(req.module)?;
         let modulation = modulation_from_proto(&req);
-        self.radios[idx]
-            .lock()
-            .unwrap()
-            .set_modulation(&modulation)
+        self.with_radio(idx, move |r| r.set_modulation(modulation))
+            .await?
             .map_err(|e| Status::internal(format!("set_modulation: {:?}", e)))?;
         Ok(Response::new(Empty {}))
     }
@@ -410,7 +426,10 @@ impl RadioTrait for RadioService {
     ) -> Result<Response<RadioAcceleration>, Status> {
         let module = request.into_inner().module;
         let idx = self.module_index(module)?;
-        let accelerator = self.radios[idx].lock().unwrap().get_accelerator();
+        let accelerator = self
+            .with_radio(idx, |r| r.get_accelerator())
+            .await?
+            .map_err(|e| Status::internal(format!("get_acceleration: {:?}", e)))?;
         Ok(Response::new(RadioAcceleration {
             module,
             acceleration: acceleration_to_proto(&accelerator),
@@ -426,10 +445,8 @@ impl RadioTrait for RadioService {
         let req = request.into_inner();
         let idx = self.module_index(req.module)?;
         let accelerator = acceleration_from_proto(req.acceleration);
-        self.radios[idx]
-            .lock()
-            .unwrap()
-            .set_accelerator(&accelerator)
+        self.with_radio(idx, move |r| r.set_accelerator(accelerator))
+            .await?
             .map_err(|e| Status::internal(format!("set_acceleration: {:?}", e)))?;
         Ok(Response::new(Empty {}))
     }
@@ -443,7 +460,10 @@ impl RadioTrait for RadioService {
         let req = request.into_inner();
         let idx = self.module_index(req.module)?;
         let band = band_from_proto(req.band);
-        let antenna = self.radios[idx].lock().unwrap().get_antenna(band);
+        let antenna = self
+            .with_radio(idx, move |r| r.get_antenna(band))
+            .await?
+            .map_err(|e| Status::internal(format!("get_antenna: {:?}", e)))?;
         Ok(Response::new(RadioAntenna {
             module: req.module,
             band: req.band,
@@ -461,10 +481,8 @@ impl RadioTrait for RadioService {
         let idx = self.module_index(req.module)?;
         let band = band_from_proto(req.band);
         let antenna = antenna_from_proto(req.antenna);
-        self.radios[idx]
-            .lock()
-            .unwrap()
-            .set_antenna(band, antenna)
+        self.with_radio(idx, move |r| r.set_antenna(band, antenna))
+            .await?
             .map_err(|e| Status::internal(format!("set_antenna: {:?}", e)))?;
         Ok(Response::new(Empty {}))
     }
@@ -484,14 +502,13 @@ impl RadioTrait for RadioService {
 
         let start = Instant::now();
         let tx_frame = PlatformRadioFrame::new_from_slice(&bytes);
-        self.radios[idx]
-            .lock()
-            .unwrap()
-            .transmit(&tx_frame)
+        let event_frame = kaonic_ctrl::protocol::RadioFrame::new_from_frame(&tx_frame);
+        self.with_radio(idx, move |r| r.transmit(tx_frame))
+            .await?
             .map_err(|e| Status::internal(format!("transmit: {:?}", e)))?;
         let _ = self.module_tx_send.send(Box::new(TransmitModule {
             module: idx,
-            frame: kaonic_ctrl::protocol::RadioFrame::new_from_frame(&tx_frame),
+            frame: event_frame,
         }));
 
         Ok(Response::new(TransmitResponse {
