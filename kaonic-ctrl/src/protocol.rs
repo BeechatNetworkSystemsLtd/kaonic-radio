@@ -168,6 +168,27 @@ pub struct GetAntennaResponse {
     pub antenna: Antenna,
 }
 
+/// Frame carried in a batch transmit request. Unlike [`RadioFrame`] this
+/// serializes only the actual bytes, so several frames fit in one message.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BatchFrame {
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransmitBatchRequest {
+    pub module: usize,
+    pub frames: Vec<BatchFrame>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct TransmitBatchResponse {
+    pub module: usize,
+    pub sent: u32,
+    pub errors: u32,
+}
+
 //***********************************************************************************************//
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -202,6 +223,8 @@ pub enum Payload {
     SetAntennaResponse,
     GetAntennaRequest(GetAntennaRequest),
     GetAntennaResponse(GetAntennaResponse),
+    TransmitBatchRequest(TransmitBatchRequest),
+    TransmitBatchResponse(TransmitBatchResponse),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -236,6 +259,14 @@ impl Payload {
             Payload::TransmitModuleRequest(tx) => tx.frame.validate(),
             Payload::TransmitModuleEvent(tx) => tx.frame.validate(),
             Payload::ReceiveModule(rx) => rx.frame.validate(),
+            Payload::TransmitBatchRequest(batch) => {
+                for frame in &batch.frames {
+                    if frame.data.len() > RADIO_FRAME_SIZE {
+                        return Err(ControllerError::DecodeError);
+                    }
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }

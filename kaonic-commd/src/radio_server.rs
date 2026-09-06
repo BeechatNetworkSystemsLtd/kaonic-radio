@@ -377,6 +377,27 @@ impl ServerHandler<Message> for RadioServer {
                     response.payload = Payload::Error;
                 }
             }
+            Payload::TransmitBatchRequest(ref batch) => {
+                if batch.module < self.radios.len() {
+                    let frames: Vec<PlatformRadioFrame> = batch
+                        .frames
+                        .iter()
+                        .map(|f| PlatformRadioFrame::new_from_slice(&f.data))
+                        .collect();
+
+                    let (sent, errors) = self.radios[batch.module].transmit_batch(frames);
+
+                    response.payload = Payload::TransmitBatchResponse(
+                        kaonic_ctrl::protocol::TransmitBatchResponse {
+                            module: batch.module,
+                            sent,
+                            errors,
+                        },
+                    );
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
             Payload::Ping => {
                 response.payload = Payload::Pong;
             }

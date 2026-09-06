@@ -137,6 +137,59 @@ impl RadioClient {
         }
     }
 
+    /// Transmits several frames in one request per chunk, keeping the
+    /// radio's transmit queue full between frames. Large batches are split
+    /// transparently to fit the transport message size. Returns the total
+    /// (sent, errors) counts. RX delivery is unaffected — received frames
+    /// arrive through [`Self::module_receive`] as usual.
+    pub async fn transmit_batch(
+        &mut self,
+        module: usize,
+        frames: &[Frame<RADIO_FRAME_SIZE>],
+    ) -> Result<(u32, u32), ControllerError> {
+        // Transport fits ~7KB per message; leave headroom for headers.
+        const CHUNK_BYTES: usize = 5500;
+        const CHUNK_FRAMES: usize = 16;
+
+        let mut sent = 0u32;
+        let mut errors = 0u32;
+
+        let mut chunk: Vec<crate::protocol::BatchFrame> = Vec::new();
+        let mut chunk_bytes = 0usize;
+
+        for (i, frame) in frames.iter().enumerate() {
+            chunk.push(crate::protocol::BatchFrame {
+                data: frame.as_slice().to_vec(),
+            });
+            chunk_bytes += frame.len();
+
+            let flush = chunk.len() >= CHUNK_FRAMES
+                || chunk_bytes >= CHUNK_BYTES
+                || i == frames.len() - 1;
+
+            if flush {
+                let request = crate::protocol::TransmitBatchRequest {
+                    module,
+                    frames: core::mem::take(&mut chunk),
+                };
+                chunk_bytes = 0;
+
+                let response = self.request(Payload::TransmitBatchRequest(request)).await?;
+
+                match response.payload {
+                    Payload::TransmitBatchResponse(r) => {
+                        sent += r.sent;
+                        errors += r.errors;
+                    }
+                    Payload::Error => return Err(ControllerError::MethodError),
+                    _ => return Err(ControllerError::DecodeError),
+                }
+            }
+        }
+
+        Ok((sent, errors))
+    }
+
     /// Sets the modulation scheme for the specified radio module.
     pub async fn set_modulation(
         &mut self,
