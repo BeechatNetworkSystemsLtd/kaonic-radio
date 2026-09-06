@@ -213,6 +213,17 @@ impl<I: Bus + Clone> Rf215<I> {
         Ok(self)
     }
 
+    /// Re-arms RX only on the band selected by the current frequency config.
+    pub fn start_receive_current(&mut self) -> Result<&mut Self, RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.start_receive()?;
+        } else {
+            self.trx_24.start_receive()?;
+        }
+
+        Ok(self)
+    }
+
     pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
             self.trx_09.bb_transmit_cca(frame)

@@ -298,12 +298,12 @@ impl Radio for Kaonic1SRadio {
 
         let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
 
-        let edv = self.radio.read_edv().unwrap_or(127);
-
-        let _ = self.radio.start_receive();
-
         match result {
             Ok(_) => {
+                let edv = self.radio.read_edv().unwrap_or(127);
+
+                let _ = self.radio.start_receive_current();
+
                 log::debug!(
                     "rx [{}] (- |o| {:>4} bytes {:>3}us",
                     self.radio.name(),
@@ -320,16 +320,14 @@ impl Radio for Kaonic1SRadio {
             }
             Err(err) => match err {
                 radio_rf215::error::RadioError::Timeout => {
-                    let rssi = self.radio.read_rssi().unwrap_or(127);
-
-                    self.noise_dbm = rssi;
-
-                    // log::trace!("RX ({}): RSSI:{}", self.radio.name(), rssi);
-
+                    // Nothing received: the radio is still armed in RX, so
+                    // skip the EDV/re-arm SPI traffic on this hot path.
                     return Err(KaonicError::Timeout);
                 }
                 _ => {
                     log::error!("receive error {}", self.radio.name());
+
+                    let _ = self.radio.start_receive();
 
                     return Err(err.into());
                 }
