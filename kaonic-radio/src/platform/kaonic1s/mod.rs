@@ -186,7 +186,52 @@ pub struct Kaonic1SRadio {
     fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
 
     noise_dbm: i8,
+
+    last_rx_arm: Instant,
+    last_peer_heard: Instant,
+    peer_dbm: i8,
+    backoff_window: u32,
+    random_state: u64,
+    stats: Kaonic1SRadioStats,
 }
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Kaonic1SRadioStats {
+    /// Transmissions deferred because the channel was busy.
+    pub cca_busy: u64,
+    /// Times the receiver was re-armed after going silent.
+    pub rx_rearms: u64,
+    /// Frames transmitted, and the time they spent inside the driver.
+    pub tx_count: u64,
+    pub tx_time_us: u64,
+}
+
+impl Kaonic1SRadioStats {
+    /// Mean time one frame spent in the driver.
+    pub fn tx_micros_per_frame(&self) -> u64 {
+        self.tx_time_us / self.tx_count.max(1)
+    }
+}
+
+/// Transmit attempts before giving up, including channel-busy retries.
+const TX_ATTEMPTS: usize = 8;
+/// Backoff slot: about one short frame plus turnaround at the fastest rate.
+const CCA_BACKOFF_SLOT: core::time::Duration = core::time::Duration::from_micros(500);
+const CCA_BACKOFF_WINDOW_MIN: u32 = 4;
+const CCA_BACKOFF_WINDOW_MAX: u32 = 64;
+/// Headroom over the measured noise floor before the channel counts as busy.
+/// How far below the weakest neighbour heard the channel still counts as busy.
+/// Deriving this from real receptions keeps a quiet channel fast.
+const CCA_PEER_MARGIN_DB: i8 = 10;
+const CCA_THRESHOLD_MIN_DBM: i8 = -80;
+/// Used when no neighbour has been heard recently: effectively transmit now.
+const CCA_THRESHOLD_IDLE_DBM: i8 = -50;
+/// A neighbour heard longer ago than this no longer constrains transmission.
+const CCA_PEER_TTL: core::time::Duration = core::time::Duration::from_secs(5);
+
+/// How long a silent receiver may go before being re-armed. Trades a rare lost
+/// frame for recovery from a stalled receiver.
+const RX_REARM_INTERVAL: core::time::Duration = core::time::Duration::from_millis(20);
 
 impl Kaonic1SRadio {
     pub fn new(
@@ -204,7 +249,13 @@ impl Kaonic1SRadio {
             modulation: Modulation::Ofdm(OfdmModulation::default()),
             accelerator: Accelerator::Native,
             fpga,
-            noise_dbm: -127,
+            noise_dbm: -95,
+            last_rx_arm: Instant::now(),
+            last_peer_heard: Instant::now() - CCA_PEER_TTL,
+            peer_dbm: 0,
+            backoff_window: CCA_BACKOFF_WINDOW_MIN,
+            stats: Kaonic1SRadioStats::default(),
+            random_state: 0,
         }
     }
 
@@ -217,6 +268,63 @@ impl Kaonic1SRadio {
     }
 }
 
+impl Kaonic1SRadio {
+
+    /// xorshift64*: enough for backoff jitter, and seeded per process so two
+    /// devices that defer at the same moment do not pick the same slot.
+    /// Jitter for CCA backoff. Not cryptographic — an xorshift seeded from the
+    /// clock on first use, which is all that is needed to stop deferred senders
+    /// retrying in lock-step.
+    ///
+    /// Seeding lazily also spreads the two radios apart: constructed together
+    /// they would take near-identical clock values, but they first defer at
+    /// different moments.
+    fn soft_random(&mut self) -> u32 {
+        if self.random_state == 0 {
+            // `| 1` keeps a seeded state non-zero, so zero stays unambiguously
+            // "unseeded" — and an xorshift that reaches zero never leaves it.
+            self.random_state = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x9E37_79B9_7F4A_7C15)
+                | 1;
+        }
+
+        let mut x = self.random_state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.random_state = x;
+
+        (x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as u32
+    }
+
+    /// Counters for this radio.
+    pub fn stats(&self) -> Kaonic1SRadioStats {
+        self.stats
+    }
+
+    /// Current noise-floor estimate in dBm.
+    pub fn noise_floor_dbm(&self) -> i8 {
+        self.noise_dbm
+    }
+}
+
+/// Bytes to read out of the RX buffer before the frame ends, overlapping the
+/// SPI transfer with the tail of the reception. Measured as neutral on this
+/// board (the read-out is not what limits the receiver), so it is off by
+/// default and `KAONIC_RX_STREAM_LEVEL` enables it for further testing.
+/// Frame-buffer level that triggers early read-out; 0 disables streaming.
+pub const RX_STREAM_LEVEL: u16 = 0;
+
+/// How long a frame already on the air may take to finish, from the
+/// modulation. Capped so a bad rate cannot park the worker.
+fn frame_receive_budget(modulation: &Modulation) -> core::time::Duration {
+    const MIN: core::time::Duration = core::time::Duration::from_millis(2);
+    const MAX: core::time::Duration = core::time::Duration::from_secs(4);
+    core::time::Duration::from_micros(modulation.airtime_micros(FRAME_SIZE)).clamp(MIN, MAX)
+}
+
 impl Radio for Kaonic1SRadio {
     type TxFrame = Kaonic1SFrame;
     type RxFrame = Kaonic1SFrame;
@@ -227,6 +335,10 @@ impl Radio for Kaonic1SRadio {
         self.radio.configure(modulation)?;
 
         self.modulation = *modulation;
+
+        // Reconfiguring drops the receiver out of RX; a node that only
+        // listens never transmits, so nothing else would re-arm it.
+        let _ = self.radio.start_receive_current();
 
         Ok(())
     }
@@ -243,6 +355,8 @@ impl Radio for Kaonic1SRadio {
         self.radio.set_frequency(config)?;
 
         self.config = *config;
+
+        let _ = self.radio.start_receive_current();
 
         Ok(())
     }
@@ -261,18 +375,70 @@ impl Radio for Kaonic1SRadio {
 
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
         let mut result = Ok(());
-        for i in 0..4 {
+        for i in 0..TX_ATTEMPTS {
             let start = Instant::now();
 
-            result = self
+            let attempt = self
                 .radio
-                .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
-                .map_err(|_| KaonicError::HardwareError);
+                .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()));
 
-            if result.is_err() {
-                log::error!("tx [{}] {} error", self.radio.name(), i);
+            // A busy channel is not a failure. Randomised backoff stops every
+            // deferred sender colliding again in lock-step.
+            if let Err(radio_rf215::error::RadioError::ChannelBusy) = attempt {
+                self.stats.cca_busy = self.stats.cca_busy.saturating_add(1);
+
+                if self.stats.cca_busy % 100 == 0 {
+                    log::info!(
+                        "cca [{}] deferred {} frames (threshold {} dBm, noise {} dBm)",
+                        self.radio.name(),
+                        self.stats.cca_busy,
+                        self.radio.cca_threshold(),
+                        self.noise_dbm,
+                    );
+                }
+                self.backoff_window =
+                    (self.backoff_window.saturating_mul(2)).min(CCA_BACKOFF_WINDOW_MAX);
+
+                let slots = self.soft_random() % self.backoff_window.max(1);
+                std::thread::sleep(CCA_BACKOFF_SLOT * slots);
+
+                result = Err(KaonicError::TryAgain);
+                continue;
+            }
+
+            let attempt_error: Result<(), radio_rf215::error::RadioError> = match attempt {
+                Ok(()) => Ok(()),
+                Err(err) => Err(err),
+            };
+            result = if attempt_error.is_ok() {
+                Ok(())
+            } else {
+                Err(KaonicError::HardwareError)
+            };
+
+            if let Err(ref err) = attempt_error {
+                log::error!(
+                    "tx [{}] attempt {} failed: {:?} (frame {} bytes)",
+                    self.radio.name(),
+                    i,
+                    err,
+                    frame.as_slice().len()
+                );
                 std::thread::sleep(core::time::Duration::from_millis(4));
             } else {
+                self.backoff_window = CCA_BACKOFF_WINDOW_MIN;
+
+                self.stats.tx_time_us = self.stats.tx_time_us.saturating_add(start.elapsed().as_micros() as u64);
+                self.stats.tx_count = self.stats.tx_count.saturating_add(1);
+
+                if self.stats.tx_count % 100 == 0 {
+                    log::info!(
+                        "tx [{}] {} frames, {} us/frame in driver",
+                        self.radio.name(),
+                        self.stats.tx_count,
+                        self.stats.tx_micros_per_frame(),
+                    );
+                }
                 log::debug!(
                     "tx [{}] -) |o| {:>4} bytes {:>4}us",
                     self.radio.name(),
@@ -284,6 +450,11 @@ impl Radio for Kaonic1SRadio {
             }
         }
 
+        // This blocks until the frame has left the antenna, because the
+        // transceiver cannot enter RX while still transmitting. Deferring it
+        // to the receive path was measured: the transmitter then runs ~40%
+        // faster and simply overruns the receiver, so end-to-end throughput
+        // drops. It becomes worth revisiting if the receive path gets cheaper.
         let _ = self.radio.start_receive();
 
         result
@@ -296,13 +467,40 @@ impl Radio for Kaonic1SRadio {
     ) -> Result<ReceiveResult, KaonicError> {
         let start = Instant::now();
 
-        let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
+        let result = self
+            .radio
+            .bb_receive_streaming(
+                &mut self.bb_frame,
+                timeout,
+                frame_receive_budget(&self.modulation),
+                RX_STREAM_LEVEL,
+            );
 
         match result {
             Ok(_) => {
                 let edv = self.radio.read_edv().unwrap_or(127);
 
                 let _ = self.radio.start_receive_current();
+                self.last_rx_arm = Instant::now();
+
+                // Track the neighbours we can actually hear and assess the
+                // channel relative to them.
+                if edv > -128 && edv < 0 {
+                    self.peer_dbm = if self.peer_dbm == 0 {
+                        edv
+                    } else {
+                        self.peer_dbm.saturating_add((edv - self.peer_dbm) / 4)
+                    };
+
+                    self.last_peer_heard = Instant::now();
+
+                    let threshold = self
+                        .peer_dbm
+                        .saturating_sub(CCA_PEER_MARGIN_DB)
+                        .clamp(CCA_THRESHOLD_MIN_DBM, CCA_THRESHOLD_IDLE_DBM);
+
+                    self.radio.set_cca_threshold(threshold);
+                }
 
                 log::debug!(
                     "rx [{}] (- |o| {:>4} bytes {:>3}us",
@@ -320,14 +518,45 @@ impl Radio for Kaonic1SRadio {
             }
             Err(err) => match err {
                 radio_rf215::error::RadioError::Timeout => {
-                    // Nothing received: the radio is still armed in RX, so
-                    // skip the EDV/re-arm SPI traffic on this hot path.
+
+                    let interval = RX_REARM_INTERVAL;
+
+                    if !interval.is_zero() && self.last_rx_arm.elapsed() >= interval {
+                        self.last_rx_arm = Instant::now();
+
+                        match self.radio.ensure_receive_current() {
+                            Ok(true) => {
+                                self.stats.rx_rearms = self.stats.rx_rearms.saturating_add(1);
+
+                                if self.stats.rx_rearms % 50 == 0 {
+                                    log::info!(
+                                        "rx [{}] re-armed {} times (receiver had left RX)",
+                                        self.radio.name(),
+                                        self.stats.rx_rearms,
+                                    );
+                                }
+                            }
+                            Ok(false) => {}
+                            Err(_) => {}
+                        }
+                    }
+
+                    // A neighbour that has gone quiet must not keep the CCA
+                    // threshold sensitive forever, or the radio defers to a
+                    // station that is no longer there.
+                    if self.last_peer_heard.elapsed() >= CCA_PEER_TTL
+                        && self.radio.cca_threshold() != CCA_THRESHOLD_IDLE_DBM
+                    {
+                        self.radio.set_cca_threshold(CCA_THRESHOLD_IDLE_DBM);
+                    }
+
                     return Err(KaonicError::Timeout);
                 }
                 _ => {
                     log::error!("receive error {}", self.radio.name());
 
                     let _ = self.radio.start_receive();
+                    self.last_rx_arm = Instant::now();
 
                     return Err(err.into());
                 }

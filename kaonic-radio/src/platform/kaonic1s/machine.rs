@@ -286,10 +286,17 @@ fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>, index: usize) -> Result<()
             .add_irq(RadioInterrupt::EnergyDetectionCompletion)
             .build(),
         BasebandInterruptMask::new()
+            // Frame start, so a detected-but-incomplete frame is
+            // distinguishable from one that never arrived.
+            .add_irq(BasebandInterrupt::ReceiverFrameStart)
             .add_irq(BasebandInterrupt::ReceiverFrameEnd)
             .add_irq(BasebandInterrupt::TransmitterFrameEnd)
+            // Lets the receiver start reading a frame out before it ends.
+            .add_irq(BasebandInterrupt::FrameBufferLevelIndication)
             .build(),
     )?;
+
+    rf.set_frame_buffer_level(crate::platform::platform_impl::kaonic1s::RX_STREAM_LEVEL)?;
 
     configure_radio_09(rf.trx_09())?;
     configure_radio_24(rf.trx_24())?;
