@@ -1,0 +1,24 @@
+[package]
+name = "kaonic-linktest"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "kaonic-linktest"
+path = "src/main.rs"
+
+[[bin]]
+name = "kaonic-chantest"
+path = "src/bin/kaonic-chantest.rs"
+
+[dependencies]
+kaonic-ctrl = { path = "../../kaonic-ctrl" }
+kaonic-fec = { path = "../../kaonic-fec" }
+kaonic-frame = { path = "../../kaonic-frame" }
+radio-common = { path = "../../radio-common" }
+
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11.9"
+log = "0.4"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "time", "signal"] }
+tokio-util = "0.7.15"

@@ -20,6 +20,9 @@ use radio_common::{
 };
 
 const MAGIC: [u8; 4] = *b"LNKT";
+/// How often the receiving client pings during a run to keep its return path
+/// alive; it transmits nothing of its own.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_millis(300);
 const HEADER_SIZE: usize = 16; // MAGIC(4) + SEQ(4) + SEND_US(8)
 
 #[derive(Parser, Debug)]
@@ -56,6 +59,10 @@ struct Args {
     /// Frame payload size in bytes
     #[arg(long, default_value_t = 256)]
     size: usize,
+
+    /// Sweep these payload sizes instead of --size (comma separated)
+    #[arg(long, value_delimiter = ',')]
+    sizes: Vec<usize>,
 
     /// Gap between frames in ms (0 = back-to-back)
     #[arg(long, default_value_t = 20)]
@@ -127,6 +134,8 @@ struct RxStats {
 
 struct Report {
     name: &'static str,
+    size: usize,
+    node_rx: Option<u64>,
     sent: u32,
     rx: RxStats,
     elapsed: Duration,
@@ -142,11 +151,18 @@ impl Report {
         let kbps = self.bytes as f64 * 8.0 / self.elapsed.as_secs_f64() / 1000.0;
         let rssi_avg = self.rx.rssi_sum as f64 / self.rx.received.max(1) as f64;
 
+        let node = match self.node_rx {
+            Some(count) => format!(" node_rx {count:>4}"),
+            None => String::new(),
+        };
+
         println!(
-            "{:<12} | sent {:>4} rx {:>4} loss {:>5.1}% txerr {:>2} | lat avg {:>7.2}ms max {:>7.2}ms | {:>8.1} kbit/s | rssi {:>4}/{:>5.1}/{:>4} dBm",
+            "{:<12} {:>4}B | sent {:>4} rx {:>4}{} loss {:>5.1}% txerr {:>2} | lat avg {:>7.2}ms max {:>7.2}ms | {:>8.1} kbit/s | rssi {:>4}/{:>5.1}/{:>4} dBm",
             self.name,
+            self.size,
             self.sent,
             self.rx.received,
+            node,
             loss,
             self.tx_errors,
             avg_lat,
@@ -165,6 +181,7 @@ async fn run_one(
     rx: &mut RadioClient,
     name: &'static str,
     mcs: OfdmMcs,
+    size: usize,
 ) -> Result<Report, String> {
     let rx_module = args.rx_module.unwrap_or(args.module);
 
@@ -201,6 +218,10 @@ async fn run_one(
 
     tokio::time::sleep(Duration::from_millis(300)).await;
 
+    // Counters straight from the receiving daemon: the delivery path to this
+    // process can drop frames, so client-side counting understates reception.
+    let rx_stats_before = rx.get_statistics(rx_module).await.ok();
+
     let mut rx_events = rx.module_receive();
 
     // Drain anything stale
@@ -213,10 +234,14 @@ async fn run_one(
         collect(rx_events, epoch, rx_module, count).await
     });
 
-    let size = args.size.clamp(HEADER_SIZE, 2048);
+    let size = size.clamp(HEADER_SIZE, 2048);
     let mut tx_errors = 0u32;
     let mut sent = 0u32;
     let mut bytes = 0u64;
+    let mut keepalive = Instant::now();
+    // Only needed when the receiving client is remote: a loopback client has
+    // no return path that can go cold, and the ping would just add latency.
+    let keepalive_needed = !args.rx.starts_with("127.") && !args.rx.starts_with("localhost");
 
     let start = Instant::now();
 
@@ -251,6 +276,14 @@ async fn run_one(
                     log::debug!("batch error: {:?}", e);
                     tx_errors += batch_frames.len() as u32;
                 }
+            }
+
+            // The receiving client sends nothing while a run is in flight, so
+            // its return path (conntrack/NAT on the way to this host) can go
+            // cold and the pushed frames are dropped before they arrive.
+            if keepalive_needed && keepalive.elapsed() >= KEEPALIVE_INTERVAL {
+                let _ = rx.ping().await;
+                keepalive = Instant::now();
             }
         }
     } else if args.pipeline > 1 {
@@ -335,10 +368,20 @@ async fn run_one(
             if args.interval_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(args.interval_ms)).await;
             }
+
+            if keepalive_needed && keepalive.elapsed() >= KEEPALIVE_INTERVAL {
+                let _ = rx.ping().await;
+                keepalive = Instant::now();
+            }
         }
     }
 
     let elapsed = start.elapsed();
+
+    let node_rx = match (rx_stats_before, rx.get_statistics(rx_module).await.ok()) {
+        (Some(before), Some(after)) => Some(after.rx_packets.saturating_sub(before.rx_packets)),
+        _ => None,
+    };
 
     // Grace period for stragglers
     let rx_stats = match tokio::time::timeout(Duration::from_secs(2), collector).await {
@@ -355,6 +398,8 @@ async fn run_one(
 
     Ok(Report {
         name,
+        size,
+        node_rx,
         sent,
         rx: rx_stats,
         elapsed,
@@ -451,6 +496,7 @@ async fn main() -> Result<(), String> {
 
     let info_tx = tx.get_info().await.map_err(|e| format!("{:?}", e))?;
     let info_rx = rx.get_info().await.map_err(|e| format!("{:?}", e))?;
+    drop((tx, rx));
     println!(
         "tx: {} v{} | rx: {} v{}",
         info_tx.serial, info_tx.version, info_rx.serial, info_rx.version
@@ -463,21 +509,43 @@ async fn main() -> Result<(), String> {
         None => list,
     };
 
+    let sizes = if args.sizes.is_empty() {
+        vec![args.size]
+    } else {
+        args.sizes.clone()
+    };
+
     let mut reports = Vec::new();
 
     for (name, mcs) in selected {
-        eprintln!("running {} ...", name);
-        match run_one(&args, &mut tx, &mut rx, name, mcs).await {
-            Ok(report) => {
-                report.print();
-                reports.push(report);
+        for size in &sizes {
+            eprintln!("running {} {}B ...", name, size);
+
+            // Fresh clients per run: a client that has been idle through a
+            // long transmit stops receiving fan-out, which looks like 100%
+            // radio loss but is purely a harness artefact.
+            let run_cancel = CancellationToken::new();
+            let mut tx = connect(&args.tx, run_cancel.clone()).await?;
+            let mut rx = connect(&args.rx, run_cancel.clone()).await?;
+            tx.ping().await.map_err(|e| format!("tx ping: {:?}", e))?;
+            rx.ping().await.map_err(|e| format!("rx ping: {:?}", e))?;
+
+            match run_one(&args, &mut tx, &mut rx, name, mcs, *size).await {
+                Ok(report) => {
+                    report.print();
+                    reports.push(report);
+                }
+                Err(e) => println!("{:<12} {:>4}B | FAILED: {}", name, size, e),
             }
-            Err(e) => println!("{:<12} | FAILED: {}", name, e),
+
+            drop((tx, rx));
+            run_cancel.cancel();
+            tokio::time::sleep(Duration::from_millis(300)).await;
         }
     }
 
     println!();
-    println!("summary ({} frames x {}B per modulation):", args.count, args.size);
+    println!("summary ({} frames per point):", args.count);
     for r in &reports {
         r.print();
     }

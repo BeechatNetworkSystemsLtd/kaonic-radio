@@ -17,9 +17,9 @@ env_logger = "0.11.9"
 log = "0.4"
 
 # Kaonic
-kaonic-ctrl = { path = "../kaonic-ctrl/", default-features = false }
-kaonic-frame = { path = "../kaonic-frame/" }
-radio-common = { path = "../radio-common/" }
+kaonic-ctrl = { path = "../../kaonic-ctrl/", default-features = false }
+kaonic-frame = { path = "../../kaonic-frame/" }
+radio-common = { path = "../../radio-common/" }
 
 # Async
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "time", "signal"] }
@@ -29,7 +29,7 @@ tokio-util = "0.7.15"
 clap = { version = "4", features = ["derive"] }
 
 # CRC
-kaonic-crc = { path = "../kaonic-crc/", default-features = false }
+kaonic-crc = { path = "../../kaonic-crc/", default-features = false }
 
 # Config parsing
 serde = { version = "1.0", features = ["derive"] }
