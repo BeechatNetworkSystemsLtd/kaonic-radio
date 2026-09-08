@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use radio_common::{
-    modulation::{OfdmModulation, QpskModulation},
+    modulation::{OfdmModulation, QpskChipFrequency, QpskModulation},
     Modulation,
 };
 
@@ -90,6 +90,38 @@ where
         )?;
 
         Ok(frame)
+    }
+
+    /// Number of received bytes after which the baseband raises
+    /// [`BasebandInterrupt::FrameBufferLevelIndication`]. Zero disables it.
+    pub fn set_frame_buffer_level(&mut self, level: u16) -> Result<(), RadioError> {
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_BBCX_FBLIL), (level & 0xFF) as u8)?;
+        self.bus
+            .write_reg_u8(Self::abs_reg(regs::RG_BBCX_FBLIH), ((level >> 8) & 0x07) as u8)?;
+
+        Ok(())
+    }
+
+    /// Reads part of the RX frame buffer. Bytes that have already arrived may
+    /// be read while the rest of the frame is still on the air, which is what
+    /// makes the read-out overlap the reception.
+    pub fn read_rx_at(&mut self, offset: usize, data: &mut [u8]) -> Result<(), RadioError> {
+        if offset + data.len() > regs::RG_BBCX_FRAME_SIZE {
+            return Err(RadioError::IncorrectState);
+        }
+
+        self.bus.read_regs(
+            B::BASEBAND_FRAME_BUFFER_ADDRESS + regs::RG_BBCX_FBRXS + offset as RegisterAddress,
+            data,
+        )?;
+
+        Ok(())
+    }
+
+    /// Length of the frame in the RX buffer; valid once the frame has ended.
+    pub fn rx_frame_len(&mut self) -> Result<u16, RadioError> {
+        Ok(self.bus.read_reg_u16(Self::abs_reg(regs::RG_BBCX_RXFLL))?)
     }
 
     pub fn set_auto_mode(&mut self, mode: BasebandAutoMode) -> Result<(), RadioError> {
@@ -249,10 +281,16 @@ where
     }
 
     fn configure_qpsk(&mut self, modulation: &QpskModulation) -> Result<(), RadioError> {
+        // Direct modulation is required at 100 and 200 kchip/s and ignored
+        // above, so it follows the chip rate.
+        let direct_modulation = matches!(
+            modulation.fchip,
+            QpskChipFrequency::Fchip100 | QpskChipFrequency::Fchip200
+        );
         self.bus.modify_reg_u8(
             Self::abs_reg(regs::RG_BBCX_OQPSKC0),
-            0b0000_0011,
-            modulation.fchip as u8,
+            0b0001_0011,
+            (modulation.fchip as u8) | if direct_modulation { 0b0001_0000 } else { 0 },
         )?;
 
         self.bus.modify_reg_u8(
@@ -262,6 +300,13 @@ where
         )?;
 
         Ok(())
+    }
+
+    /// `PS.TXUR`: the transmit buffer under-ran and stale octets went out in
+    /// place of the payload. The frame still completes and raises TXFE.
+    pub fn tx_underrun(&mut self) -> Result<bool, RadioError> {
+        let ps = self.bus.read_reg_u8(Self::abs_reg(regs::RG_BBCX_PS))?;
+        Ok(ps & 0b0000_0001 != 0)
     }
 
     pub fn update_irqs(&mut self) -> Result<&mut Self, RadioError> {
@@ -283,6 +328,31 @@ where
 
     pub fn wait_irq(&mut self, irq: BasebandInterrupt, timeout: core::time::Duration) -> bool {
         self.wait_irqs(BasebandInterruptMask::new().add_irq(irq).build(), timeout)
+    }
+
+    /// Like [`Self::wait_irqs`], but reports which of the requested interrupts
+    /// fired instead of only that one of them did.
+    pub fn wait_any_irqs(
+        &mut self,
+        irq_mask: BasebandInterruptMask,
+        timeout: core::time::Duration,
+    ) -> Option<BasebandInterruptMask> {
+        let deadline = self.bus.deadline(timeout);
+
+        loop {
+            if self.bus.deadline_reached(deadline) {
+                return None;
+            }
+
+            if let Ok(_) = self.update_irqs() {
+                if let Some(irqs) = self.irqs.retrieve_any(&irq_mask) {
+                    return Some(irqs);
+                }
+            }
+
+            self.bus
+                .wait_interrupt(Some(core::time::Duration::from_micros(100)));
+        }
     }
 
     pub fn wait_irqs(

@@ -42,15 +42,27 @@ impl Band for Band24 {
 pub struct Transreceiver<B: Band, I: Bus + Clone> {
     radio: Radio<B, I>,
     baseband: Baseband<B, I>,
+    cca_threshold_dbm: i8,
+    /// PHY rate of the configured modulation, for sizing transmit waits.
+    data_rate_bps: u32,
 }
 
+/// Energy-detect threshold used for clear-channel assessment until a caller
+/// sets one.
+const DEFAULT_CCA_THRESHOLD_DBM: i8 = -50;
+
 const CHANGE_STATE_DURATION: core::time::Duration = core::time::Duration::from_millis(500);
+
+const TX_WAIT_MIN: core::time::Duration = core::time::Duration::from_millis(500);
+const TX_WAIT_MAX: core::time::Duration = core::time::Duration::from_secs(8);
 
 impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
     pub(crate) fn new(bus: I) -> Self {
         let trx = Self {
             radio: Radio::<B, I>::new(bus.clone()),
             baseband: Baseband::<B, I>::new(bus.clone()),
+            cca_threshold_dbm: DEFAULT_CCA_THRESHOLD_DBM,
+            data_rate_bps: Modulation::Off.data_rate_bps(),
         };
 
         trx
@@ -96,6 +108,14 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         Ok(())
     }
 
+    /// How long a frame needs on air, doubled to cover preamble, PHY header
+    /// and CCA. A 2 kB frame is ~7 ms at OFDM and ~2.6 s at the slowest QPSK.
+    fn tx_wait(&self, frame_len: usize) -> core::time::Duration {
+        let bits = (frame_len as u64).saturating_mul(8);
+        let micros = bits.saturating_mul(1_000_000) / u64::from(self.data_rate_bps.max(1));
+        core::time::Duration::from_micros(micros.saturating_mul(2)).clamp(TX_WAIT_MIN, TX_WAIT_MAX)
+    }
+
     pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
         self.radio
             .change_state(CHANGE_STATE_DURATION, RadioState::TrxPrep)?;
@@ -105,27 +125,30 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
         self.baseband.load_tx(frame)?;
 
-        // Drop stale IRQs so the wait observes this transmission, not history.
+        // Both sources: the wait below is on a baseband interrupt, so a stale
+        // baseband TXFE would satisfy it immediately.
         self.radio.clear_irqs()?;
+        self.baseband.clear_irqs()?;
 
         self.radio.send_command(crate::radio::RadioCommand::Tx)?;
 
-        match self.radio.wait_any_irq(
-            RadioInterruptMask::new()
-                .add_irq(regs::RadioInterrupt::TransceiverReady)
-                .add_irq(regs::RadioInterrupt::TransceiverError)
-                .build(),
-            core::time::Duration::from_millis(500),
-        ) {
-            Some(irqs) => {
-                if irqs.has_irq(regs::RadioInterrupt::TransceiverError) {
-                    return Err(RadioError::IncorrectState);
-                }
+        // TXFE means the frame finished; TRXRDY only means the state machine
+        // reached TX, which is the start of it.
+        let finished = self.baseband.wait_irq(
+            BasebandInterrupt::TransmitterFrameEnd,
+            self.tx_wait(frame.len()),
+        );
 
-                Ok(())
-            }
-            None => Err(RadioError::Timeout),
+        if !finished {
+            return Err(RadioError::Timeout);
         }
+
+        // An under-run still raises TXFE, but stale buffer content went out.
+        if self.baseband.tx_underrun()? {
+            return Err(RadioError::IncorrectState);
+        }
+
+        Ok(())
     }
 
     pub fn measure_ed(&mut self) -> Result<i8, RadioError> {
@@ -144,6 +167,18 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         }
     }
 
+    /// Energy level above which the channel counts as busy for CCA. A
+    /// threshold near the strongest expected neighbour (the default) means the
+    /// radio almost never defers; one just above the noise floor makes it
+    /// share the channel with peers it can actually hear.
+    pub fn set_cca_threshold(&mut self, dbm: i8) {
+        self.cca_threshold_dbm = dbm;
+    }
+
+    pub fn cca_threshold(&self) -> i8 {
+        self.cca_threshold_dbm
+    }
+
     pub fn bb_transmit_cca(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
         // NOTE: 6.15.5 Clear Channel Assessment with Automatic Transmit (CCATX)
 
@@ -160,8 +195,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
             ..Default::default()
         })?;
 
-        // TODO: provide EDT value in params
-        self.baseband.set_auto_edt(-50)?;
+        self.baseband.set_auto_edt(self.cca_threshold_dbm)?;
 
         self.radio.clear_irqs()?;
 
@@ -171,6 +205,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         self.baseband.load_tx(frame)?;
 
         let mut transmitted = false;
+        let mut busy = false;
 
         if let Some(irqs) = self.radio.wait_any_irq(
             RadioInterruptMask::new()
@@ -184,6 +219,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
                 // channel has assessed as busy, the baseband needs to be enabled again by setting
                 // PC.BBEN to 1.
                 self.baseband.enable()?;
+                busy = true;
             }
 
             if irqs.has_irq(regs::RadioInterrupt::TransceiverReady) {
@@ -193,6 +229,10 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
 
         if transmitted {
             Ok(())
+        } else if busy {
+            // The caller can back off and retry; that is a different situation
+            // from the transceiver never answering at all.
+            Err(RadioError::ChannelBusy)
         } else {
             Err(RadioError::Timeout)
         }
@@ -218,6 +258,95 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         self.radio.receive()
     }
 
+    /// Sets the frame-buffer level that triggers early read-out.
+    pub fn set_frame_buffer_level(&mut self, level: u16) -> Result<(), RadioError> {
+        self.baseband.set_frame_buffer_level(level)
+    }
+
+    /// Receives a frame, reading the first `level` bytes out as soon as they
+    /// have arrived instead of waiting for the end of the frame.
+    pub fn bb_receive_streaming(
+        &mut self,
+        frame: &mut BasebandFrame,
+        start_timeout: core::time::Duration,
+        frame_timeout: core::time::Duration,
+        level: u16,
+    ) -> Result<(), RadioError> {
+        if level == 0 {
+            return self.bb_receive(frame, start_timeout);
+        }
+
+        let level = level as usize;
+        let events = BasebandInterruptMask::new()
+            .add_irq(BasebandInterrupt::FrameBufferLevelIndication)
+            .add_irq(BasebandInterrupt::ReceiverFrameStart)
+            .add_irq(BasebandInterrupt::ReceiverFrameEnd)
+            .build();
+
+        // A poll until something arrives, then wait the frame out.
+        let mut deadline = self.radio.bus_deadline(start_timeout);
+        let mut started = false;
+        let mut prefetched = 0usize;
+
+        loop {
+            let remaining = self.radio.bus_time_until(deadline);
+
+            if remaining.is_zero() {
+                return Err(RadioError::Timeout);
+            }
+
+            let Some(irqs) = self.baseband.wait_any_irqs(events, remaining) else {
+                return Err(RadioError::Timeout);
+            };
+
+            if !started {
+                started = true;
+                deadline = self.radio.bus_deadline(frame_timeout);
+            }
+
+            if irqs.has_irq(BasebandInterrupt::ReceiverFrameEnd) {
+                break;
+            }
+
+            if prefetched == 0 {
+                self.baseband.read_rx_at(0, frame.as_buffer_mut(level))?;
+                prefetched = level;
+            }
+        }
+
+        let len = usize::from(self.baseband.rx_frame_len()?);
+
+        if len > regs::RG_BBCX_FRAME_SIZE {
+            return Err(RadioError::IncorrectState);
+        }
+
+        let buffer = frame.as_buffer_mut(len);
+
+        if prefetched >= len {
+            return Ok(());
+        }
+
+        self.baseband
+            .read_rx_at(prefetched, &mut buffer[prefetched..])?;
+
+        Ok(())
+    }
+
+    /// Re-arms the receiver only if it is not in RX. Reading the state costs
+    /// one register read and, unlike an unconditional re-arm, cannot abort a
+    /// reception that is already in progress.
+    ///
+    /// Returns `true` when a re-arm was needed.
+    pub fn ensure_receive(&mut self) -> Result<bool, RadioError> {
+        match self.radio.read_state()? {
+            RadioState::Rx | RadioState::Tx | RadioState::Transition => Ok(false),
+            _ => {
+                self.radio.receive()?;
+                Ok(true)
+            }
+        }
+    }
+
     pub fn update_irqs(&mut self) -> Result<(), RadioError> {
         self.radio.update_irqs()?;
         self.baseband.update_irqs()?;
@@ -238,6 +367,7 @@ impl<B: Band, I: Bus + Clone> Transreceiver<B, I> {
         self.radio.configure_transreceiver(&trx_config)?;
 
         self.baseband.configure(modulation)?;
+        self.data_rate_bps = modulation.data_rate_bps();
 
         self.baseband.enable()?;
 

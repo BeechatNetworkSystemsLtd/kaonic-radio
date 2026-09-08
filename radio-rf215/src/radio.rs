@@ -204,11 +204,13 @@ pub struct RadioTransmitterConfig {
     pub paramp: PaRampTime,
     pub pacur: PaCur,
     pub power: u8,
+    pub direct_modulation: bool,
 }
 
 impl Default for RadioTransmitterConfig {
     fn default() -> Self {
         Self {
+            direct_modulation: false,
             sr: FrequencySampleRate::SampleRate4000kHz,
             rcut: RelativeCutOff::Fcut0_250,
             lpfcut: TransmitterCutOff::Flc500kHz,
@@ -705,11 +707,11 @@ where
     ) -> Result<(), RadioError> {
         // Transmitter TX Digital Frontend
         {
-            let mut txdfe = self.bus.read_reg_u8(Self::abs_reg(regs::RG_RFXX_TXDFE))?;
-
-            // Clear SR and RCUT bits
-            txdfe = txdfe & 0b0001_0000;
-            txdfe = txdfe | (config.sr as u8) | ((config.rcut as u8) << 5);
+            // SR, RCUT and DM all come from the config.
+            let mut txdfe = (config.sr as u8) | ((config.rcut as u8) << 5);
+            if config.direct_modulation {
+                txdfe |= 0b0001_0000;
+            }
 
             self.bus
                 .write_reg_u8(Self::abs_reg(regs::RG_RFXX_TXDFE), txdfe)?;

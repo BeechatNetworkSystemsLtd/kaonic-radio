@@ -224,11 +224,54 @@ impl<I: Bus + Clone> Rf215<I> {
         Ok(self)
     }
 
+    /// Sets the clear-channel-assessment threshold on both transceivers.
+    pub fn set_cca_threshold(&mut self, dbm: i8) {
+        self.trx_09.set_cca_threshold(dbm);
+        self.trx_24.set_cca_threshold(dbm);
+    }
+
+    /// Threshold currently used by the sub-GHz transceiver.
+    pub fn cca_threshold(&self) -> i8 {
+        self.trx_09.cca_threshold()
+    }
+
+    /// Re-arms the receiver of the band in use only if it has left RX.
+    pub fn ensure_receive_current(&mut self) -> Result<bool, RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.ensure_receive()
+        } else {
+            self.trx_24.ensure_receive()
+        }
+    }
+
     pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
             self.trx_09.bb_transmit_cca(frame)
         } else {
             self.trx_24.bb_transmit_cca(frame)
+        }
+    }
+
+    /// Sets the early read-out level on both transceivers.
+    pub fn set_frame_buffer_level(&mut self, level: u16) -> Result<(), RadioError> {
+        self.trx_09.set_frame_buffer_level(level)?;
+        self.trx_24.set_frame_buffer_level(level)?;
+
+        Ok(())
+    }
+
+    /// Receives on the band in use, overlapping read-out with reception.
+    pub fn bb_receive_streaming(
+        &mut self,
+        frame: &mut BasebandFrame,
+        start_timeout: core::time::Duration,
+        frame_timeout: core::time::Duration,
+        level: u16,
+    ) -> Result<(), RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.bb_receive_streaming(frame, start_timeout, frame_timeout, level)
+        } else {
+            self.trx_24.bb_receive_streaming(frame, start_timeout, frame_timeout, level)
         }
     }
 

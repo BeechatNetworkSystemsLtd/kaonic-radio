@@ -89,6 +89,8 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc400kHz;
                         tx_config.paramp = PaRampTime::Paramp32;
+                        // Required at this chip rate.
+                        tx_config.direct_modulation = true;
 
                         rx_config.rcut = RelativeCutOff::Fcut0_375;
                         rx_config.bw = ReceiverBandwidth::Bw160kHzIf250kHz;
@@ -104,6 +106,8 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band09, I> {
                         tx_config.sr = FrequencySampleRate::SampleRate800kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc400kHz;
+                        // Required at this chip rate.
+                        tx_config.direct_modulation = true;
 
                         rx_config.rcut = RelativeCutOff::Fcut0_375;
                         rx_config.bw = ReceiverBandwidth::Bw250kHzIf250kHz;
@@ -255,6 +259,8 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc400kHz;
                         tx_config.paramp = PaRampTime::Paramp32;
+                        // Required at this chip rate.
+                        tx_config.direct_modulation = true;
 
                         rx_config.rcut = RelativeCutOff::Fcut0_375;
                         rx_config.bw = ReceiverBandwidth::Bw160kHzIf250kHz;
@@ -270,6 +276,8 @@ impl<I: Bus + Clone> TransreceiverConfigurator for Transreceiver<Band24, I> {
                         tx_config.sr = FrequencySampleRate::SampleRate800kHz;
                         tx_config.rcut = RelativeCutOff::Fcut0_750;
                         tx_config.lpfcut = TransmitterCutOff::Flc400kHz;
+                        // Required at this chip rate.
+                        tx_config.direct_modulation = true;
 
                         rx_config.rcut = RelativeCutOff::Fcut0_375;
                         rx_config.bw = ReceiverBandwidth::Bw250kHzIf250kHz;
