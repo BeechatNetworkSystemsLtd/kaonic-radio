@@ -3,7 +3,7 @@ use labrador_ldpc::LDPCCode;
 
 use crate::{
     error::NetworkError,
-    packet::{Packet, HEADER_SIZE},
+    packet::{Header, Packet, HEADER_SIZE},
 };
 
 pub const HEADER_LDPC_CODE: LDPCCode = LDPCCode::TC256;
@@ -17,6 +17,7 @@ pub const PAYLOAD_LDPC_CODE: LDPCCode = LDPCCode::TM2048;
 /// decoded as [`FecCode::Tm2048`] and old receivers understand new senders
 /// as long as they stay on that code.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum FecCode {
     /// Rate 1/2, strongest; ~2x payload airtime. Wire-compatible default.
@@ -171,6 +172,7 @@ pub struct LdpcPacketCoder<const S: usize> {
     working_buffer: [u8; PAYLOAD_LDPC_WORKING_BUFFER_SIZE],
     output_buffer: [u8; PAYLOAD_LDPC_OUTPUT_BUFFER_SIZE],
     tx_fec: FecCode,
+    tx_channel: u16,
     policy: DecodePolicy,
     stats: CoderStats,
 }
@@ -183,6 +185,7 @@ impl<const S: usize> LdpcPacketCoder<S> {
             working_buffer: [0u8; PAYLOAD_LDPC_WORKING_BUFFER_SIZE],
             output_buffer: [0u8; PAYLOAD_LDPC_OUTPUT_BUFFER_SIZE],
             tx_fec: FecCode::default(),
+            tx_channel: 0,
             policy: DecodePolicy::default(),
             stats: CoderStats::default(),
         }
@@ -206,6 +209,44 @@ impl<const S: usize> LdpcPacketCoder<S> {
 
     pub fn tx_fec(&self) -> FecCode {
         self.tx_fec
+    }
+
+    /// Channel id written into every frame encoded from now on. `0` is the
+    /// channel older firmware sends and expects.
+    pub fn set_tx_channel(&mut self, channel: u16) {
+        self.tx_channel = channel;
+    }
+
+    pub fn tx_channel(&self) -> u16 {
+        self.tx_channel
+    }
+
+    /// Decodes only the header of `frame` — one short LDPC codeword — so a
+    /// receiver can route or drop a frame by channel before paying for the
+    /// payload decode. Returns `None` when the header does not check.
+    pub fn peek_header(&mut self, frame: &[u8]) -> Option<Header> {
+        let code = HEADER_LDPC_CODE;
+        let codeword_len = code.n() / 8;
+
+        if frame.len() < codeword_len {
+            return None;
+        }
+
+        let (check, _) = code.decode_bf(
+            &frame[..codeword_len],
+            &mut self.output_buffer[..code.output_len()],
+            &mut self.working_buffer[..code.decode_bf_working_len()],
+            20,
+        );
+
+        if !check {
+            return None;
+        }
+
+        let mut header = Header::new();
+        header.unpack(&self.output_buffer[..HEADER_SIZE]).ok()?;
+
+        Some(header)
     }
 
     pub fn set_decode_policy(&mut self, policy: DecodePolicy) {
@@ -311,6 +352,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
         {
             let mut header = *input.header();
             header.set_fec(fec.id());
+            header.set_channel(self.tx_channel);
             let header_data = header.pack();
             let code = HEADER_LDPC_CODE;
 
@@ -517,6 +559,49 @@ mod fec_tests {
 
     fn alloc_vec(len: usize) -> Vec<u8> {
         (0..len).map(|i| (i * 37 % 251) as u8).collect()
+    }
+
+    #[test]
+    fn channel_id_travels_in_the_header_and_peeks_without_a_payload_decode() {
+        let mut coder = LdpcPacketCoder::<S>::new();
+        coder.set_tx_channel(0x1234);
+        let input = packet(600);
+        let mut frame = Frame::<S>::new();
+        coder.encode(&input, &mut frame).unwrap();
+
+        // Routing needs only the header codeword.
+        let header = coder.peek_header(frame.as_slice()).expect("header checks");
+        assert_eq!(header.channel(), 0x1234);
+        assert_eq!(header.len(), 600);
+        assert_eq!(coder.stats().decoded_full + coder.stats().verified_fast, 0);
+
+        // A full decode sees the same header.
+        let mut output = Packet::<S>::new();
+        coder.decode(&frame, &mut output).unwrap();
+        assert_eq!(output.header().channel(), 0x1234);
+        assert_eq!(output.frame().as_slice(), input.frame().as_slice());
+    }
+
+    #[test]
+    fn default_channel_is_zero_for_wire_compatibility() {
+        let mut coder = LdpcPacketCoder::<S>::new();
+        let mut frame = Frame::<S>::new();
+        coder.encode(&packet(100), &mut frame).unwrap();
+        let header = coder.peek_header(frame.as_slice()).unwrap();
+        assert_eq!(header.channel(), 0);
+        assert_eq!(header.fec(), FecCode::Tm2048.id());
+    }
+
+    #[test]
+    fn peek_rejects_a_corrupt_header() {
+        let mut coder = LdpcPacketCoder::<S>::new();
+        let mut frame = Frame::<S>::new();
+        coder.encode(&packet(100), &mut frame).unwrap();
+        let mut bytes = frame.as_slice().to_vec();
+        for b in bytes.iter_mut().take(24) {
+            *b ^= 0xFF;
+        }
+        assert!(coder.peek_header(&bytes).is_none());
     }
 
     #[test]

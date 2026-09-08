@@ -51,6 +51,12 @@ pub struct Header {
     /// Payload FEC code id ([`crate::coder::FecCode`]); lives in a formerly
     /// reserved byte, so `0` (TM2048) is what older firmware sends.
     fec: u8,
+
+    /// Logical channel the packet belongs to, so several protocols can share
+    /// one radio and a receiver can route a frame before decoding its payload.
+    /// Lives in the last two formerly reserved bytes: `0` is what older
+    /// firmware sends and is the channel all existing traffic uses.
+    channel: u16,
 }
 
 impl Header {
@@ -64,6 +70,7 @@ impl Header {
             len: 0,
             crc: 0,
             fec: 0,
+            channel: 0,
         }
     }
 
@@ -131,6 +138,15 @@ impl Header {
         self
     }
 
+    pub fn set_channel(&mut self, channel: u16) -> &mut Self {
+        self.channel = channel;
+        self
+    }
+
+    pub fn channel(&self) -> u16 {
+        self.channel
+    }
+
     pub fn fec(&self) -> u8 {
         self.fec
     }
@@ -152,9 +168,10 @@ impl Header {
         buffer[offset..offset + 4].copy_from_slice(&self.id.to_le_bytes());
         offset += 4;
 
-        // FEC code id + 2 reserved bytes
         buffer[offset] = self.fec;
-        offset += 3;
+        offset += 1;
+        buffer[offset..offset + 2].copy_from_slice(&self.channel.to_le_bytes());
+        offset += 2;
 
         buffer[offset..offset + 2].copy_from_slice(&self.len.to_le_bytes());
         offset += 2;
@@ -192,9 +209,11 @@ impl Header {
         ]);
         offset += 4;
 
-        // FEC code id + 2 reserved bytes
+        // FEC code id, then the channel id in the two bytes that used to be reserved
         self.fec = data[offset];
-        offset += 3;
+        offset += 1;
+        self.channel = u16::from_le_bytes([data[offset], data[offset + 1]]);
+        offset += 2;
 
         self.len = u16::from_le_bytes([data[offset + 0], data[offset + 1]]);
         offset += 2;

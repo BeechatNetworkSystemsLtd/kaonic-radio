@@ -8,6 +8,8 @@ rust-version = "1.75"
 default = ["machine-kaonic1s"]
 machine-kaonic1s = ["kaonic-crc/machine-kaonic1s"]
 machine-host = ["kaonic-crc/machine-host"]
+# Serialisable code ids for control protocols that carry FEC settings.
+serde = ["dep:serde"]
 
 [dependencies]
 
@@ -16,6 +18,8 @@ labrador-ldpc = "1.2.1"
 rand = { version = "=0.8.5", default-features = false }
 
 log = "0.4"
+
+serde = { version = "1", features = ["derive"], optional = true }
 
 kaonic-frame = { path="../kaonic-frame/" }
 kaonic-crc = { path="../kaonic-crc/", default-features = false }
