@@ -4,6 +4,7 @@ description = "A modular RF communication system for embedded radio operations w
 version = "0.2.4"
 service = "kaonic-commd.service"
 developer = "Beechat Network Systems Ltd"
+icon = "plugin-icon.png"
 github_url = "https://github.com/BeechatNetworkSystemsLtd/kaonic-radio"
 symlink = "/usr/bin/kaonic-commd"
 channel = "dev"
