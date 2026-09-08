@@ -1,0 +1,16 @@
+[package]
+name = "kaonic-fec"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime forward-error-correction adaptation for Kaonic radio links"
+license = "MIT"
+
+[features]
+default = ["machine-kaonic1s"]
+machine-kaonic1s = ["kaonic-net/machine-kaonic1s"]
+machine-host = ["kaonic-net/machine-host"]
+serde = ["dep:serde", "kaonic-net/serde"]
+
+[dependencies]
+kaonic-net = { path = "../kaonic-net", default-features = false }
+serde = { version = "1", features = ["derive"], optional = true }
