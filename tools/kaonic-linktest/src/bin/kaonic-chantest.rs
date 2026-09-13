@@ -231,8 +231,9 @@ async fn main() -> Result<(), String> {
     }
     if let Ok(stats) = rx_stats_handle.stats().await {
         println!(
-            "rx daemon: frames {} payloads {} decode clean {} corrected {} failed {}",
-            stats.rx_frames, stats.rx_payloads, stats.decode_clean, stats.decode_corrected, stats.decode_failed
+            "rx daemon: frames {} payloads {} decode clean {} corrected {} failed {} duplicates {} reassembly dropped {}",
+            stats.rx_frames, stats.rx_payloads, stats.decode_clean, stats.decode_corrected, stats.decode_failed,
+            stats.rx_duplicates, stats.rx_reassembly_dropped
         );
     }
     cancel.cancel();

@@ -120,7 +120,14 @@ pub struct Peer<
     tx_send: PeerSender<T>,
     tx_recv: mpsc::Receiver<PeerTx<T>>,
     rx_send: broadcast::Sender<PeerRx<T>>,
+
+    /// Clients that asked not to receive broadcasts (pushes with no
+    /// address). Shared with whoever handles that request.
+    muted: MutedClients,
 }
+
+/// Clients excluded from broadcast pushes.
+pub type MutedClients = std::sync::Arc<std::sync::Mutex<std::collections::HashSet<SocketAddr>>>;
 
 impl<
     T: PeerMessage + std::fmt::Debug,
@@ -146,7 +153,15 @@ impl<
             tx_recv,
             rx_send,
             filter_rx_addr,
+            muted: MutedClients::default(),
         }
+    }
+
+    /// Shares the set of clients excluded from broadcasts, so a request
+    /// handler can add and remove them.
+    pub fn with_muted(mut self, muted: MutedClients) -> Self {
+        self.muted = muted;
+        self
     }
 
     pub fn tx_send(&self) -> PeerSender<T> {
@@ -216,6 +231,11 @@ impl<
 
                             if let Ok(segments) = segments {
                                 let mut _total_bytes = 0usize;
+                                // Locked and copied once per message, not once
+                                // per segment: broadcast runs per received frame.
+                                let muted = tx.addr.is_none().then(|| {
+                                    self.muted.lock().unwrap_or_else(|e| e.into_inner()).clone()
+                                });
                                 for segment in segments.iter() {
 
                                     _total_bytes += segment.len();
@@ -226,7 +246,11 @@ impl<
                                             log::error!("socket send error");
                                         }
                                     } else {
-                                        for addr in clients.keys() {
+                                        let muted = muted.as_ref();
+                                        for addr in clients
+                                            .keys()
+                                            .filter(|a| !muted.is_some_and(|m| m.contains(*a)))
+                                        {
 
                                             if let Err(_) = self.socket.send_to(segment.as_slice(), &addr).await {
                                                 log::error!("socket broadcast send error");

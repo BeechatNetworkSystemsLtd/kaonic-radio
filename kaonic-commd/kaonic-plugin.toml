@@ -1,7 +1,7 @@
 [kaonic-plugin]
 name = "Kaonic Communication Daemon"
 description = "A modular RF communication system for embedded radio operations with dual-band support (sub-GHz and 2.4 GHz)."
-version = "0.2.4"
+version = "0.2.6"
 service = "kaonic-commd.service"
 developer = "Beechat Network Systems Ltd"
 icon = "plugin-icon.png"

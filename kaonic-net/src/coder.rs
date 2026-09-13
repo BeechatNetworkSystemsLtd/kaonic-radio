@@ -167,10 +167,17 @@ pub trait PacketCoder<const S: usize> {
     fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), NetworkError>;
 }
 
+/// Words in the longest codeword any code produces (TM2048: 2048 bits).
+const ENCODE_WORDS: usize = 2048 / 32;
+
 #[derive(Copy, Clone, Debug)]
 pub struct LdpcPacketCoder<const S: usize> {
     working_buffer: [u8; PAYLOAD_LDPC_WORKING_BUFFER_SIZE],
     output_buffer: [u8; PAYLOAD_LDPC_OUTPUT_BUFFER_SIZE],
+    /// Codeword scratch in 32-bit words. labrador's encoder is several times
+    /// faster on words than on bytes, and encoding was the single largest
+    /// per-frame CPU cost on the transmit path.
+    encode_words: [u32; ENCODE_WORDS],
     tx_fec: FecCode,
     tx_channel: u16,
     policy: DecodePolicy,
@@ -184,6 +191,7 @@ impl<const S: usize> LdpcPacketCoder<S> {
         Self {
             working_buffer: [0u8; PAYLOAD_LDPC_WORKING_BUFFER_SIZE],
             output_buffer: [0u8; PAYLOAD_LDPC_OUTPUT_BUFFER_SIZE],
+            encode_words: [0u32; ENCODE_WORDS],
             tx_fec: FecCode::default(),
             tx_channel: 0,
             policy: DecodePolicy::default(),
@@ -225,11 +233,27 @@ impl<const S: usize> LdpcPacketCoder<S> {
     /// receiver can route or drop a frame by channel before paying for the
     /// payload decode. Returns `None` when the header does not check.
     pub fn peek_header(&mut self, frame: &[u8]) -> Option<Header> {
+        let mut header = Header::new();
+        match self.decode_header_into(frame, &mut header) {
+            Ok(true) => Some(header),
+            _ => None,
+        }
+    }
+
+    /// Decodes the header codeword at the front of `frame` into `header`.
+    /// `Ok(false)` means the codeword did not check; `Err` that the frame is
+    /// too short to hold one. The single place header decoding is defined:
+    /// both [`peek_header`](Self::peek_header) and `decode` go through it.
+    fn decode_header_into(
+        &mut self,
+        frame: &[u8],
+        header: &mut Header,
+    ) -> Result<bool, NetworkError> {
         let code = HEADER_LDPC_CODE;
         let codeword_len = code.n() / 8;
 
         if frame.len() < codeword_len {
-            return None;
+            return Err(NetworkError::OutOfMemory);
         }
 
         let (check, _) = code.decode_bf(
@@ -240,13 +264,11 @@ impl<const S: usize> LdpcPacketCoder<S> {
         );
 
         if !check {
-            return None;
+            return Ok(false);
         }
 
-        let mut header = Header::new();
-        header.unpack(&self.output_buffer[..HEADER_SIZE]).ok()?;
-
-        Some(header)
+        header.unpack(&self.output_buffer[..HEADER_SIZE])?;
+        Ok(true)
     }
 
     pub fn set_decode_policy(&mut self, policy: DecodePolicy) {
@@ -334,6 +356,32 @@ impl<const S: usize> Default for LdpcPacketCoder<S> {
     }
 }
 
+/// Encodes `data` (exactly k/8 bytes) into `out` (exactly n/8 bytes) through
+/// labrador's word-sized path, which is several times faster than encoding a
+/// byte slice in place. The codeword's bytes are the little-endian
+/// serialisation of the words, which is the layout the byte path produces.
+fn encode_fast(
+    code: &LDPCCode,
+    words: &mut [u32; ENCODE_WORDS],
+    data: &[u8],
+    out: &mut [u8],
+) -> Result<(), NetworkError> {
+    let n_words = code.n() / 32;
+    if n_words > ENCODE_WORDS || out.len() < n_words * 4 {
+        return Err(NetworkError::OutOfMemory);
+    }
+
+    let codeword = &mut words[..n_words];
+    codeword.fill(0);
+    let _ = code.copy_encode(data, codeword);
+
+    for (chunk, word) in out[..n_words * 4].chunks_exact_mut(4).zip(codeword.iter()) {
+        chunk.copy_from_slice(&word.to_le_bytes());
+    }
+
+    Ok(())
+}
+
 impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
     // Segment size stays the legacy TM2048 capacity so every code (and every
     // receiver) can carry a segment; stronger-rate codes just use less air.
@@ -361,7 +409,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
                 return Err(NetworkError::OutOfMemory);
             }
 
-            let _ = code.copy_encode(&header_data[..], output.alloc_buffer(codeword_len)?);
+            encode_fast(&code, &mut self.encode_words, &header_data[..], output.alloc_buffer(codeword_len)?)?;
         }
 
         // Encode payload
@@ -397,7 +445,7 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
                     return Err(NetworkError::OutOfMemory);
                 }
 
-                code.copy_encode(&self.output_buffer[..block_size], buffer);
+                encode_fast(&code, &mut self.encode_words, &self.output_buffer[..block_size], buffer)?;
 
                 offset += block_len;
             }
@@ -409,30 +457,9 @@ impl<const S: usize> PacketCoder<S> for LdpcPacketCoder<S> {
     fn decode(&mut self, input: &Frame<S>, output: &mut Packet<S>) -> Result<(), NetworkError> {
         output.reset();
 
-        // Decode header
-        {
-            let code = HEADER_LDPC_CODE;
-            let codeword_len = code.n() / 8;
-
-            if input.len() < codeword_len {
-                return Err(NetworkError::OutOfMemory);
-            }
-
-            let (check, _) = code.decode_bf(
-                &input.as_slice()[..codeword_len],
-                &mut self.output_buffer[..code.output_len()],
-                &mut self.working_buffer[..code.decode_bf_working_len()],
-                20,
-            );
-
-            if !check {
-                self.stats.header_failed += 1;
-                return Err(NetworkError::CorruptedData);
-            }
-
-            output
-                .header_mut()
-                .unpack(&mut self.output_buffer[..HEADER_SIZE])?;
+        if !self.decode_header_into(input.as_slice(), output.header_mut())? {
+            self.stats.header_failed += 1;
+            return Err(NetworkError::CorruptedData);
         }
 
         let fec = FecCode::from_id(output.header().fec()).ok_or(NetworkError::NotSupported)?;

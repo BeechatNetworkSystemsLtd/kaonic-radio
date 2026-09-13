@@ -1,4 +1,5 @@
 use std::{
+    net::SocketAddr,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -7,8 +8,10 @@ use std::{
 };
 
 use kaonic_ctrl::{
+    peer::MutedClients,
     protocol::{
-        GetStatisticsResponse, Message, MessageBuilder, Payload, ReceiveModule, TransmitModule,
+        ChannelSendResponse, ChannelStatsResponse, GetStatisticsResponse, Message,
+        MessageBuilder, OpenChannelResponse, Payload, ReceiveModule, TransmitModule,
     },
     server::ServerHandler,
 };
@@ -21,9 +24,16 @@ use rand::rngs::OsRng;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
+use crate::channel::table::{BONDED_SEGMENTS, BONDED_SLOTS, SEGMENTS, SLOTS};
+use crate::channel::{self, Deliver, SharedTable, Table};
+use crate::channel::engine::Notify;
 use crate::radio_worker::{self, RadioHandle, WorkerSignal};
 
-const MODULE_EVENT_CHANNEL_CAPACITY: usize = 256;
+/// Received frames buffered for each subscriber. A bonded engine consumes two
+/// radios' frames through one of these, so the burst it has to absorb is twice
+/// what a single-module engine sees; 256 was shallow enough to drop segments
+/// mid-payload, which costs the whole payload.
+const MODULE_EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Default)]
 pub struct ModuleStats {
@@ -40,6 +50,14 @@ pub type SharedModuleStats = Arc<ModuleStats>;
 pub struct RadioServer {
     radios: Vec<RadioHandle>,
     stats: Vec<SharedModuleStats>,
+    /// Channel tables, one per module; empty until `start_channels`.
+    channels: Vec<SharedTable>,
+    /// Channels that span every module at once, served by their own engine.
+    /// `None` until `start_channels`, and on a node with a single radio.
+    bonded: Option<SharedTable>,
+    /// Clients that turned the raw frame stream off; shared with the UDP
+    /// server, which skips them when it pushes a received frame to everyone.
+    muted: MutedClients,
     module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
     module_tx_send: broadcast::Sender<Box<TransmitModule>>,
     cancel: CancellationToken,
@@ -118,12 +136,20 @@ impl RadioServer {
         Ok(Self {
             radios,
             stats,
+            channels: Vec::new(),
+            bonded: None,
+            muted: MutedClients::default(),
             module_rx_send,
             module_tx_send,
             cancel,
             serial,
             mtu,
         })
+    }
+
+    /// The set of clients excluded from frame pushes, for the UDP server.
+    pub fn muted_clients(&self) -> MutedClients {
+        self.muted.clone()
     }
 
     /// Returns clones of the radio worker handles.
@@ -220,7 +246,220 @@ impl RadioServer {
     }
 }
 
+impl RadioServer {
+    /// Brings up one channel engine per module. Decoded payloads leave through
+    /// `deliver`, per-channel events through `notify`; both are addressed to
+    /// individual clients.
+    pub fn start_channels(&mut self, deliver: mpsc::Sender<Deliver>, notify: mpsc::Sender<Notify>) {
+        self.channels = (0..self.radios.len())
+            .map(|module| {
+                let table = Table::new(module as u8);
+                channel::spawn::<SEGMENTS, SLOTS>(
+                    vec![module as u8],
+                    vec![self.radios[module].clone()],
+                    self.module_rx_send.subscribe(),
+                    table.clone(),
+                    deliver.clone(),
+                    notify.clone(),
+                );
+                table
+            })
+            .collect();
+
+        // Bonding needs something to bond. The per-module engines drop frames
+        // for channels they do not hold, so the bonded engine can sit beside
+        // them on the same receive stream.
+        if self.radios.len() > 1 {
+            let modules: Vec<u8> = (0..self.radios.len() as u8).collect();
+            let table = Table::bonded(modules.clone());
+            channel::spawn::<BONDED_SEGMENTS, BONDED_SLOTS>(
+                modules,
+                self.radios.clone(),
+                self.module_rx_send.subscribe(),
+                table.clone(),
+                deliver,
+                notify,
+            );
+            log::info!(
+                "bonded channels available across {} modules",
+                self.radios.len()
+            );
+            self.bonded = Some(table);
+        }
+    }
+
+    /// Every table a channel could live in: the per-module ones and, when the
+    /// node has more than one radio, the bonded one.
+    fn tables(&self) -> impl Iterator<Item = &SharedTable> {
+        self.channels.iter().chain(self.bonded.iter())
+    }
+
+    fn channel_table(&self, id: kaonic_ctrl::channel::ChannelId) -> Option<&SharedTable> {
+        self.tables()
+            .find(|table| table.lock().unwrap_or_else(|e| e.into_inner()).get(id).is_some())
+    }
+
+    /// Picks the table a channel belongs in and opens it there.
+    ///
+    /// One module means the module's own table, exactly as before. Several
+    /// means the bonded table, whose engine spreads a payload's frames over
+    /// all the radios; the client does not choose a subset, because a bonded
+    /// channel's MTU is fixed by the table and both ends have to agree on it.
+    fn open_channel(
+        &self,
+        open: &kaonic_ctrl::protocol::OpenChannelRequest,
+        from: SocketAddr,
+        now: Instant,
+    ) -> Result<kaonic_ctrl::channel::ChannelLimits, String> {
+        let mut modules = open.modules.clone();
+        modules.sort_unstable();
+        modules.dedup();
+
+        if modules.is_empty() {
+            return Err("no module given".into());
+        }
+        if let Some(bad) = modules.iter().find(|m| usize::from(**m) >= self.channels.len()) {
+            return Err(format!("no such module ({bad})"));
+        }
+
+        let table = if modules.len() == 1 {
+            &self.channels[usize::from(modules[0])]
+        } else {
+            match &self.bonded {
+                Some(table) => table,
+                None => {
+                    return Err(format!(
+                        "bonding needs more than one radio; this node has {}",
+                        self.channels.len()
+                    ))
+                }
+            }
+        };
+
+        if modules.len() > 1 && modules.len() != self.channels.len() {
+            return Err(format!(
+                "a bonded channel spans every module; this node has {}",
+                self.channels.len()
+            ));
+        }
+
+        // A channel id lives in exactly one table. If the same id were open
+        // bonded and unbonded at once, `channel_table` would pick whichever it
+        // found first and a payload would be queued against the wrong MTU, so
+        // refuse rather than route by search order.
+        for other in self.tables() {
+            if Arc::ptr_eq(other, table) {
+                continue;
+            }
+            if other
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(open.id)
+                .is_some()
+            {
+                return Err(format!(
+                    "channel {} is already open on a different module set; \
+                     close it everywhere before reopening it",
+                    open.id.raw()
+                ));
+            }
+        }
+
+        table
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .open(open.id, &open.profile, from, open.tx, open.rx, now)
+    }
+
+    /// Channel operations; everything else falls through to the frame-level
+    /// handler. Returns `None` when `request` is not a channel op.
+    fn handle_channel_message(
+        &mut self,
+        from: SocketAddr,
+        request: &Message,
+        response: &mut Message,
+    ) -> Option<()> {
+        let now = Instant::now();
+        for table in self.tables() {
+            table.lock().unwrap_or_else(|e| e.into_inner()).touch(from, now);
+        }
+
+        match &request.payload {
+            Payload::OpenChannelRequest(open) => {
+                let result = self.open_channel(open, from, now);
+                response.payload = Payload::OpenChannelResponse(match result {
+                    Ok(limits) => OpenChannelResponse::Opened(limits),
+                    Err(reason) => OpenChannelResponse::Refused(reason),
+                });
+            }
+            Payload::CloseChannelRequest(close) => {
+                for table in self.tables() {
+                    table.lock().unwrap_or_else(|e| e.into_inner()).close(close.id, from);
+                }
+                response.payload = Payload::CloseChannelResponse;
+            }
+            Payload::ChannelSendRequest(send) => {
+                let reply = match self.channel_table(send.id) {
+                    Some(table) => table.lock().unwrap_or_else(|e| e.into_inner()).enqueue(
+                        send.id,
+                        send.payload.clone(),
+                        send.hint.unwrap_or_default(),
+                    ),
+                    None => ChannelSendResponse::Closed,
+                };
+                response.payload = Payload::ChannelSendResponse(reply);
+            }
+            Payload::ChannelPeerRequest(peer) => {
+                if let Some(table) = self.channel_table(peer.id) {
+                    table
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .observe_peer(peer.id, peer.peer, peer.rssi, peer.class);
+                }
+                response.payload = Payload::ChannelPeerResponse;
+            }
+            Payload::SetFrameStreamRequest(req) => {
+                let mut muted = self.muted.lock().unwrap_or_else(|e| e.into_inner());
+                if req.enabled {
+                    muted.remove(&from);
+                } else {
+                    muted.insert(from);
+                }
+                log::info!(
+                    "frame stream {} for {from}",
+                    if req.enabled { "on" } else { "off" }
+                );
+                response.payload = Payload::SetFrameStreamResponse;
+            }
+            Payload::ChannelStatsRequest(req) => {
+                let stats = self
+                    .channel_table(req.id)
+                    .and_then(|table| table.lock().unwrap_or_else(|e| e.into_inner()).stats(req.id));
+                response.payload = match stats {
+                    Some(stats) => Payload::ChannelStatsResponse(ChannelStatsResponse { id: req.id, stats }),
+                    None => Payload::Error,
+                };
+            }
+            _ => return None,
+        }
+        Some(())
+    }
+}
+
 impl ServerHandler<Message> for RadioServer {
+    fn handle_message_from(
+        &mut self,
+        from: SocketAddr,
+        request: &Message,
+        mut response: Box<Message>,
+    ) -> Option<Box<Message>> {
+        *response.as_mut() = request.clone();
+        match self.handle_channel_message(from, request, response.as_mut()) {
+            Some(()) => Some(response),
+            None => self.handle_message(request, response),
+        }
+    }
+
     fn handle_message(
         &mut self,
         request: &Message,
@@ -385,7 +624,7 @@ impl ServerHandler<Message> for RadioServer {
                         .map(|f| PlatformRadioFrame::new_from_slice(&f.data))
                         .collect();
 
-                    let (sent, errors) = self.radios[batch.module].transmit_batch(frames);
+                    let (sent, errors) = self.radios[batch.module].transmit_batch(&frames);
 
                     response.payload = Payload::TransmitBatchResponse(
                         kaonic_ctrl::protocol::TransmitBatchResponse {

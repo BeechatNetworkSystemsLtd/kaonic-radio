@@ -1,5 +1,9 @@
 use kaonic_ctrl::{
-    protocol::{MessageCoder, RADIO_FRAME_SIZE},
+    peer::PeerTx,
+    protocol::{
+        ChannelEventMessage, ChannelReceive, MessageBuilder, MessageCoder, Payload,
+        RADIO_FRAME_SIZE,
+    },
     server::Server,
 };
 use tokio::sync::mpsc;
@@ -8,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use crate::grpc_server::{DeviceServer, DeviceService, GrpcRadioServer, RadioService};
 use crate::radio_server::RadioServer;
 
+mod channel;
 mod grpc_server;
 mod radio_server;
 mod radio_worker;
@@ -37,13 +42,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (client_send, client_recv) = mpsc::channel(16);
 
     let serial = read_serial();
-    let radio_server = RadioServer::new(
+    let mut radio_server = RadioServer::new(
         client_send,
         cancel.clone(),
         serial.clone(),
         RADIO_FRAME_SIZE,
     )
     .expect("radio server");
+
+    // Channel engines: decoded payloads and events come back here, addressed
+    // to the clients that opened each channel.
+    let (deliver_send, mut deliver_recv) = mpsc::channel::<channel::Deliver>(256);
+    let (notify_send, mut notify_recv) = mpsc::channel::<channel::engine::Notify>(256);
+    radio_server.start_channels(deliver_send, notify_send);
 
     // Capture shared state before the UDP server takes ownership of radio_server
     let module_count = radio_server.module_count();
@@ -53,15 +64,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx_sender = radio_server.tx_sender();
 
     // Start UDP server
-    let _server = Server::listen(
+    let muted = radio_server.muted_clients();
+    let server = Server::listen_with(
         udp_addr,
         MessageCoder::<SERVER_MTU, SERVER_SEGMENTS>::new(),
         radio_server,
         client_recv,
         cancel.clone(),
+        muted,
     )
     .await
     .expect("UDP server");
+
+    // Targeted pushes for channels: only the openers of a channel see its
+    // payloads, unlike the frame-level broadcast.
+    {
+        let peer_send = server.sender();
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(d) = deliver_recv.recv() => {
+                        let message = MessageBuilder::new()
+                            .with_rnd_id(rand::rngs::OsRng)
+                            .with_payload(Payload::ChannelReceive(ChannelReceive {
+                                id: d.id,
+                                payload: d.payload.as_ref().clone(),
+                                info: d.info,
+                            }))
+                            .build();
+                        let _ = peer_send.send(PeerTx { time: std::time::Instant::now(), addr: Some(d.to), message: Box::new(message) }).await;
+                    }
+                    Some(n) = notify_recv.recv() => {
+                        let message = MessageBuilder::new()
+                            .with_rnd_id(rand::rngs::OsRng)
+                            .with_payload(Payload::ChannelEvent(ChannelEventMessage { id: n.id, event: n.event }))
+                            .build();
+                        let _ = peer_send.send(PeerTx { time: std::time::Instant::now(), addr: Some(n.to), message: Box::new(message) }).await;
+                    }
+                    _ = cancel.cancelled() => break,
+                }
+            }
+        });
+    }
 
     // Start gRPC server sharing the same radio hardware
     let device_service =

@@ -44,6 +44,10 @@ impl Default for BasebandAutoMode {
     }
 }
 
+/// How long to block on the interrupt pin before reading the chip's interrupt
+/// status anyway.
+const IRQ_SAFETY_POLL: core::time::Duration = core::time::Duration::from_millis(2);
+
 #[derive(Debug)]
 pub struct Baseband<B, I>
 where
@@ -97,8 +101,10 @@ where
     pub fn set_frame_buffer_level(&mut self, level: u16) -> Result<(), RadioError> {
         self.bus
             .write_reg_u8(Self::abs_reg(regs::RG_BBCX_FBLIL), (level & 0xFF) as u8)?;
-        self.bus
-            .write_reg_u8(Self::abs_reg(regs::RG_BBCX_FBLIH), ((level >> 8) & 0x07) as u8)?;
+        self.bus.write_reg_u8(
+            Self::abs_reg(regs::RG_BBCX_FBLIH),
+            ((level >> 8) & 0x07) as u8,
+        )?;
 
         Ok(())
     }
@@ -326,6 +332,24 @@ where
         Ok(self)
     }
 
+    /// Refreshes the pending interrupts from the chip and reports them
+    /// without claiming any, so a wait that follows still sees them. This is
+    /// what a transmit asks before it touches the receiver: the answer has
+    /// to be left in place for the read-out it defers to.
+    pub fn pending_irqs(&mut self) -> Result<BasebandInterruptMask, RadioError> {
+        self.update_irqs()?;
+        Ok(self.irqs)
+    }
+
+    /// Drops one pending interrupt and nothing else. `clear_irqs` throws
+    /// away every pending interrupt, which in a transmit path includes a
+    /// receiver frame end that has not been read out yet.
+    pub fn discard_irq(&mut self, irq: BasebandInterrupt) -> Result<&mut Self, RadioError> {
+        self.update_irqs()?;
+        self.irqs.clear_irq(irq);
+        Ok(self)
+    }
+
     pub fn wait_irq(&mut self, irq: BasebandInterrupt, timeout: core::time::Duration) -> bool {
         self.wait_irqs(BasebandInterruptMask::new().add_irq(irq).build(), timeout)
     }
@@ -350,8 +374,7 @@ where
                 }
             }
 
-            self.bus
-                .wait_interrupt(Some(core::time::Duration::from_micros(100)));
+            self.bus.wait_interrupt(Some(IRQ_SAFETY_POLL));
         }
     }
 
@@ -373,8 +396,7 @@ where
                 }
             }
 
-            self.bus
-                .wait_interrupt(Some(core::time::Duration::from_micros(100)));
+            self.bus.wait_interrupt(Some(IRQ_SAFETY_POLL));
         }
 
         return false;

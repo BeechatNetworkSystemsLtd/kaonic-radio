@@ -3,6 +3,11 @@ use radio_common::{Accelerator, Antenna, Modulation, RadioBand, RadioConfig};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 
+use crate::channel::spec::{
+    ChannelEvent, ChannelId, ChannelLimits, ChannelStats, PeerKey, ProfileSpec, RxInfo,
+    TrafficClass, TxHint,
+};
+
 use crate::{
     error::ControllerError,
     peer::{PeerCoder, PeerMessage, PeerMessageId},
@@ -225,6 +230,113 @@ pub enum Payload {
     GetAntennaResponse(GetAntennaResponse),
     TransmitBatchRequest(TransmitBatchRequest),
     TransmitBatchResponse(TransmitBatchResponse),
+    // Channels: payload-level access to the radio; the daemon runs the coding.
+    OpenChannelRequest(OpenChannelRequest),
+    OpenChannelResponse(OpenChannelResponse),
+    CloseChannelRequest(CloseChannelRequest),
+    CloseChannelResponse,
+    ChannelSendRequest(ChannelSendRequest),
+    ChannelSendResponse(ChannelSendResponse),
+    ChannelPeerRequest(ChannelPeerRequest),
+    ChannelPeerResponse,
+    ChannelReceive(ChannelReceive),
+    ChannelEvent(ChannelEventMessage),
+    ChannelStatsRequest(ChannelStatsRequest),
+    ChannelStatsResponse(ChannelStatsResponse),
+    /// Whether the daemon pushes this client every received frame
+    /// (`ReceiveModule`). On by default, so tools that count frames keep
+    /// working; a client that only ever wants channel payloads turns it off
+    /// and stops paying to receive and decode 2 KB per frame on the air.
+    SetFrameStreamRequest(SetFrameStreamRequest),
+    SetFrameStreamResponse,
+}
+
+// ── Channels ──────────────────────────────────────────────────────────────────
+
+/// Largest payload a channel accepts over the ctrl link. Wider than any
+/// framed packet can be, so the daemon's own limit is what a client hits.
+///
+/// A bonded channel's MTU is six radio frames' worth (~5.4 KB), so this has to
+/// clear that; it also has to stay inside one ctrl message, which the daemon
+/// sizes at 1400 x 5 = 7000 bytes minus the ctrl header and msgpack framing.
+pub const CHANNEL_MAX_PAYLOAD: usize = 6144;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OpenChannelRequest {
+    pub id: ChannelId,
+    pub modules: Vec<u8>,
+    pub profile: ProfileSpec,
+    /// Whether this client will transmit on the channel.
+    pub tx: bool,
+    /// Whether this client wants to receive the channel's payloads.
+    pub rx: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum OpenChannelResponse {
+    Opened(ChannelLimits),
+    Refused(String),
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct CloseChannelRequest {
+    pub id: ChannelId,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChannelSendRequest {
+    pub id: ChannelId,
+    #[serde(with = "serde_bytes")]
+    pub payload: Vec<u8>,
+    pub hint: Option<TxHint>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChannelSendResponse {
+    Accepted,
+    QueueFull,
+    Oversize { max: u32 },
+    Closed,
+}
+
+/// What the client learned about a peer after parsing a payload: the daemon
+/// cannot attribute frames to stations itself.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ChannelPeerRequest {
+    pub id: ChannelId,
+    pub peer: PeerKey,
+    pub rssi: Option<i8>,
+    pub class: Option<TrafficClass>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChannelReceive {
+    pub id: ChannelId,
+    #[serde(with = "serde_bytes")]
+    pub payload: Vec<u8>,
+    pub info: RxInfo,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ChannelEventMessage {
+    pub id: ChannelId,
+    pub event: ChannelEvent,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SetFrameStreamRequest {
+    pub enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ChannelStatsRequest {
+    pub id: ChannelId,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ChannelStatsResponse {
+    pub id: ChannelId,
+    pub stats: ChannelStats,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -266,6 +378,12 @@ impl Payload {
                     }
                 }
                 Ok(())
+            }
+            Payload::ChannelSendRequest(send) if send.payload.len() > CHANNEL_MAX_PAYLOAD => {
+                Err(ControllerError::DecodeError)
+            }
+            Payload::ChannelReceive(recv) if recv.payload.len() > CHANNEL_MAX_PAYLOAD => {
+                Err(ControllerError::DecodeError)
             }
             _ => Ok(()),
         }

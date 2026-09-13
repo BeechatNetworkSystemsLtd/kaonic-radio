@@ -3,6 +3,12 @@
 mod platform_impl;
 
 #[cfg(feature = "machine-kaonic1s")]
+pub mod air;
+
+#[cfg(feature = "machine-kaonic1s")]
+pub mod env;
+
+#[cfg(feature = "machine-kaonic1s")]
 pub mod linux;
 
 #[cfg(feature = "machine-kaonic1s")]

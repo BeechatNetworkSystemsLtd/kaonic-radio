@@ -110,7 +110,17 @@ const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
         irq_gpio: LinuxGpioConfig { line_name: "PE15" },
         spi: LinuxSpiConfig {
             path: "/dev/spidev3.0",
-            max_speed: 12_000_000,
+            // rfb sits on a different SPI controller from rfa and is not
+            // reliable at 12 MHz: reads come back subtly corrupted rather than
+            // failing, so a frame arrives with a good RSSI and an undecodable
+            // LDPC header. Measured on kaonic1s r24, receiving 100 payloads
+            // per step: 12 MHz, 10 MHz and 8 MHz all delivered nothing;
+            // 6 MHz delivered 100/100 and 283 kbit/s, faster than rfa manages
+            // at 12 MHz. Raw frame tests hide this, because they only check
+            // the first bytes of a frame while the LDPC header spans ~256.
+            //
+            // `KAONIC_SPI_HZ_1` overrides this per radio for further testing.
+            max_speed: 6_000_000,
         },
         flt_v1_gpio: LinuxGpioLineConfig {
             chip: "/dev/gpiochip9",
@@ -232,17 +242,58 @@ pub fn create_radios(
     Ok(radios)
 }
 
+/// Sub-GHz front-end bring-up. The pad mode, external-LNA assumption and AGC
+/// gain map can each be overridden per radio through the environment
+/// (`KAONIC_RF09_PADFE_1=3`, `KAONIC_RF09_LNABYP_1=1`, `KAONIC_RF09_AGCMAP_1=0`),
+/// so a board whose second front-end is wired differently from the first can be
+/// probed without a rebuild. Unset, every radio keeps the values that have
+/// always shipped.
 fn configure_radio_09<I: Bus + Clone>(
     trx: &mut Transreceiver<Band09, I>,
+    index: usize,
 ) -> Result<(), RadioError> {
+    let pad = match std::env::var(format!("KAONIC_RF09_PADFE_{index}"))
+        .ok()
+        .as_deref()
+    {
+        Some("0") => FrontendPinConfig::Mode0,
+        Some("1") => FrontendPinConfig::Mode1,
+        Some("3") => FrontendPinConfig::Mode3,
+        _ => FrontendPinConfig::Mode2,
+    };
+
+    let ext_lna_bypass = matches!(
+        std::env::var(format!("KAONIC_RF09_LNABYP_{index}"))
+            .ok()
+            .as_deref(),
+        Some("1")
+    );
+
+    let map = match std::env::var(format!("KAONIC_RF09_AGCMAP_{index}"))
+        .ok()
+        .as_deref()
+    {
+        Some("0") => AgcGainMap::Internal,
+        Some("1") => AgcGainMap::Extranal9dB,
+        _ => AgcGainMap::Extranal12dB,
+    };
+
+    log::info!(
+        "radio[{}] rf09 frontend: padfe={} lna_bypass={} agc_map={}",
+        index,
+        pad as u8,
+        ext_lna_bypass,
+        map as u8
+    );
+
     trx.radio()
-        .set_control_pad(FrontendPinConfig::Mode2)?
+        .set_control_pad(pad)?
         .set_aux_settings(AuxiliarySettings {
-            ext_lna_bypass: false,
+            ext_lna_bypass,
             aven: false,
             avect: false,
             pavol: PaVol::Voltage2400mV,
-            map: AgcGainMap::Extranal12dB,
+            map,
         })
         .map_err(|_| BusError::ControlFailure)?;
 
@@ -296,9 +347,9 @@ fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>, index: usize) -> Result<()
             .build(),
     )?;
 
-    rf.set_frame_buffer_level(crate::platform::platform_impl::kaonic1s::RX_STREAM_LEVEL)?;
+    rf.set_frame_buffer_level(crate::platform::platform_impl::kaonic1s::rx_stream_level())?;
 
-    configure_radio_09(rf.trx_09())?;
+    configure_radio_09(rf.trx_09(), index)?;
     configure_radio_24(rf.trx_24())?;
 
     rf.set_frequency(
@@ -326,11 +377,23 @@ fn create_radio(
         .inspect_err(|_| log::error!("can't open spi '{}'", config.spi.path))
         .map_err(|_| BusError::ControlFailure)?;
 
-    spi.configure(
-        &SpidevOptions::new()
-            .max_speed_hz(config.spi.max_speed)
-            .build(),
-    )
+    // The bus clock can be lowered per radio for bring-up
+    // (`KAONIC_SPI_HZ_1=6000000`). The two radios sit on different SPI
+    // controllers, so one can be marginal at a clock the other is fine with —
+    // and a marginal read corrupts frame data rather than failing outright.
+    let max_speed = crate::platform::env::var_or(
+        &format!("KAONIC_SPI_HZ_{index}"),
+        config.spi.max_speed,
+    );
+
+    log::info!(
+        "radio[{}] spi {} @ {} Hz",
+        index,
+        config.spi.path,
+        max_speed
+    );
+
+    spi.configure(&SpidevOptions::new().max_speed_hz(max_speed).build())
     .inspect_err(|_| log::error!("can't configure spi '{}'", config.spi.path))
     .map_err(|_| BusError::ControlFailure)?;
 
@@ -394,6 +457,7 @@ fn create_radio(
     };
 
     let fem = Kaonic1SRadioFem::new(
+        index,
         LinuxOutputPin::new_from_line(
             config.flt_v1_gpio.chip,
             config.flt_v1_gpio.offset,

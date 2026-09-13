@@ -1,6 +1,6 @@
 use kaonic_frame::error::FrameError;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkError {
     CorruptedData,
     OutOfMemory,

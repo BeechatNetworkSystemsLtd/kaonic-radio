@@ -1,12 +1,12 @@
 [package]
 name = "kaonic-commd"
-version = "0.2.4"
+version = "0.2.6"
 edition = "2024"
 
 [features]
 default = ["machine-kaonic1s"]
-machine-kaonic1s = ["kaonic-radio/machine-kaonic1s", "kaonic-ctrl/machine-kaonic1s"]
-machine-host = ["kaonic-radio/machine-host", "kaonic-ctrl/machine-host"]
+machine-kaonic1s = ["kaonic-radio/machine-kaonic1s", "kaonic-ctrl/machine-kaonic1s", "kaonic-net/machine-kaonic1s", "kaonic-fec/machine-kaonic1s"]
+machine-host = ["kaonic-radio/machine-host", "kaonic-ctrl/machine-host", "kaonic-net/machine-host", "kaonic-fec/machine-host"]
 
 [dependencies]
 
@@ -14,6 +14,9 @@ machine-host = ["kaonic-radio/machine-host", "kaonic-ctrl/machine-host"]
 radio-rf215 = { path="../radio-rf215/" }
 kaonic-radio = { path="../kaonic-radio/", default-features = false }
 kaonic-ctrl = { path="../kaonic-ctrl/", default-features = false }
+kaonic-net = { path="../kaonic-net/", default-features = false }
+kaonic-fec = { path="../kaonic-fec/", default-features = false }
+kaonic-frame = { path="../kaonic-frame/" }
 radio-common = { path="../radio-common/" }
 
 rand = { version = "=0.8.5" }

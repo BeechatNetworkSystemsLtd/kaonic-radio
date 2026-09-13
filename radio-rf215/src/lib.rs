@@ -244,11 +244,31 @@ impl<I: Bus + Clone> Rf215<I> {
         }
     }
 
-    pub fn bb_transmit(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
+    /// Whether the band in use holds a frame a transmit would destroy; see
+    /// [`Transreceiver::rx_pending`].
+    pub fn rx_pending(&mut self) -> Result<bool, RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
-            self.trx_09.bb_transmit_cca(frame)
+            self.trx_09.rx_pending()
         } else {
-            self.trx_24.bb_transmit_cca(frame)
+            self.trx_24.rx_pending()
+        }
+    }
+
+    /// Loads `frame` into the transmit buffer of the band in use; see
+    /// [`Transceiver::bb_load_tx`](transceiver::Transceiver::bb_load_tx).
+    pub fn bb_load_tx(&mut self, frame: &BasebandFrame) -> Result<(), RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.bb_load_tx(frame)
+        } else {
+            self.trx_24.bb_load_tx(frame)
+        }
+    }
+
+    pub fn bb_transmit(&mut self, frame: &BasebandFrame, loaded: bool) -> Result<(), RadioError> {
+        if self.trx_09.check_band(self.freq_config.freq) {
+            self.trx_09.bb_transmit_cca(frame, loaded)
+        } else {
+            self.trx_24.bb_transmit_cca(frame, loaded)
         }
     }
 
@@ -278,12 +298,13 @@ impl<I: Bus + Clone> Rf215<I> {
     pub fn bb_receive(
         &mut self,
         frame: &mut BasebandFrame,
-        timeout: core::time::Duration,
+        start_timeout: core::time::Duration,
+        frame_timeout: core::time::Duration,
     ) -> Result<(), RadioError> {
         if self.trx_09.check_band(self.freq_config.freq) {
-            self.trx_09.bb_receive(frame, timeout)
+            self.trx_09.bb_receive(frame, start_timeout, frame_timeout)
         } else {
-            self.trx_24.bb_receive(frame, timeout)
+            self.trx_24.bb_receive(frame, start_timeout, frame_timeout)
         }
     }
 

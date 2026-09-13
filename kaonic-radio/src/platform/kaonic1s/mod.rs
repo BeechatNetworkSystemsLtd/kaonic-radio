@@ -17,6 +17,7 @@ use radio_rf215::{
 use crate::{
     error::KaonicError,
     platform::{
+        air,
         kaonic1s::{fpga::Kaonic1SFpga, machine::create_radios},
         linux::{
             LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
@@ -35,6 +36,9 @@ pub type Kaonic1SBus = SpiBus<LinuxSpi, AtomicInterrupt, LinuxClock, LinuxGpioRe
 
 #[derive(Debug)]
 pub struct Kaonic1SRadioFem {
+    /// Which radio this front-end belongs to; only used to scope the
+    /// bring-up overrides to one of them.
+    index: usize,
     flt_v1: LinuxOutputPin,
     flt_v2: LinuxOutputPin,
     flt_24: Option<LinuxOutputPin>,
@@ -44,12 +48,14 @@ pub struct Kaonic1SRadioFem {
 
 impl Kaonic1SRadioFem {
     pub fn new(
+        index: usize,
         flt_v1: LinuxOutputPin,
         flt_v2: LinuxOutputPin,
         flt_24: Option<LinuxOutputPin>,
         ant_24: Option<LinuxOutputPin>,
     ) -> Self {
         Self {
+            index,
             flt_v1,
             flt_v2,
             flt_24,
@@ -133,6 +139,26 @@ impl Kaonic1SRadioFem {
             }
         }
 
+        // Bring-up override: force this radio's sub-GHz filter select, for a
+        // board whose filter bank is wired differently from the first radio's.
+        // `KAONIC_RF09_FLT_1=10` means v1 high, v2 low on radio 1.
+        if let Ok(sel) = std::env::var(format!("KAONIC_RF09_FLT_{}", self.index)) {
+            let bytes = sel.as_bytes();
+            if bytes.len() == 2 {
+                log::info!("radio[{}] rf09 filter override: {}", self.index, sel);
+                if bytes[0] == b'1' {
+                    self.flt_v1.set_high()?;
+                } else {
+                    self.flt_v1.set_low()?;
+                }
+                if bytes[1] == b'1' {
+                    self.flt_v2.set_high()?;
+                } else {
+                    self.flt_v2.set_low()?;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -187,6 +213,11 @@ pub struct Kaonic1SRadio {
 
     noise_dbm: i8,
 
+    /// The transmit buffer holds the frame `stage` was given.
+    staged: bool,
+    /// Which of the node's radios this is; the air gate is keyed by it.
+    index: usize,
+
     last_rx_arm: Instant,
     last_peer_heard: Instant,
     peer_dbm: i8,
@@ -240,6 +271,7 @@ impl Kaonic1SRadio {
         fem: Kaonic1SRadioFem,
         fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
     ) -> Self {
+        let index = fem.index;
         Self {
             radio,
             event: Arc::new(Mutex::new(event)),
@@ -250,6 +282,8 @@ impl Kaonic1SRadio {
             accelerator: Accelerator::Native,
             fpga,
             noise_dbm: -95,
+            staged: false,
+            index,
             last_rx_arm: Instant::now(),
             last_peer_heard: Instant::now() - CCA_PEER_TTL,
             peer_dbm: 0,
@@ -317,6 +351,17 @@ impl Kaonic1SRadio {
 /// Frame-buffer level that triggers early read-out; 0 disables streaming.
 pub const RX_STREAM_LEVEL: u16 = 0;
 
+/// The level in effect: `KAONIC_RX_STREAM_LEVEL` overrides the default, read
+/// once at start-up. The RF215 has a single receive buffer, so everything not
+/// read out by the time the next frame starts arriving is overwritten;
+/// reading most of a frame while it is still on the air leaves only its tail
+/// to fetch after the end-of-frame interrupt, and that window is what a busy
+/// node keeps missing.
+pub fn rx_stream_level() -> u16 {
+    static LEVEL: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    *LEVEL.get_or_init(|| crate::platform::env::var_or("KAONIC_RX_STREAM_LEVEL", RX_STREAM_LEVEL))
+}
+
 /// How long a frame already on the air may take to finish, from the
 /// modulation. Capped so a bad rate cannot park the worker.
 fn frame_receive_budget(modulation: &Modulation) -> core::time::Duration {
@@ -373,14 +418,39 @@ impl Radio for Kaonic1SRadio {
         Ok(())
     }
 
+    fn stage(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
+        self.radio
+            .bb_load_tx(&BasebandFrame::new_from_slice(frame.as_slice()))?;
+        self.staged = true;
+        Ok(())
+    }
+
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
         let mut result = Ok(());
         for i in 0..TX_ATTEMPTS {
             let start = Instant::now();
 
-            let attempt = self
-                .radio
-                .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()));
+            // The buffer is written once: by `stage`, or by the first
+            // attempt. A busy channel leaves it as it is for the retry.
+            // The air is claimed for the whole attempt — assessment,
+            // frame, and the wait for its end — and only then.
+            let attempt = {
+                let _air = air::on_air(self.index);
+                self.radio
+                    .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()), self.staged)
+            };
+
+            // The receiver holds a frame, finished or still arriving, and
+            // only the worker can hand it on: give the transmit back untried.
+            // Nothing went on the air, so neither the backoff window nor the
+            // counters move, and the receiver is left as it is for the
+            // read-out — it is still in RX, so there is nothing to re-arm.
+            // The refusal comes before the buffer write, so a staged frame
+            // is still staged and an unstaged one still is not.
+            if let Err(radio_rf215::error::RadioError::RxPending) = attempt {
+                return Err(KaonicError::RxPending);
+            }
+            self.staged = true;
 
             // A busy channel is not a failure. Randomised backoff stops every
             // deferred sender colliding again in lock-step.
@@ -406,17 +476,12 @@ impl Radio for Kaonic1SRadio {
                 continue;
             }
 
-            let attempt_error: Result<(), radio_rf215::error::RadioError> = match attempt {
-                Ok(()) => Ok(()),
-                Err(err) => Err(err),
-            };
-            result = if attempt_error.is_ok() {
-                Ok(())
-            } else {
-                Err(KaonicError::HardwareError)
-            };
+            result = attempt
+                .as_ref()
+                .map(|_| ())
+                .map_err(|_| KaonicError::HardwareError);
 
-            if let Err(ref err) = attempt_error {
+            if let Err(ref err) = attempt {
                 log::error!(
                     "tx [{}] attempt {} failed: {:?} (frame {} bytes)",
                     self.radio.name(),
@@ -457,7 +522,14 @@ impl Radio for Kaonic1SRadio {
         // drops. It becomes worth revisiting if the receive path gets cheaper.
         let _ = self.radio.start_receive();
 
+        // Sent, or given up on: the next transmit is of another frame.
+        self.staged = false;
+
         result
+    }
+
+    fn receive_pending(&mut self) -> Result<bool, KaonicError> {
+        Ok(self.radio.rx_pending()?)
     }
 
     fn receive<'a>(
@@ -473,7 +545,7 @@ impl Radio for Kaonic1SRadio {
                 &mut self.bb_frame,
                 timeout,
                 frame_receive_budget(&self.modulation),
-                RX_STREAM_LEVEL,
+                rx_stream_level(),
             );
 
         match result {
@@ -591,6 +663,18 @@ impl Radio for Kaonic1SRadio {
         }
 
         self.accelerator = *accelerator;
+
+        // Switching chip mode resets the baseband core. The radio still reads
+        // back as being in RX afterwards, so `ensure_receive` sees nothing
+        // wrong and the re-arm watchdog never fires — but the baseband is
+        // disabled and no frame is ever decoded. Re-applying the modulation
+        // brings the baseband back up, and then the receiver is armed.
+        //
+        // A radio that carries traffic hides this, because every transmit
+        // re-arms it; an idle one simply stops receiving for good, which is
+        // what happens to a second radio nothing is sending on.
+        self.radio.configure(&self.modulation)?;
+        let _ = self.radio.start_receive_current();
 
         Ok(())
     }

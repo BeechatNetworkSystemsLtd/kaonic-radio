@@ -901,10 +901,13 @@ dependencies = [
 
 [[package]]
 name = "kaonic-commd"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "env_logger",
  "kaonic-ctrl",
+ "kaonic-fec",
+ "kaonic-frame",
+ "kaonic-net",
  "kaonic-radio",
  "libc",
  "log",
@@ -949,7 +952,9 @@ dependencies = [
 name = "kaonic-ctrl"
 version = "0.1.1"
 dependencies = [
+ "bytes",
  "env_logger",
+ "kaonic-fec",
  "kaonic-frame",
  "kaonic-net",
  "log",
@@ -982,6 +987,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaonic-fec"
+version = "0.1.0"
+dependencies = [
+ "kaonic-net",
+ "serde",
+]
+
+[[package]]
 name = "kaonic-frame"
 version = "0.1.0"
 
@@ -1010,6 +1023,7 @@ dependencies = [
  "clap",
  "env_logger",
  "kaonic-ctrl",
+ "kaonic-fec",
  "kaonic-frame",
  "log",
  "radio-common",
@@ -1026,12 +1040,14 @@ dependencies = [
  "labrador-ldpc",
  "log",
  "rand",
+ "serde",
 ]
 
 [[package]]
 name = "kaonic-radio"
 version = "0.1.0"
 dependencies = [
+ "embedded-hal",
  "kaonic-frame",
  "libgpiod",
  "linux-embedded-hal",
@@ -1039,15 +1055,6 @@ dependencies = [
  "memmap2",
  "radio-common",
  "radio-rf215",
-]
-
-[[package]]
-name = "kaonic-spitest"
-version = "0.1.0"
-dependencies = [
- "clap",
- "embedded-hal",
- "linux-embedded-hal",
 ]
 
 [[package]]

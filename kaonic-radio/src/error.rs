@@ -11,6 +11,10 @@ pub enum KaonicError {
     NotSupported,
     DataCorruption,
     TryAgain,
+    /// A transmit was refused because the radio holds a frame that
+    /// [`crate::radio::Radio::receive`] has yet to return; receive, then
+    /// transmit again.
+    RxPending,
 }
 
 impl From<FrameError> for KaonicError {

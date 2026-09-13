@@ -1,5 +1,6 @@
 use kaonic_net::NetworkTime;
 
+pub mod channel;
 pub mod client;
 pub mod error;
 pub mod network;

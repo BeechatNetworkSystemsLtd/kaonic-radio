@@ -3,11 +3,12 @@ resolver = "2"
 members = [ 
     # Applications
     "kaonic-commd",
-    "kaonic-commd-cli",
     "kaonic-factory",
-    "kaonic-iperf",
-    "kaonic-linktest",
-    "kaonic-spitest",
+
+    # Development tools; not installed on a device
+    "tools/kaonic-commd-cli",
+    "tools/kaonic-iperf",
+    "tools/kaonic-linktest",
 
     # Integration
     "kaonic-ctrl", 
@@ -17,6 +18,7 @@ members = [
 
     # Algorithms
     "kaonic-net",
+    "kaonic-fec",
     "kaonic-frame",
     "kaonic-crc",
 

@@ -7,6 +7,7 @@ pub enum RadioError {
     CommunicationFailure,
     Timeout,
     ChannelBusy,
+    RxPending,
 }
 
 impl From<BusError> for RadioError {

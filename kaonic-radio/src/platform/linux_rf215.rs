@@ -195,6 +195,7 @@ impl From<RadioError> for KaonicError {
             RadioError::CommunicationFailure => Self::HardwareError,
             RadioError::Timeout => Self::Timeout,
             RadioError::ChannelBusy => Self::TryAgain,
+            RadioError::RxPending => Self::RxPending,
         }
     }
 }

@@ -411,6 +411,15 @@ where
         Err(RadioError::CommunicationFailure)
     }
 
+    pub fn stop_receive(&mut self) -> Result<(), RadioError> {
+        // NOTE: Errata #2/#6 let a state command be
+        // dropped, and a freeze that silently did not happen is a frame read
+        // out while the next one writes over it. RX to TXPREP is immediate,
+        // so the check is one register read in the common case.
+        self.change_state(core::time::Duration::from_millis(3), RadioState::TrxPrep)
+            .map(|_| ())
+    }
+
     /// Errata #2 workaround: restart a stuck PLL/state transition.
     fn kick_pll(&mut self) -> Result<(), RadioError> {
         self.bus

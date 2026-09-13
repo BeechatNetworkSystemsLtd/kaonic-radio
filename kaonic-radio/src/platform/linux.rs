@@ -75,7 +75,53 @@ pub struct LinuxGpioInterrupt {
     pub(super) request: libgpiod::request::Request,
 }
 
-pub type LinuxSpi = SpidevDevice;
+/// The SPI device a radio talks through.
+///
+/// `KAONIC_SPI_SERIALIZE=1` puts every transfer in the process behind one
+/// lock, so the two controllers never run at the same time. It exists to
+/// find out whether concurrent controllers corrupt transfers on a given
+/// board; on the kaonic1s they do not, and the frame corruption that
+/// prompted the question turned out to be timing on the far side (see
+/// [`air`](super::air)).
+pub struct LinuxSpi {
+    device: SpidevDevice,
+    serialize: bool,
+}
+
+static SPI_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+impl LinuxSpi {
+    pub fn open(path: &str) -> Result<Self, linux_embedded_hal::SPIError> {
+        let serialize = super::env::flag("KAONIC_SPI_SERIALIZE");
+        Ok(Self {
+            device: SpidevDevice::open(path)?,
+            serialize,
+        })
+    }
+
+    pub fn configure(
+        &mut self,
+        options: &linux_embedded_hal::spidev::SpidevOptions,
+    ) -> std::io::Result<()> {
+        self.device.configure(options)
+    }
+}
+
+impl embedded_hal::spi::ErrorType for LinuxSpi {
+    type Error = <SpidevDevice as embedded_hal::spi::ErrorType>::Error;
+}
+
+impl embedded_hal::spi::SpiDevice<u8> for LinuxSpi {
+    fn transaction(
+        &mut self,
+        operations: &mut [embedded_hal::spi::Operation<'_, u8>],
+    ) -> Result<(), Self::Error> {
+        let _gate = self
+            .serialize
+            .then(|| SPI_GATE.lock().unwrap_or_else(|e| e.into_inner()));
+        self.device.transaction(operations)
+    }
+}
 
 impl LinuxGpioInterrupt {
     pub fn new(line_name: &str, name: &str) -> Result<Self, KaonicError> {

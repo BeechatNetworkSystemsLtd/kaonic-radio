@@ -127,6 +127,11 @@ echo "> Copy files"
 cp "$binary_path" "$release_path/kaonic-commd"
 cp "$service_path" "$release_path/kaonic-commd.service"
 cp "$plugin_toml_path" "$release_path/kaonic-plugin.toml"
+# The manifest declares an icon; the installer refuses a package that
+# declares one and does not ship it under files/.
+if [[ -d "${BASE_DIR}/kaonic-commd/files" ]]; then
+    cp -R "${BASE_DIR}/kaonic-commd/files" "$release_path/files"
+fi
 printf '%s' "$version" > "$release_path/kaonic-commd.version"
 openssl dgst -sha256 "$release_path/kaonic-commd" | awk '{print $NF}' > "$release_path/kaonic-commd.sha256"
 

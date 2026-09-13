@@ -7,11 +7,13 @@ use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    channel::client::{ChannelBuilder, ChannelRouter},
+    channel::spec::ChannelId,
     client::Client,
     error::ControllerError,
     peer::{PeerSender, PeerTx},
     protocol::{
-        Message, MessageBuilder, Payload, RADIO_FRAME_SIZE, RadioFrame, ReceiveModule,
+        Message, MessageBuilder, Payload, RADIO_FRAME_SIZE, RadioFrame, ReceiveModule, SetFrameStreamRequest,
         TransmitModule,
     },
 };
@@ -34,6 +36,7 @@ pub struct RadioClient {
     cancel: CancellationToken,
     client: Client<Message>,
     timeout: core::time::Duration,
+    channels: ChannelRouter,
 }
 
 impl RadioClient {
@@ -60,11 +63,13 @@ impl RadioClient {
         let (module_rx_send, _) = broadcast::channel(MODULE_EVENT_CHANNEL_CAPACITY);
         let (module_tx_send, _) = broadcast::channel(MODULE_EVENT_CHANNEL_CAPACITY);
         let (activity_send, activity_recv) = watch::channel(0u64);
+        let channels = ChannelRouter::default();
 
         tokio::spawn(Self::listen_events(
             rx_recv,
             module_rx_send.clone(),
             module_tx_send.clone(),
+            channels.clone(),
             activity_send.clone(),
             cancel.clone(),
         ));
@@ -85,7 +90,22 @@ impl RadioClient {
             client,
             cancel,
             timeout: DEFAULT_TIMEOUT,
+            channels,
         })
+    }
+
+    /// Starts opening a channel: a payload-level stream over one or more
+    /// modules, coded and scheduled by the daemon according to a profile.
+    pub fn channel(&self, id: ChannelId) -> ChannelBuilder {
+        ChannelBuilder::new(self, id, self.timeout)
+    }
+
+    pub(crate) fn client_handle(&self) -> Client<Message> {
+        self.client.clone()
+    }
+
+    pub(crate) fn channel_router(&self) -> ChannelRouter {
+        self.channels.clone()
     }
 
     /// Sets the timeout used for all request/response operations.
@@ -113,6 +133,25 @@ impl RadioClient {
 
         match response.payload {
             Payload::Pong => Ok(()),
+            _ => Err(ControllerError::DecodeError),
+        }
+    }
+
+    /// Reads the packet counters of a radio module. These come from the
+    /// daemon itself, so they measure what the radio delivered rather than
+    /// what survived the path to this client.
+    pub async fn get_statistics(
+        &mut self,
+        module: usize,
+    ) -> Result<crate::protocol::GetStatisticsResponse, ControllerError> {
+        let response = self
+            .request(Payload::GetStatisticsRequest(
+                crate::protocol::GetStatisticsRequest { module },
+            ))
+            .await?;
+
+        match response.payload {
+            Payload::GetStatisticsResponse(stats) => Ok(stats),
             _ => Err(ControllerError::DecodeError),
         }
     }
@@ -332,6 +371,19 @@ impl RadioClient {
     }
 
     /// Queries the device for general info (e.g. number of radio modules).
+    /// Turns the daemon's push of every received frame to this client on or
+    /// off. It is on by default; a client that only uses channels can switch
+    /// it off and save itself a 2 KB decode per frame on the air.
+    pub async fn set_frame_stream(&mut self, enabled: bool) -> Result<(), ControllerError> {
+        let response = self
+            .request(Payload::SetFrameStreamRequest(SetFrameStreamRequest { enabled }))
+            .await?;
+        match response.payload {
+            Payload::SetFrameStreamResponse => Ok(()),
+            _ => Err(ControllerError::DecodeError),
+        }
+    }
+
     pub async fn get_info(&mut self) -> Result<GetInfoResponse, ControllerError> {
         let response = self.request(Payload::GetInfoRequest).await?;
 
@@ -375,6 +427,7 @@ impl RadioClient {
         mut rx_recv: broadcast::Receiver<Box<Message>>,
         module_rx_send: broadcast::Sender<Box<ReceiveModule>>,
         module_tx_send: broadcast::Sender<Box<TransmitModule>>,
+        channels: ChannelRouter,
         activity_send: watch::Sender<u64>,
         cancel: CancellationToken,
     ) {
@@ -388,6 +441,12 @@ impl RadioClient {
                             },
                             Payload::TransmitModuleEvent(tx) => {
                                 let _ = module_tx_send.send(Box::new(tx));
+                            },
+                            Payload::ChannelReceive(rx) => {
+                                channels.deliver(rx.id, rx.payload, rx.info);
+                            },
+                            Payload::ChannelEvent(ev) => {
+                                channels.notify(ev.id, ev.event);
                             },
                             _ => {}
                         }

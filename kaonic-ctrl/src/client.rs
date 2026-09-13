@@ -18,6 +18,7 @@ use crate::{
 
 pub type ClientRequestQueue<T> = RequestQueue<16, T, AsyncResponder<T>>;
 
+#[derive(Clone)]
 pub struct Client<T: PeerMessage> {
     tx_send: PeerSender<T>,
     rx_send: broadcast::Sender<Box<T>>,
@@ -58,7 +59,10 @@ impl<T: PeerMessage + Send + std::fmt::Debug + 'static> Client<T> {
             });
         }
 
-        let (rx_send, _) = broadcast::channel(16);
+        // Every pushed message (received frames, channel payloads, events)
+        // passes through here; a lagging subscriber loses messages, so the
+        // ring must ride out a busy runtime at a few hundred messages/s.
+        let (rx_send, _) = broadcast::channel(512);
 
         tokio::spawn(Self::manage_responses(
             request_queue.clone(),
@@ -106,7 +110,7 @@ impl<T: PeerMessage + Send + std::fmt::Debug + 'static> Client<T> {
     }
 
     pub async fn request(
-        &mut self,
+        &self,
         message: T,
         timeout: core::time::Duration,
     ) -> Result<T, ControllerError> {

@@ -93,6 +93,10 @@ impl Radio for DummyRadio {
         Err(KaonicError::HardwareError)
     }
 
+    fn receive_pending(&mut self) -> Result<bool, KaonicError> {
+        Ok(false)
+    }
+
     fn receive<'a>(
         &mut self,
         _frame: &'a mut Self::RxFrame,

@@ -56,8 +56,31 @@ pub trait Radio {
     /// Returns the currently selected antenna for the given frequency band.
     fn get_antenna(&self, band: RadioBand) -> Antenna;
 
+    /// Gets `frame` as far as it can go without touching the air, so that
+    /// the [`transmit`](Self::transmit) that follows is short. What that is
+    /// depends on the hardware; for a radio with a frame buffer it is the
+    /// write into it, which is the slow part of a transmit. Optional: a
+    /// radio that has nothing to do ahead of time just returns.
+    ///
+    /// A staged frame stays staged across a [`receive`](Self::receive) and
+    /// until the next `transmit`, which must be of the same frame.
+    fn stage(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
+        let _ = frame;
+        Ok(())
+    }
+
     /// Transmits a frame over the air.
+    ///
+    /// Returns [`KaonicError::RxPending`] without transmitting when the
+    /// radio holds a frame that [`Self::receive`] has yet to return; the
+    /// frame stays staged for the retry.
     fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError>;
+
+    /// Whether the radio holds a frame — finished, or still arriving — that
+    /// [`Self::receive`] would return. Cheap enough to ask before every
+    /// transmit, which is what it is for: a half-duplex radio that transmits
+    /// over its own reception loses the frame.
+    fn receive_pending(&mut self) -> Result<bool, KaonicError>;
 
     /// Blocks until a frame is received or `timeout` elapses.
     ///
