@@ -17,7 +17,10 @@ use radio_rf215::{
 use crate::{
     error::KaonicError,
     platform::{
-        kaonic1s::{fpga::Kaonic1SFpga, machine::create_radios},
+        kaonic1s::{
+            fpga::Kaonic1SFpga,
+            machine::{create_radios, fpga_enable_gpio},
+        },
         linux::{
             LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
         },
@@ -397,7 +400,7 @@ pub struct Kaonic1SMachine {
 
 impl Kaonic1SMachine {
     pub fn new() -> Result<Self, KaonicError> {
-        let fpga = Kaonic1SFpga::new()
+        let fpga = Kaonic1SFpga::new(fpga_enable_gpio())
             .map(|fpga| Arc::new(Mutex::new(fpga)))
             .ok();
 

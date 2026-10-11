@@ -2,7 +2,10 @@ use std::fs::OpenOptions;
 
 use memmap2::{MmapMut, MmapOptions};
 
-use crate::{error::KaonicError, platform::linux::LinuxOutputPin};
+use crate::{
+    error::KaonicError,
+    platform::linux::{LinuxGpioLineConfig, LinuxOutputPin},
+};
 
 const PSRAM_SIZE: usize = 1;
 const PSRAM_OFFSET: u64 = 0x64000000;
@@ -13,8 +16,9 @@ pub struct Kaonic1SFpga {
 }
 
 impl Kaonic1SFpga {
-    pub fn new() -> Result<Self, KaonicError> {
-        let mut enable_gpio = LinuxOutputPin::new_from_line("/dev/gpiochip9", 7, "kaonic-fpga-en")?;
+    pub fn new(enable: LinuxGpioLineConfig) -> Result<Self, KaonicError> {
+        let mut enable_gpio =
+            LinuxOutputPin::new_from_line(enable.chip, enable.offset, "kaonic-fpga-en")?;
 
         let file = OpenOptions::new()
             .read(true)
