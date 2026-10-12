@@ -184,11 +184,11 @@ jobs:
           echo "Installing Yocto SDK..."
           ./yocto-sdk.sh -y -d /opt/yocto-sdk
 
-      - name: Build 'kaonic-commd' with machine-kaonic1s feature
+      - name: Build 'kaonic-commd' with machine-kaonic1s-us feature
         run: |
           unset LD_LIBRARY_PATH
           source /opt/yocto-sdk/environment-setup
-          cargo build --release -p kaonic-commd --features machine-kaonic1s
+          cargo build --release -p kaonic-commd --features machine-kaonic1s-us
 
       - name: Create Kaonic OTA package
         run: |

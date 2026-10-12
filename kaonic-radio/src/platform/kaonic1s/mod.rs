@@ -1,395 +1,38 @@
-use std::{
-    sync::{atomic::AtomicUsize, Arc, Mutex},
-    time::Instant,
-};
+//! The Kaonic 1S board.
+//!
+//! The board is the same whichever way its radios are driven; only the driver
+//! differs. `us` runs the RF215 driver in user space over spidev, `ks` talks
+//! to the in-kernel `kaonic_rf215` driver through its network interfaces.
+//! Both present the same `Kaonic1SRadio`, so everything above this module is
+//! shared.
+
+use std::sync::{Arc, Mutex};
 
 use kaonic_frame::frame::Frame;
-use radio_common::{
-    frequency::BandwidthFilter, modulation::OfdmModulation, Hertz, Modulation, RadioConfig,
-    RadioConfigBuilder,
-};
-use radio_rf215::{
-    baseband::BasebandFrame,
-    bus::{BusInterrupt, SpiBus},
-    ChipMode, Rf215,
-};
 
-use crate::{
-    error::KaonicError,
-    platform::{
-        kaonic1s::{fpga::Kaonic1SFpga, machine::create_radios},
-        linux::{
-            LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxOutputPin, LinuxSpi, SharedBus,
-        },
-        linux_rf215::AtomicInterrupt,
-    },
-    radio::{Accelerator, Antenna, Radio, RadioBand, ReceiveResult, ScanResult},
-};
+use crate::{error::KaonicError, platform::kaonic1s::fpga::Kaonic1SFpga};
 
+mod config;
+pub mod fem;
 pub mod fpga;
-mod machine;
+
+#[cfg(feature = "machine-kaonic1s-us")]
+#[path = "us/mod.rs"]
+mod driver;
+
+#[cfg(feature = "machine-kaonic1s-ks")]
+#[path = "ks/mod.rs"]
+mod driver;
+
+pub use driver::*;
+pub use fem::Kaonic1SRadioFem;
 
 pub const FRAME_SIZE: usize = 2048usize;
 
-pub type Kaonic1SBus = SpiBus<LinuxSpi, AtomicInterrupt, LinuxClock, LinuxGpioReset>;
-
-#[derive(Debug)]
-pub struct Kaonic1SRadioFem {
-    flt_v1: LinuxOutputPin,
-    flt_v2: LinuxOutputPin,
-    flt_24: Option<LinuxOutputPin>,
-    ant_24: Option<LinuxOutputPin>,
-    ant_24_sel: Antenna,
-}
-
-impl Kaonic1SRadioFem {
-    pub fn new(
-        flt_v1: LinuxOutputPin,
-        flt_v2: LinuxOutputPin,
-        flt_24: Option<LinuxOutputPin>,
-        ant_24: Option<LinuxOutputPin>,
-    ) -> Self {
-        Self {
-            flt_v1,
-            flt_v2,
-            flt_24,
-            ant_24,
-            ant_24_sel: Antenna::default(),
-        }
-    }
-
-    pub fn set_antenna(&mut self, band: RadioBand, antenna: Antenna) -> Result<(), KaonicError> {
-        match band {
-            RadioBand::Band24 => {
-                if self.ant_24.is_none() && antenna != Antenna::Internal {
-                    return Err(KaonicError::NotSupported);
-                }
-
-                self.ant_24_sel = antenna;
-                self.apply_ant_24()
-            }
-            // The sub-GHz path has no antenna switch on this board.
-            RadioBand::Band09 => match antenna {
-                Antenna::Internal => Ok(()),
-                Antenna::External => Err(KaonicError::NotSupported),
-            },
-        }
-    }
-
-    pub fn antenna(&self, band: RadioBand) -> Antenna {
-        match band {
-            RadioBand::Band24 => self.ant_24_sel,
-            RadioBand::Band09 => Antenna::Internal,
-        }
-    }
-
-    fn apply_ant_24(&mut self) -> Result<(), KaonicError> {
-        if let Some(ant_24) = &mut self.ant_24 {
-            match self.ant_24_sel {
-                Antenna::Internal => ant_24.set_low()?,
-                Antenna::External => ant_24.set_high()?,
-            }
-        }
-
-        Ok(())
-    }
-
-    fn set_bandwidth_filter(
-        &mut self,
-        filter: BandwidthFilter,
-        freq: Hertz,
-    ) -> Result<(), KaonicError> {
-        let freq = freq.as_mhz();
-
-        match filter {
-            BandwidthFilter::Narrow => {
-                log::debug!("set narrowband filter");
-
-                if (902 <= freq) && (freq <= 928) {
-                    self.flt_v1.set_high()?;
-                    self.flt_v2.set_low()?;
-                }
-
-                if (862 <= freq) && (freq <= 876) {
-                    self.flt_v1.set_low()?;
-                    self.flt_v2.set_high()?;
-                }
-
-                // Use Wideband filter
-                if freq < 862 {
-                    log::trace!(
-                        "narrow band is not supported for {}MHz, wideband will be used",
-                        freq
-                    );
-
-                    self.flt_v1.set_high()?;
-                    self.flt_v2.set_low()?;
-                }
-            }
-            BandwidthFilter::Wide => {
-                log::debug!("set wideband filter");
-                self.flt_v1.set_high()?;
-                self.flt_v2.set_low()?;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn adjust(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
-        self.apply_ant_24()?;
-
-        self.set_bandwidth_filter(config.bandwidth_filter, config.freq)?;
-
-        // NOTE: Should be set to 0
-        if let Some(flt_24) = &mut self.flt_24 {
-            let _ = flt_24.set_low();
-        }
-
-        Ok(())
-    }
-}
-
 pub type Kaonic1SFrame = Frame<FRAME_SIZE>;
-pub type Kaonic1SRf215 = Rf215<SharedBus<Kaonic1SBus>>;
-
-#[derive(Debug)]
-pub struct Kaonic1SRadioEvent {
-    counter: Arc<AtomicUsize>,
-    irq: LinuxGpioInterrupt,
-}
-
-impl Kaonic1SRadioEvent {
-    pub fn new(counter: Arc<AtomicUsize>, irq: LinuxGpioInterrupt) -> Self {
-        Self { counter, irq }
-    }
-
-    pub fn wait_for_event(&mut self, timeout: Option<core::time::Duration>) -> bool {
-        if self.irq.wait_on_interrupt(timeout) {
-            self.counter
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-            return true;
-        }
-
-        false
-    }
-}
-
-pub struct Kaonic1SRadio {
-    fem: Kaonic1SRadioFem,
-    radio: Kaonic1SRf215,
-    event: Arc<Mutex<Kaonic1SRadioEvent>>,
-    bb_frame: BasebandFrame,
-    config: RadioConfig,
-    modulation: Modulation,
-    accelerator: Accelerator,
-    fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
-
-    noise_dbm: i8,
-}
-
-impl Kaonic1SRadio {
-    pub fn new(
-        radio: Rf215<SharedBus<Kaonic1SBus>>,
-        event: Kaonic1SRadioEvent,
-        fem: Kaonic1SRadioFem,
-        fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
-    ) -> Self {
-        Self {
-            radio,
-            event: Arc::new(Mutex::new(event)),
-            fem,
-            bb_frame: BasebandFrame::new(),
-            config: RadioConfigBuilder::new().build(),
-            modulation: Modulation::Ofdm(OfdmModulation::default()),
-            accelerator: Accelerator::Native,
-            fpga,
-            noise_dbm: -127,
-        }
-    }
-
-    pub fn radio(&mut self) -> &mut Kaonic1SRf215 {
-        &mut self.radio
-    }
-
-    pub fn event(&self) -> Arc<Mutex<Kaonic1SRadioEvent>> {
-        self.event.clone()
-    }
-}
-
-impl Radio for Kaonic1SRadio {
-    type TxFrame = Kaonic1SFrame;
-    type RxFrame = Kaonic1SFrame;
-
-    fn set_modulation(&mut self, modulation: &Modulation) -> Result<(), KaonicError> {
-        log::debug!("set modulation ({}) = {}", self.radio.name(), modulation);
-
-        self.radio.configure(modulation)?;
-
-        self.modulation = *modulation;
-
-        Ok(())
-    }
-
-    fn get_modulation(&self) -> Modulation {
-        self.modulation
-    }
-
-    fn set_config(&mut self, config: &RadioConfig) -> Result<(), KaonicError> {
-        self.fem.adjust(config)?;
-
-        log::debug!("set radio config ({}) = {}", self.radio.name(), config);
-
-        self.radio.set_frequency(config)?;
-
-        self.config = *config;
-
-        Ok(())
-    }
-
-    fn get_config(&self) -> RadioConfig {
-        self.config
-    }
-
-    fn update_event(&mut self) -> Result<(), KaonicError> {
-        self.radio
-            .update_irqs()
-            .map_err(|_| KaonicError::HardwareError)?;
-
-        Ok(())
-    }
-
-    fn transmit(&mut self, frame: &Self::TxFrame) -> Result<(), KaonicError> {
-        let mut result = Ok(());
-        for i in 0..4 {
-            let start = Instant::now();
-
-            result = self
-                .radio
-                .bb_transmit(&BasebandFrame::new_from_slice(frame.as_slice()))
-                .map_err(|_| KaonicError::HardwareError);
-
-            if result.is_err() {
-                log::error!("tx [{}] {} error", self.radio.name(), i);
-                std::thread::sleep(core::time::Duration::from_millis(4));
-            } else {
-                log::debug!(
-                    "tx [{}] -) |o| {:>4} bytes {:>4}us",
-                    self.radio.name(),
-                    frame.len(),
-                    start.elapsed().as_micros(),
-                );
-
-                break;
-            }
-        }
-
-        let _ = self.radio.start_receive();
-
-        result
-    }
-
-    fn receive<'a>(
-        &mut self,
-        frame: &'a mut Self::RxFrame,
-        timeout: core::time::Duration,
-    ) -> Result<ReceiveResult, KaonicError> {
-        let start = Instant::now();
-
-        let result = self.radio.bb_receive(&mut self.bb_frame, timeout);
-
-        let edv = self.radio.read_edv().unwrap_or(127);
-
-        let _ = self.radio.start_receive();
-
-        match result {
-            Ok(_) => {
-                log::debug!(
-                    "rx [{}] (- |o| {:>4} bytes {:>3}us",
-                    self.radio.name(),
-                    self.bb_frame.len(),
-                    start.elapsed().as_micros(),
-                );
-
-                frame.copy_from_slice(self.bb_frame.as_slice());
-
-                Ok(ReceiveResult {
-                    rssi: edv,
-                    len: self.bb_frame.len(),
-                })
-            }
-            Err(err) => match err {
-                radio_rf215::error::RadioError::Timeout => {
-                    let rssi = self.radio.read_rssi().unwrap_or(127);
-
-                    self.noise_dbm = rssi;
-
-                    // log::trace!("RX ({}): RSSI:{}", self.radio.name(), rssi);
-
-                    return Err(KaonicError::Timeout);
-                }
-                _ => {
-                    log::error!("receive error {}", self.radio.name());
-
-                    return Err(err.into());
-                }
-            },
-        }
-    }
-
-    fn scan(&mut self, _timeout: core::time::Duration) -> Result<ScanResult, KaonicError> {
-        let rssi = self.radio.read_rssi()?;
-
-        Ok(ScanResult { rssi, snr: 0 })
-    }
-
-    fn set_accelerator(&mut self, accelerator: &Accelerator) -> Result<(), KaonicError> {
-        match accelerator {
-            Accelerator::Hardware => {
-                let fpga = self.fpga.clone().ok_or(KaonicError::HardwareError)?;
-
-                // Route I/Q to the FPGA: external loopback + I/Q radio mode, then power it on.
-                // self.radio.set_iq_loopback(true)?;
-                self.radio.set_mode(ChipMode::Radio)?;
-                fpga.lock().unwrap().enable()?;
-            }
-            Accelerator::Native => {
-                // Back to on-chip baseband; power the FPGA down.
-                self.radio.set_mode(ChipMode::BasebandRadio)?;
-                self.radio.set_iq_loopback(false)?;
-                if let Some(fpga) = &self.fpga {
-                    fpga.lock().unwrap().disable()?;
-                }
-            }
-        }
-
-        self.accelerator = *accelerator;
-
-        Ok(())
-    }
-
-    fn get_accelerator(&self) -> Accelerator {
-        self.accelerator
-    }
-
-    fn set_antenna(&mut self, band: RadioBand, antenna: Antenna) -> Result<(), KaonicError> {
-        log::debug!(
-            "set antenna ({}) {:?} = {:?}",
-            self.radio.name(),
-            band,
-            antenna
-        );
-
-        self.fem.set_antenna(band, antenna)
-    }
-
-    fn get_antenna(&self, band: RadioBand) -> Antenna {
-        self.fem.antenna(band)
-    }
-}
 
 pub const KAONIC1S_RADIO_COUNT: usize = 2;
+
 pub struct Kaonic1SMachine {
     radios: [Option<Kaonic1SRadio>; KAONIC1S_RADIO_COUNT],
     fpga: Option<Arc<Mutex<Kaonic1SFpga>>>,
@@ -407,7 +50,7 @@ impl Kaonic1SMachine {
             log::info!("fpga module found");
         }
 
-        let radios = create_radios(fpga.clone()).map_err(|_| KaonicError::HardwareError)?;
+        let radios = driver::create_radios(fpga.clone()).map_err(|_| KaonicError::HardwareError)?;
 
         Ok(Self { radios, fpga })
     }

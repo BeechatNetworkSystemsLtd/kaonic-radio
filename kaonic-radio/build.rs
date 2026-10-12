@@ -1,20 +1,28 @@
 fn main() {
-    // Ensure only one machine feature is enabled
-    let kaonic1s = cfg!(feature = "machine-kaonic1s");
-    let host = cfg!(feature = "machine-host");
+    // Ensure exactly one machine feature is enabled
+    let machines = [
+        (cfg!(feature = "machine-kaonic1s-us"), "kaonic1s-us"),
+        (cfg!(feature = "machine-kaonic1s-ks"), "kaonic1s-ks"),
+        (cfg!(feature = "machine-host"), "host"),
+    ];
 
-    if kaonic1s && host {
-        panic!("Cannot enable both 'machine-kaonic1s' and 'machine-host' features. Use --no-default-features --features machine-<type>");
-    }
+    let enabled: Vec<&str> = machines
+        .iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, name)| *name)
+        .collect();
 
-    if !kaonic1s && !host {
-        panic!("Must enable either 'machine-kaonic1s' or 'machine-host' feature");
-    }
-
-    // Set cfg flag for easier conditional compilation
-    if kaonic1s {
-        println!("cargo:rustc-cfg=machine=\"kaonic1s\"");
-    } else if host {
-        println!("cargo:rustc-cfg=machine=\"host\"");
+    match enabled.as_slice() {
+        [machine] => {
+            // Set cfg flag for easier conditional compilation
+            println!("cargo:rustc-cfg=machine=\"{machine}\"");
+        }
+        [] => panic!(
+            "Must enable one of the 'machine-kaonic1s-us', 'machine-kaonic1s-ks' or 'machine-host' features"
+        ),
+        _ => panic!(
+            "Cannot enable more than one machine feature ({}). Use --no-default-features --features machine-<type>",
+            enabled.join(", ")
+        ),
     }
 }
