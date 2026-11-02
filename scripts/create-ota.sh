@@ -6,7 +6,7 @@ BASE_DIR="$(pwd -P)"
 
 usage() {
     cat <<'EOF'
-Usage: create-ota.sh [-b BUILD_DIR] [-o OUTPUT_DIR] [-s SIGN_KEY] [-k]
+Usage: create-ota.sh [-b BUILD_DIR] [-o OUTPUT_DIR] [-s SIGN_KEY] [-k] [-V VARIANT]
 
 Create a Kaonic OTA package.
 
@@ -15,6 +15,9 @@ Options:
   -o, --output-dir  Path to output directory
   -s, --sign-key    Path to PEM private key used for signing
   -k, --keep        Keep the unpacked OTA directory
+  -V, --variant     Radio backend the binary was built for: us (spidev) or ks
+                    (kaonic_rf215 driver). Names the package and is recorded in
+                    kaonic-commd.variant; the two are not interchangeable on a board.
   -h, --help        Show this help message
 EOF
 }
@@ -23,6 +26,7 @@ build_dir="${BASE_DIR}/target/armv7-unknown-linux-gnueabihf/release"
 output_dir="${BASE_DIR}/deploy"
 sign_key=""
 keep=0
+variant=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,6 +46,10 @@ while [[ $# -gt 0 ]]; do
             keep=1
             shift
             ;;
+        -V|--variant)
+            variant="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -53,6 +61,14 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+case "$variant" in
+    ""|us|ks) ;;
+    *)
+        echo "Unknown variant: $variant (expected us or ks)" >&2
+        exit 1
+        ;;
+esac
 
 command -v openssl >/dev/null 2>&1 || {
     echo "openssl is required" >&2
@@ -77,7 +93,7 @@ output_dir="$(cd "$output_dir" && pwd -P)"
 binary_path="${build_dir}/kaonic-commd"
 service_path="${BASE_DIR}/kaonic-commd/kaonic-commd.service"
 plugin_toml_path="${BASE_DIR}/kaonic-commd/kaonic-plugin.toml"
-release_name="kaonic-comm-ota"
+release_name="kaonic-commd-ota${variant:+-$variant}"
 release_path="${output_dir}/${release_name}"
 release_archive_path="${output_dir}/${release_name}.zip"
 
@@ -128,6 +144,9 @@ cp "$binary_path" "$release_path/kaonic-commd"
 cp "$service_path" "$release_path/kaonic-commd.service"
 cp "$plugin_toml_path" "$release_path/kaonic-plugin.toml"
 printf '%s' "$version" > "$release_path/kaonic-commd.version"
+if [[ -n "$variant" ]]; then
+    printf '%s' "$variant" > "$release_path/kaonic-commd.variant"
+fi
 openssl dgst -sha256 "$release_path/kaonic-commd" | awk '{print $NF}' > "$release_path/kaonic-commd.sha256"
 
 if [[ -n "$sign_key" ]]; then

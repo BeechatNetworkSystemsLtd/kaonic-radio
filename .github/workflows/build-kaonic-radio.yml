@@ -184,29 +184,43 @@ jobs:
           echo "Installing Yocto SDK..."
           ./yocto-sdk.sh -y -d /opt/yocto-sdk
 
-      - name: Build 'kaonic-commd' with machine-kaonic1s-us feature
-        run: |
-          unset LD_LIBRARY_PATH
-          source /opt/yocto-sdk/environment-setup
-          cargo build --release -p kaonic-commd --features machine-kaonic1s-us
-
-      - name: Create Kaonic OTA package
+      # One package per radio backend. Both builds share target/, so each binary
+      # is packaged before the next build replaces it. The features are exclusive:
+      # kaonic-radio's build script refuses two machines, hence --no-default-features.
+      - name: Build 'kaonic-commd' and create its OTA packages (us, ks)
+        env:
+          OTA_SIGN_KEY: ${{ secrets.BEECHAT_KAONIC_COMM_OTA_KEY }}
         run: |
           echo $(git describe --tags --long)
           mkdir -p deploy
           trap 'rm -f ota_sign_key.pem' EXIT
-          printf '%s' "${{ secrets.BEECHAT_KAONIC_COMM_OTA_KEY }}" > ota_sign_key.pem
+          printf '%s' "$OTA_SIGN_KEY" > ota_sign_key.pem
           chmod 600 ota_sign_key.pem
-          bash scripts/create-ota.sh \
-            -o ./deploy \
-            -s ota_sign_key.pem \
-            --keep
+          for variant in us ks; do
+            (
+              unset LD_LIBRARY_PATH
+              source /opt/yocto-sdk/environment-setup
+              cargo build --release -p kaonic-commd --no-default-features --features "machine-kaonic1s-$variant"
+            )
+            bash scripts/create-ota.sh \
+              -o ./deploy \
+              -s ota_sign_key.pem \
+              --variant "$variant" \
+              --keep
+          done
 
-      - name: Upload OTA package artifact (temporary)
+      - name: Upload OTA package artifact, us (temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: kaonic-comm-ota
-          path: deploy/kaonic-comm-ota/*
+          name: kaonic-commd-ota-us
+          path: deploy/kaonic-commd-ota-us/*
+          retention-days: 1
+
+      - name: Upload OTA package artifact, ks (temporary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaonic-commd-ota-ks
+          path: deploy/kaonic-commd-ota-ks/*
           retention-days: 1
 
   pack-artifacts:
@@ -231,18 +245,24 @@ jobs:
           name: host-tools-windows
           path: package/host-tools/windows
 
-      - name: Download OTA package
+      - name: Download OTA package, us
         uses: actions/download-artifact@v4
         with:
-          name: kaonic-comm-ota
-          path: temp-ota
+          name: kaonic-commd-ota-us
+          path: temp-ota/us
 
-      - name: Create OTA zip and organize structure
+      - name: Download OTA package, ks
+        uses: actions/download-artifact@v4
+        with:
+          name: kaonic-commd-ota-ks
+          path: temp-ota/ks
+
+      - name: Create OTA zips and organize structure
         run: |
           mkdir -p package/kaonic1s
-          cd temp-ota
-          zip -r ../package/kaonic1s/kaonic-commd-ota.zip .
-          cd ..
+          for variant in us ks; do
+            (cd "temp-ota/$variant" && zip -r "../../package/kaonic1s/kaonic-commd-ota-$variant.zip" .)
+          done
           rm -rf temp-ota
 
       - name: Create zip archive
