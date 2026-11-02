@@ -176,9 +176,55 @@ const RADIO_CONFIG_REV_30: [RadioBusConfig; 2] = [
     },
 ];
 
-/// Selects the radio wiring for the machine named in `/etc/kaonic/kaonic_machine`.
-pub(super) fn radio_configs() -> &'static [RadioBusConfig; 2] {
-    let machine_config = match std::fs::read_to_string(MACHINE_FILE) {
+// kaonic1x-r09 has four I/O expanders where r30 has two, so the 16-bit one
+// (I2C2 @ 0x21) that carries the filter selects and FPGA_EN enumerates as
+// gpiochip11 instead of gpiochip9. Its line offsets are unchanged.
+const GPIO_EXP0_1X_REV_09: &str = "/dev/gpiochip11";
+
+const RADIO_CONFIG_1X_REV_09: [RadioBusConfig; 2] = [
+    RadioBusConfig {
+        name: "rfa",
+        rst_gpio: LinuxGpioConfig { line_name: "PD8" },
+        irq_gpio: LinuxGpioConfig { line_name: "PD9" },
+        spi: LinuxSpiConfig {
+            path: "/dev/spidev4.0",
+            max_speed: 12_000_000,
+        },
+        flt_v1_gpio: LinuxGpioLineConfig {
+            chip: GPIO_EXP0_1X_REV_09,
+            offset: 10,
+        },
+        flt_v2_gpio: LinuxGpioLineConfig {
+            chip: GPIO_EXP0_1X_REV_09,
+            offset: 11,
+        },
+        flt_24_gpio: None,
+        ant_24_gpio: None,
+    },
+    RadioBusConfig {
+        name: "rfb",
+        rst_gpio: LinuxGpioConfig { line_name: "PE13" },
+        irq_gpio: LinuxGpioConfig { line_name: "PE15" },
+        spi: LinuxSpiConfig {
+            path: "/dev/spidev3.0",
+            max_speed: 12_000_000,
+        },
+        flt_v1_gpio: LinuxGpioLineConfig {
+            chip: GPIO_EXP0_1X_REV_09,
+            offset: 0,
+        },
+        flt_v2_gpio: LinuxGpioLineConfig {
+            chip: GPIO_EXP0_1X_REV_09,
+            offset: 1,
+        },
+        flt_24_gpio: None,
+        ant_24_gpio: None,
+    },
+];
+
+/// The machine named in `/etc/kaonic/kaonic_machine`.
+fn read_machine() -> String {
+    match std::fs::read_to_string(MACHINE_FILE) {
         Ok(content) => content.trim().to_string(),
         Err(e) => {
             log::warn!(
@@ -188,7 +234,26 @@ pub(super) fn radio_configs() -> &'static [RadioBusConfig; 2] {
             );
             "stm32mp1-kaonic-protoa".to_string() // Default fallback
         }
-    };
+    }
+}
+
+/// The line that powers the FPGA.
+pub(super) fn fpga_enable_gpio() -> LinuxGpioLineConfig {
+    match read_machine().as_str() {
+        "stm32mp1-kaonic1x-r09" => LinuxGpioLineConfig {
+            chip: GPIO_EXP0_1X_REV_09,
+            offset: 7,
+        },
+        _ => LinuxGpioLineConfig {
+            chip: "/dev/gpiochip9",
+            offset: 7,
+        },
+    }
+}
+
+/// Selects the radio wiring for the machine named in `/etc/kaonic/kaonic_machine`.
+pub(super) fn radio_configs() -> &'static [RadioBusConfig; 2] {
+    let machine_config = read_machine();
 
     log::info!("Kaonic machine configuration: {}", machine_config);
 
@@ -198,6 +263,7 @@ pub(super) fn radio_configs() -> &'static [RadioBusConfig; 2] {
         "stm32mp1-kaonic-protoc" => &RADIO_CONFIG_REV_C,
         "stm32mp1-kaonic1s-r24" => &RADIO_CONFIG_REV_24,
         "stm32mp1-kaonic1s-r30" => &RADIO_CONFIG_REV_30,
+        "stm32mp1-kaonic1x-r09" => &RADIO_CONFIG_1X_REV_09,
         _ => {
             log::warn!(
                 "Unknown machine configuration '{}', using rev_a as default",

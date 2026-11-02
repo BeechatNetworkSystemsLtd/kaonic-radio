@@ -10,7 +10,10 @@ use std::sync::{Arc, Mutex};
 
 use kaonic_frame::frame::Frame;
 
-use crate::{error::KaonicError, platform::kaonic1s::fpga::Kaonic1SFpga};
+use crate::{
+    error::KaonicError,
+    platform::kaonic1s::{config::fpga_enable_gpio, fpga::Kaonic1SFpga},
+};
 
 mod config;
 pub mod fem;
@@ -40,7 +43,7 @@ pub struct Kaonic1SMachine {
 
 impl Kaonic1SMachine {
     pub fn new() -> Result<Self, KaonicError> {
-        let fpga = Kaonic1SFpga::new()
+        let fpga = Kaonic1SFpga::new(fpga_enable_gpio())
             .map(|fpga| Arc::new(Mutex::new(fpga)))
             .ok();
 
