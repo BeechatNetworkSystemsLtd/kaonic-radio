@@ -12,7 +12,6 @@ Kaonic Radio is a complete radio communication stack built around the AT86RF215 
 - Adaptive QoS with channel assessment and power control
 - LDPC forward error correction
 - gRPC-based control interface
-- Desktop GUI for monitoring and configuration
 - Network performance testing tools
 
 ## Architecture
@@ -21,7 +20,7 @@ Kaonic Radio is a complete radio communication stack built around the AT86RF215 
 ┌──────────────────────────────────────────────────────────────┐
 │                    Application Layer                         │
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐      │
-│  │  kaonic-gui  │   │ kaonic-iperf │   │ Your App     │      │
+│  │  commd-cli   │   │ kaonic-iperf │   │ Your App     │      │
 │  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘      │
 │         │                  │                  │              │
 │         └──────────────────┴──────────────────┘              │
@@ -121,16 +120,6 @@ Factory testing and provisioning service.
 
 ### Applications
 
-#### **kaonic-gui**
-Desktop GUI application for radio monitoring and control.
-- Built with ImGui + OpenGL (glow backend)
-- Real-time RSSI visualization and waterfall display
-- Radio configuration interface
-- OTA firmware update support
-- iPerf integration for performance testing
-
-**Platform Support:** Windows, Linux, macOS
-
 #### **kaonic-iperf**
 Network performance measurement tool (similar to iperf).
 - Client/Server mode for RTT and throughput testing
@@ -185,11 +174,10 @@ Test utilities and validation tools for the radio stack.
 ### Development Platforms
 - **macOS** (aarch64-apple-darwin, x86_64-apple-darwin)
   - Dummy radio implementation for application development
-  - GUI and testing tools fully functional
+  - Testing tools fully functional
   
 - **Windows**
   - Dummy radio implementation
-  - GUI support via OpenGL
 
 ## License
 
