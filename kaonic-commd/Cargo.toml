@@ -4,8 +4,15 @@ version = "0.2.4"
 edition = "2024"
 
 [features]
-default = ["machine-kaonic1s"]
-machine-kaonic1s = ["kaonic-radio/machine-kaonic1s", "kaonic-ctrl/machine-kaonic1s"]
+default = ["machine-kaonic1s-us"]
+# The same board either way; only the radio driver differs.
+# -us: the RF215 driver runs in this process, over spidev.
+machine-kaonic1s-us = ["kaonic-radio/machine-kaonic1s-us", "kaonic-ctrl/machine-kaonic1s"]
+# -ks: the in-kernel kaonic_rf215 driver owns the chip (netdev).
+machine-kaonic1s-ks = ["kaonic-radio/machine-kaonic1s-ks", "kaonic-ctrl/machine-kaonic1s"]
+# Kaonic 1X: aliases, as its radio section is the 1S's.
+machine-kaonic1x-us = ["machine-kaonic1s-us"]
+machine-kaonic1x-ks = ["machine-kaonic1s-ks"]
 machine-host = ["kaonic-radio/machine-host", "kaonic-ctrl/machine-host"]
 
 [dependencies]

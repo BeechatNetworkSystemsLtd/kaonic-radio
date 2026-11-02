@@ -1,9 +1,12 @@
+#[cfg(feature = "machine-kaonic1s-us")]
 use std::time::Instant;
 
+#[cfg(feature = "machine-kaonic1s-us")]
 use libgpiod::line::Bias;
 use libgpiod::line::Offset;
 use libgpiod::line::Value;
 
+#[cfg(feature = "machine-kaonic1s-us")]
 use linux_embedded_hal::SpidevDevice;
 
 use crate::error::KaonicError;
@@ -46,14 +49,17 @@ pub struct LinuxSpiConfig {
     pub max_speed: u32,
 }
 
+#[cfg(feature = "machine-kaonic1s-us")]
 #[derive(Debug)]
 pub struct LinuxGpioInterrupt {
     pub(super) buffer: libgpiod::request::Buffer,
     pub(super) request: libgpiod::request::Request,
 }
 
+#[cfg(feature = "machine-kaonic1s-us")]
 pub type LinuxSpi = SpidevDevice;
 
+#[cfg(feature = "machine-kaonic1s-us")]
 impl LinuxGpioInterrupt {
     pub fn new(line_name: &str, name: &str) -> Result<Self, KaonicError> {
         let gpio = create_gpio_by_name(&format!("{}-rf215-irq", name), line_name, {
@@ -73,12 +79,14 @@ impl LinuxGpioInterrupt {
     }
 }
 
+#[cfg(feature = "machine-kaonic1s-us")]
 #[derive(Debug)]
 pub struct LinuxGpioReset {
     pub(super) line: Offset,
     pub(super) request: libgpiod::request::Request,
 }
 
+#[cfg(feature = "machine-kaonic1s-us")]
 impl LinuxGpioReset {
     pub fn new(line_name: &str, name: &str) -> Result<Self, KaonicError> {
         let gpio = create_gpio_by_name(&format!("{}-rf215-rst", name), line_name, {
@@ -148,11 +156,13 @@ impl LinuxOutputPin {
     }
 }
 
+#[cfg(feature = "machine-kaonic1s-us")]
 #[derive(Debug)]
 pub struct LinuxClock {
     pub(crate) start_time: Instant,
 }
 
+#[cfg(feature = "machine-kaonic1s-us")]
 impl LinuxClock {
     pub fn new() -> Self {
         Self {

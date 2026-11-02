@@ -23,8 +23,6 @@ members = [
     "radio-common"
 ]
 
-# exclude = ["kaonic-gui"]
-
 [profile.release]
 opt-level = 3          # max speed (default for release; explicit)
 lto = "fat"            # whole-program inlining across crates

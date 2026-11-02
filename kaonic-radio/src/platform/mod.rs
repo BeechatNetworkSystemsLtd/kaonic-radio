@@ -1,11 +1,11 @@
-#[cfg(feature = "machine-kaonic1s")]
+#[cfg(any(feature = "machine-kaonic1s-us", feature = "machine-kaonic1s-ks"))]
 #[path = "platform_kaonic1s.rs"]
 mod platform_impl;
 
-#[cfg(feature = "machine-kaonic1s")]
+#[cfg(any(feature = "machine-kaonic1s-us", feature = "machine-kaonic1s-ks"))]
 pub mod linux;
 
-#[cfg(feature = "machine-kaonic1s")]
+#[cfg(feature = "machine-kaonic1s-us")]
 pub mod linux_rf215;
 
 #[cfg(feature = "machine-host")]

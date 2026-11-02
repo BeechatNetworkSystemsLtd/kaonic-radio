@@ -4,8 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["machine-kaonic1s"]
-machine-kaonic1s = ["dep:libgpiod", "dep:linux-embedded-hal", "dep:memmap2"]
+default = ["machine-kaonic1s-us"]
+# Kaonic 1S with the radio driven from user space, over spidev.
+machine-kaonic1s-us = ["dep:libgpiod", "dep:linux-embedded-hal", "dep:memmap2"]
+# Kaonic 1S with the radio driven from kernel space: the kaonic_rf215 driver's
+# network devices (netdev).
+machine-kaonic1s-ks = ["dep:libgpiod", "dep:memmap2", "dep:libc"]
+# Kaonic 1X has the 1S's radio section, so it is the same implementation.
+machine-kaonic1x-us = ["machine-kaonic1s-us"]
+machine-kaonic1x-ks = ["machine-kaonic1s-ks"]
 machine-host = []
 
 [dependencies]
@@ -20,4 +27,5 @@ log = "0.4"
 libgpiod = { version = "0.2.2", optional = true }
 linux-embedded-hal = { version = "0.4.0", default-features = false, features = [ "spi" ], optional = true }
 memmap2 = { version = "0.9.8", optional = true }
+libc = { version = "0.2", optional = true }
 

@@ -21,11 +21,9 @@ jobs:
       - name: Build Host-Tools for macOS
         working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          echo 'exclude = ["kaonic-iperf"]' >> Cargo.toml
           cd ./kaonic-iperf
           cargo build --release --target aarch64-apple-darwin --no-default-features --features machine-host
-          cd ../kaonic-gui
-          cargo build --release --target aarch64-apple-darwin
           cd ..
           cargo build --release -p kaonic-commd-cli --target aarch64-apple-darwin
 
@@ -34,7 +32,6 @@ jobs:
           mkdir -p deploy/macos
           cp target/aarch64-apple-darwin/release/kaonic-iperf deploy/macos/
           cp target/aarch64-apple-darwin/release/kaonic-commd-cli deploy/macos/
-          cp kaonic-gui/target/aarch64-apple-darwin/release/kaonic-gui deploy/macos/
           cp kaonic-iperf/kaonic-config.toml deploy/macos/
 
       - name: Upload macOS artifacts (temporary)
@@ -55,16 +52,14 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler pkg-config libglib2.0-dev libgtk-3-dev
+          sudo apt-get install -y protobuf-compiler pkg-config
 
       - name: Build Host-Tools for Linux
         working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          echo 'exclude = ["kaonic-iperf"]' >> Cargo.toml
           cd ./kaonic-iperf
           cargo build --release --target x86_64-unknown-linux-gnu --no-default-features --features machine-host
-          cd ../kaonic-gui
-          cargo build --release --target x86_64-unknown-linux-gnu
           cd ..
           cargo build --release -p kaonic-commd-cli --target x86_64-unknown-linux-gnu
 
@@ -73,7 +68,6 @@ jobs:
           mkdir -p deploy/linux
           cp target/x86_64-unknown-linux-gnu/release/kaonic-iperf deploy/linux/
           cp target/x86_64-unknown-linux-gnu/release/kaonic-commd-cli deploy/linux/
-          cp kaonic-gui/target/x86_64-unknown-linux-gnu/release/kaonic-gui deploy/linux/
           cp kaonic-iperf/kaonic-config.toml deploy/linux/
 
       - name: Upload Linux artifacts (temporary)
@@ -100,11 +94,9 @@ jobs:
       - name: Build Host-Tools for Windows
         working-directory: ${{ github.workspace }}
         run: |
-          echo 'exclude = ["kaonic-gui", "kaonic-iperf"]' >> Cargo.toml
+          echo 'exclude = ["kaonic-iperf"]' >> Cargo.toml
           cd ./kaonic-iperf
           cargo build --release --target x86_64-pc-windows-gnu --no-default-features --features machine-host
-          cd ../kaonic-gui
-          cargo build --release --target x86_64-pc-windows-gnu
           cd ..
           cargo build --release -p kaonic-commd-cli --target x86_64-pc-windows-gnu
 
@@ -113,7 +105,6 @@ jobs:
           mkdir -p deploy/windows
           cp target/x86_64-pc-windows-gnu/release/kaonic-iperf.exe deploy/windows/
           cp target/x86_64-pc-windows-gnu/release/kaonic-commd-cli.exe deploy/windows/
-          cp kaonic-gui/target/x86_64-pc-windows-gnu/release/kaonic-gui.exe deploy/windows/
           cp kaonic-iperf/kaonic-config.toml deploy/windows/
           # Copy required DLLs
           SYSROOT="$(x86_64-w64-mingw32-gcc -print-sysroot)/mingw"
@@ -184,29 +175,43 @@ jobs:
           echo "Installing Yocto SDK..."
           ./yocto-sdk.sh -y -d /opt/yocto-sdk
 
-      - name: Build 'kaonic-commd' with machine-kaonic1s feature
-        run: |
-          unset LD_LIBRARY_PATH
-          source /opt/yocto-sdk/environment-setup
-          cargo build --release -p kaonic-commd --features machine-kaonic1s
-
-      - name: Create Kaonic OTA package
+      # One package per radio backend. Both builds share target/, so each binary
+      # is packaged before the next build replaces it. The features are exclusive:
+      # kaonic-radio's build script refuses two machines, hence --no-default-features.
+      - name: Build 'kaonic-commd' and create its OTA packages (us, ks)
+        env:
+          OTA_SIGN_KEY: ${{ secrets.BEECHAT_KAONIC_COMM_OTA_KEY }}
         run: |
           echo $(git describe --tags --long)
           mkdir -p deploy
           trap 'rm -f ota_sign_key.pem' EXIT
-          printf '%s' "${{ secrets.BEECHAT_KAONIC_COMM_OTA_KEY }}" > ota_sign_key.pem
+          printf '%s' "$OTA_SIGN_KEY" > ota_sign_key.pem
           chmod 600 ota_sign_key.pem
-          bash scripts/create-ota.sh \
-            -o ./deploy \
-            -s ota_sign_key.pem \
-            --keep
+          for variant in us ks; do
+            (
+              unset LD_LIBRARY_PATH
+              source /opt/yocto-sdk/environment-setup
+              cargo build --release -p kaonic-commd --no-default-features --features "machine-kaonic1s-$variant"
+            )
+            bash scripts/create-ota.sh \
+              -o ./deploy \
+              -s ota_sign_key.pem \
+              --variant "$variant" \
+              --keep
+          done
 
-      - name: Upload OTA package artifact (temporary)
+      - name: Upload OTA package artifact, us (temporary)
         uses: actions/upload-artifact@v4
         with:
-          name: kaonic-comm-ota
-          path: deploy/kaonic-comm-ota/*
+          name: kaonic-commd-ota-us
+          path: deploy/kaonic-commd-ota-us/*
+          retention-days: 1
+
+      - name: Upload OTA package artifact, ks (temporary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaonic-commd-ota-ks
+          path: deploy/kaonic-commd-ota-ks/*
           retention-days: 1
 
   pack-artifacts:
@@ -231,18 +236,24 @@ jobs:
           name: host-tools-windows
           path: package/host-tools/windows
 
-      - name: Download OTA package
+      - name: Download OTA package, us
         uses: actions/download-artifact@v4
         with:
-          name: kaonic-comm-ota
-          path: temp-ota
+          name: kaonic-commd-ota-us
+          path: temp-ota/us
 
-      - name: Create OTA zip and organize structure
+      - name: Download OTA package, ks
+        uses: actions/download-artifact@v4
+        with:
+          name: kaonic-commd-ota-ks
+          path: temp-ota/ks
+
+      - name: Create OTA zips and organize structure
         run: |
           mkdir -p package/kaonic1s
-          cd temp-ota
-          zip -r ../package/kaonic1s/kaonic-commd-ota.zip .
-          cd ..
+          for variant in us ks; do
+            (cd "temp-ota/$variant" && zip -r "../../package/kaonic1s/kaonic-commd-ota-$variant.zip" .)
+          done
           rm -rf temp-ota
 
       - name: Create zip archive

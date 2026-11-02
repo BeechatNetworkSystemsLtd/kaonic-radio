@@ -134,3 +134,6 @@ pub fn create_machine() -> Result<DummyMachine, KaonicError> {
 pub type PlatformRadio = DummyRadio;
 pub type PlatformRadioEvent = DummyRadioEvent;
 pub type PlatformRadioFrame = DummyFrame;
+
+/// How long a receive should wait for a frame after the radio's event fired.
+pub const PLATFORM_RECEIVE_TIMEOUT: core::time::Duration = core::time::Duration::from_millis(2);

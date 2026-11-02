@@ -15,7 +15,10 @@ use kaonic_ctrl::{
 };
 use kaonic_radio::{
     error::KaonicError,
-    platform::{PlatformRadio, PlatformRadioEvent, PlatformRadioFrame, create_machine},
+    platform::{
+        PLATFORM_RECEIVE_TIMEOUT, PlatformRadio, PlatformRadioEvent, PlatformRadioFrame,
+        create_machine,
+    },
     radio::Radio,
 };
 
@@ -251,7 +254,7 @@ impl RadioServer {
 
                     loop {
                         match radio.lock().unwrap()
-                            .receive(rx_frame.clear(), core::time::Duration::from_millis(2))
+                            .receive(rx_frame.clear(), PLATFORM_RECEIVE_TIMEOUT)
                         {
                             Ok(rr) => {
                                 let frame_len = rx_frame.len() as u64;
