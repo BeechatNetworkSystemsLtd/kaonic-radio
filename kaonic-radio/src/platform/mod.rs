@@ -12,4 +12,10 @@ pub mod linux_rf215;
 #[path = "platform_dummy.rs"]
 mod platform_impl;
 
+// The Kaonic boards' filter banks build without the hardware, so their tests run on the host too.
+#[cfg(all(test, feature = "machine-host"))]
+#[path = "kaonic1s/bank.rs"]
+#[allow(dead_code)]
+mod kaonic1s_bank;
+
 pub use platform_impl::*;

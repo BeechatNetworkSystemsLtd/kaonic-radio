@@ -6,7 +6,9 @@
 
 use crate::{
     error::KaonicError,
+    filter::BandRanges,
     platform::{
+        kaonic1s::bank::{self, FilterBank, BAND_24, CHIP_SUB_GHZ, KAONIC1S_SUB_GHZ, KAONIC1X_SUB_GHZ},
         kaonic1s::fem::Kaonic1SRadioFem,
         linux::{LinuxGpioConfig, LinuxGpioLineConfig, LinuxOutputPin, LinuxSpiConfig},
     },
@@ -24,7 +26,34 @@ pub(super) struct RadioBusConfig {
     pub flt_v2_gpio: LinuxGpioLineConfig,
     pub flt_24_gpio: Option<LinuxGpioLineConfig>,
     pub ant_24_gpio: Option<LinuxGpioLineConfig>,
+    /// The sub-GHz filters.
+    pub bank: FilterBank,
+    /// Frequency ranges (informative).
+    pub ranges: BandRanges,
+    /// The start frequency.
+    pub start_hz: u64,
 }
+
+
+/// The prototypes.
+const RANGES_PROTO: BandRanges = BandRanges {
+    sub_ghz: Some(CHIP_SUB_GHZ),
+    band_24: Some(BAND_24),
+};
+/// kaonic1s r24/r30.
+const RANGES_1S: BandRanges = BandRanges {
+    sub_ghz: Some(KAONIC1S_SUB_GHZ),
+    band_24: Some(BAND_24),
+};
+/// kaonic1x r09 (its 2.4 GHz path is not confirmed).
+const RANGES_1X_REV_09: BandRanges = BandRanges {
+    sub_ghz: Some(KAONIC1X_SUB_GHZ),
+    band_24: Some(BAND_24),
+};
+
+const START_HZ: u64 = 869_535_000;
+/// Inside the r09's band.
+const START_HZ_1X: u64 = 433_920_000;
 
 const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
     RadioBusConfig {
@@ -48,6 +77,9 @@ const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
             offset: 12,
         }),
         ant_24_gpio: None,
+        bank: bank::PROTO,
+        ranges: RANGES_PROTO,
+        start_hz: START_HZ,
     },
     RadioBusConfig {
         name: "rfb",
@@ -70,64 +102,82 @@ const RADIO_CONFIG_REV_A: [RadioBusConfig; 2] = [
             offset: 2,
         }),
         ant_24_gpio: None,
+        bank: bank::PROTO,
+        ranges: RANGES_PROTO,
+        start_hz: START_HZ,
     },
 ];
 
-const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] = [
-    RadioBusConfig {
-        name: "rfa",
-        rst_gpio: LinuxGpioConfig { line_name: "PD8" },
-        irq_gpio: LinuxGpioConfig { line_name: "PD9" },
-        spi: LinuxSpiConfig {
-            path: "/dev/spidev6.0",
-            max_speed: 12_000_000,
+/// protob, protoc and kaonic1s-r24 share their wiring.
+const fn radio_config_rev_b(
+    bank: FilterBank,
+    ranges: BandRanges,
+) -> [RadioBusConfig; 2] {
+    [
+        RadioBusConfig {
+            name: "rfa",
+            rst_gpio: LinuxGpioConfig { line_name: "PD8" },
+            irq_gpio: LinuxGpioConfig { line_name: "PD9" },
+            spi: LinuxSpiConfig {
+                path: "/dev/spidev6.0",
+                max_speed: 12_000_000,
+            },
+            flt_v1_gpio: LinuxGpioLineConfig {
+                chip: "/dev/gpiochip9",
+                offset: 10,
+            },
+            flt_v2_gpio: LinuxGpioLineConfig {
+                chip: "/dev/gpiochip9",
+                offset: 11,
+            },
+            flt_24_gpio: Some(LinuxGpioLineConfig {
+                chip: "/dev/gpiochip9",
+                offset: 12,
+            }),
+            ant_24_gpio: Some(LinuxGpioLineConfig {
+                chip: "/dev/gpiochip9",
+                offset: 13,
+            }),
+            bank,
+            ranges,
+            start_hz: START_HZ,
         },
-        flt_v1_gpio: LinuxGpioLineConfig {
-            chip: "/dev/gpiochip9",
-            offset: 10,
+        RadioBusConfig {
+            name: "rfb",
+            rst_gpio: LinuxGpioConfig { line_name: "PE13" },
+            irq_gpio: LinuxGpioConfig { line_name: "PE15" },
+            spi: LinuxSpiConfig {
+                path: "/dev/spidev3.0",
+                max_speed: 12_000_000,
+            },
+            flt_v1_gpio: LinuxGpioLineConfig {
+                chip: "/dev/gpiochip9",
+                offset: 0,
+            },
+            flt_v2_gpio: LinuxGpioLineConfig {
+                chip: "/dev/gpiochip9",
+                offset: 1,
+            },
+            flt_24_gpio: Some(LinuxGpioLineConfig {
+                chip: "/dev/gpiochip9",
+                offset: 2,
+            }),
+            ant_24_gpio: Some(LinuxGpioLineConfig {
+                chip: "/dev/gpiochip9",
+                offset: 14,
+            }),
+            bank,
+            ranges,
+            start_hz: START_HZ,
         },
-        flt_v2_gpio: LinuxGpioLineConfig {
-            chip: "/dev/gpiochip9",
-            offset: 11,
-        },
-        flt_24_gpio: Some(LinuxGpioLineConfig {
-            chip: "/dev/gpiochip9",
-            offset: 12,
-        }),
-        ant_24_gpio: Some(LinuxGpioLineConfig {
-            chip: "/dev/gpiochip9",
-            offset: 13,
-        }),
-    },
-    RadioBusConfig {
-        name: "rfb",
-        rst_gpio: LinuxGpioConfig { line_name: "PE13" },
-        irq_gpio: LinuxGpioConfig { line_name: "PE15" },
-        spi: LinuxSpiConfig {
-            path: "/dev/spidev3.0",
-            max_speed: 12_000_000,
-        },
-        flt_v1_gpio: LinuxGpioLineConfig {
-            chip: "/dev/gpiochip9",
-            offset: 0,
-        },
-        flt_v2_gpio: LinuxGpioLineConfig {
-            chip: "/dev/gpiochip9",
-            offset: 1,
-        },
-        flt_24_gpio: Some(LinuxGpioLineConfig {
-            chip: "/dev/gpiochip9",
-            offset: 2,
-        }),
-        ant_24_gpio: Some(LinuxGpioLineConfig {
-            chip: "/dev/gpiochip9",
-            offset: 14,
-        }),
-    },
-];
+    ]
+}
 
+const RADIO_CONFIG_REV_B: [RadioBusConfig; 2] =
+    radio_config_rev_b(bank::PROTO, RANGES_PROTO);
 const RADIO_CONFIG_REV_C: [RadioBusConfig; 2] = RADIO_CONFIG_REV_B;
-const RADIO_CONFIG_REV_24: [RadioBusConfig; 2] = RADIO_CONFIG_REV_C;
+const RADIO_CONFIG_REV_24: [RadioBusConfig; 2] =
+    radio_config_rev_b(bank::KAONIC1S_R24, RANGES_1S);
 
 const RADIO_CONFIG_REV_30: [RadioBusConfig; 2] = [
     RadioBusConfig {
@@ -151,6 +201,9 @@ const RADIO_CONFIG_REV_30: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip9",
             offset: 13,
         }),
+        bank: bank::KAONIC1S_R30,
+        ranges: RANGES_1S,
+        start_hz: START_HZ,
     },
     RadioBusConfig {
         name: "rfb",
@@ -173,6 +226,9 @@ const RADIO_CONFIG_REV_30: [RadioBusConfig; 2] = [
             chip: "/dev/gpiochip9",
             offset: 14,
         }),
+        bank: bank::KAONIC1S_R30,
+        ranges: RANGES_1S,
+        start_hz: START_HZ,
     },
 ];
 
@@ -200,6 +256,9 @@ const RADIO_CONFIG_1X_REV_09: [RadioBusConfig; 2] = [
         },
         flt_24_gpio: None,
         ant_24_gpio: None,
+        bank: bank::KAONIC1X_R09,
+        ranges: RANGES_1X_REV_09,
+        start_hz: START_HZ_1X,
     },
     RadioBusConfig {
         name: "rfb",
@@ -219,6 +278,9 @@ const RADIO_CONFIG_1X_REV_09: [RadioBusConfig; 2] = [
         },
         flt_24_gpio: None,
         ant_24_gpio: None,
+        bank: bank::KAONIC1X_R09,
+        ranges: RANGES_1X_REV_09,
+        start_hz: START_HZ_1X,
     },
 ];
 
@@ -274,8 +336,12 @@ pub(super) fn radio_configs() -> &'static [RadioBusConfig; 2] {
     }
 }
 
-/// Requests the front-end lines of one radio.
-pub(super) fn create_fem(config: &RadioBusConfig) -> Result<Kaonic1SRadioFem, KaonicError> {
+/// Requests the front-end lines of radio `index` and selects the filter for
+/// its start frequency, so the lines never sit at V1=V2=0 (switch shutdown).
+pub(super) fn create_fem(
+    index: usize,
+    config: &RadioBusConfig,
+) -> Result<Kaonic1SRadioFem, KaonicError> {
     let flt_24 = if let Some(flt_24) = &config.flt_24_gpio {
         LinuxOutputPin::new_from_line(
             flt_24.chip,
@@ -298,7 +364,10 @@ pub(super) fn create_fem(config: &RadioBusConfig) -> Result<Kaonic1SRadioFem, Ka
         None
     };
 
-    Ok(Kaonic1SRadioFem::new(
+    let mut fem = Kaonic1SRadioFem::new(
+        index,
+        config.bank,
+        config.ranges,
         LinuxOutputPin::new_from_line(
             config.flt_v1_gpio.chip,
             config.flt_v1_gpio.offset,
@@ -311,5 +380,9 @@ pub(super) fn create_fem(config: &RadioBusConfig) -> Result<Kaonic1SRadioFem, Ka
         )?,
         flt_24,
         ant_24,
-    ))
+    );
+
+    fem.set_filter(None, Some(config.start_hz))?;
+
+    Ok(fem)
 }

@@ -259,6 +259,45 @@ impl RadioClient {
         }
     }
 
+    /// The module's sub-GHz filters, the selection (`None` is auto) and the
+    /// filter in use.
+    pub async fn get_filters(
+        &mut self,
+        module: usize,
+    ) -> Result<crate::protocol::GetFiltersResponse, ControllerError> {
+        let response = self
+            .request(Payload::GetFiltersRequest(
+                crate::protocol::GetFiltersRequest { module },
+            ))
+            .await?;
+
+        match response.payload {
+            Payload::Error => Err(ControllerError::MethodError),
+            Payload::GetFiltersResponse(filters) => Ok(filters),
+            _ => Err(ControllerError::DecodeError),
+        }
+    }
+
+    /// Selects a sub-GHz filter by index, or `None` for auto.
+    pub async fn set_filter(
+        &mut self,
+        module: usize,
+        filter: Option<u8>,
+    ) -> Result<(), ControllerError> {
+        let response = self
+            .request(Payload::SetFilterRequest(crate::protocol::SetFilterRequest {
+                module,
+                filter,
+            }))
+            .await?;
+
+        match response.payload {
+            Payload::Error => Err(ControllerError::MethodError),
+            Payload::SetFilterResponse => Ok(()),
+            _ => Err(ControllerError::DecodeError),
+        }
+    }
+
     /// Retrieves the currently selected antenna for the given band of the specified module.
     pub async fn get_antenna(
         &mut self,

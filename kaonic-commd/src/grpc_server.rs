@@ -26,7 +26,8 @@ pub use kaonic::radio_server::RadioServer as GrpcRadioServer;
 use kaonic::{
     Acceleration as ProtoAcceleration, Antenna as ProtoAntenna, AntennaRequest, Empty,
     InfoResponse, ModuleRequest, RadioAcceleration, RadioAntenna, RadioBand as ProtoRadioBand,
-    RadioConfig as ProtoRadioConfig, RadioFrame as ProtoFrame, RadioModulation,
+    RadioConfig as ProtoRadioConfig, RadioBandRange, RadioFilter, RadioFilterSelect, RadioFilters,
+    RadioFrame as ProtoFrame, RadioModulation,
     RadioModulationFsk, RadioModulationOfdm, RadioModulationQpsk, ReceiveRequest, ReceiveResponse,
     StatisticsResponse, TransmitEventRequest, TransmitEventResponse, TransmitRequest,
     TransmitResponse, device_server::Device, radio_modulation::Modulation as ProtoModulation,
@@ -466,6 +467,67 @@ impl RadioTrait for RadioService {
             .unwrap()
             .set_antenna(band, antenna)
             .map_err(|e| Status::internal(format!("set_antenna: {:?}", e)))?;
+        Ok(Response::new(Empty {}))
+    }
+
+    // ── GetFilters ────────────────────────────────────────────────────────────
+
+    async fn get_filters(
+        &self,
+        request: Request<ModuleRequest>,
+    ) -> Result<Response<RadioFilters>, Status> {
+        let req = request.into_inner();
+        let idx = self.module_index(req.module)?;
+        let (state, ranges) = {
+            let radio = self.radios[idx].lock().unwrap();
+            (radio.get_filter(), radio.band_ranges())
+        };
+        Ok(Response::new(RadioFilters {
+            module: req.module,
+            filters: state
+                .filters
+                .iter()
+                .map(|filter| RadioFilter {
+                    label: filter.label.to_string(),
+                    min_khz: filter.min_khz,
+                    max_khz: filter.max_khz,
+                })
+                .collect(),
+            selected: state.selected.map(u32::from),
+            active: state.active.map(u32::from),
+            ranges: [(RadioBand::Band09, ranges.sub_ghz), (RadioBand::Band24, ranges.band_24)]
+                .into_iter()
+                .filter_map(|(band, range)| {
+                    range.map(|range| RadioBandRange {
+                        band: band_to_proto(&band),
+                        min_khz: range.min_khz,
+                        max_khz: range.max_khz,
+                    })
+                })
+                .collect(),
+        }))
+    }
+
+    // ── SetFilter ─────────────────────────────────────────────────────────────
+
+    async fn set_filter(
+        &self,
+        request: Request<RadioFilterSelect>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        let idx = self.module_index(req.module)?;
+        let filter = match req.filter {
+            Some(index) => Some(
+                u8::try_from(index)
+                    .map_err(|_| Status::invalid_argument("set_filter: no such filter"))?,
+            ),
+            None => None,
+        };
+        self.radios[idx]
+            .lock()
+            .unwrap()
+            .set_filter(filter)
+            .map_err(|e| Status::invalid_argument(format!("set_filter: {:?}", e)))?;
         Ok(Response::new(Empty {}))
     }
 

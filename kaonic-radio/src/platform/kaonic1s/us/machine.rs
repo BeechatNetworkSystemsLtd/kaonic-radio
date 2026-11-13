@@ -84,7 +84,11 @@ fn configure_radio_24<I: Bus + Clone>(
     Ok(())
 }
 
-fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>, index: usize) -> Result<(), RadioError> {
+fn configure_radio<I: Bus + Clone>(
+    rf: &mut Rf215<I>,
+    index: usize,
+    start_hz: u64,
+) -> Result<(), RadioError> {
     rf.set_config(&radio_rf215::RfConfig {
         output_drive: PadOutputDrive::Drive8mA,
         irq_active_low: false,
@@ -108,7 +112,7 @@ fn configure_radio<I: Bus + Clone>(rf: &mut Rf215<I>, index: usize) -> Result<()
 
     rf.set_frequency(
         &RadioConfigBuilder::new()
-            .freq(Hertz::new(869_535_000))
+            .freq(Hertz::new(start_hz))
             .channel((index as u16 + 1) * 5)
             .build(),
     )?;
@@ -172,11 +176,11 @@ fn create_radio(
 
     log::debug!("configure radio {}", config.name);
 
-    configure_radio(&mut radio, index)
+    configure_radio(&mut radio, index, config.start_hz)
         .inspect_err(|_| log::error!("radio config fail for {}", config.name))
         .map_err(|_| BusError::ControlFailure)?;
 
-    let fem = create_fem(config).map_err(|_| BusError::ControlFailure)?;
+    let fem = create_fem(index, config).map_err(|_| BusError::ControlFailure)?;
 
     Ok(Kaonic1SRadio::new(radio, radio_event, fem, fpga))
 }

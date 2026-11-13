@@ -33,6 +33,7 @@ use radio_common::{
 
 use crate::{
     error::KaonicError,
+    filter::{BandRanges, FilterState},
     platform::kaonic1s::{
         config::{create_fem, radio_configs, RadioBusConfig},
         fem::Kaonic1SRadioFem,
@@ -168,6 +169,13 @@ impl Transceiver {
             rssi,
             applied: [None; ATTR_COUNT],
         })
+    }
+
+    /// The channel centre the driver holds now.
+    fn centre_hz(&self) -> Option<u64> {
+        let read = |name: &str| self.attrs.read_i32(name).ok().and_then(|v| u64::try_from(v).ok());
+
+        Some(read("frequency")? + read("channel")? * read("channel_spacing")?)
     }
 
     fn set(&mut self, attr: Attr, value: u32) -> Result<(), KaonicError> {
@@ -345,7 +353,7 @@ impl Kaonic1SRadio {
             name: board.name,
             bands,
             active,
-            fem: create_fem(board)?,
+            fem: create_fem(index, board)?,
             event: Arc::new(Mutex::new(Kaonic1SRadioEvent { waiter })),
             config: RadioConfigBuilder::new().build(),
             modulation: Modulation::Ofdm(OfdmModulation::default()),
@@ -362,7 +370,7 @@ impl Kaonic1SRadio {
         // The same starting point as the user-space radio, so two boards
         // hear each other out of the box whichever driver each one runs.
         let config = RadioConfigBuilder::new()
-            .freq(Hertz::new(869_535_000))
+            .freq(Hertz::new(board.start_hz))
             .channel((index as u16 + 1) * 5)
             .build();
 
@@ -655,6 +663,26 @@ impl Radio for Kaonic1SRadio {
 
     fn get_antenna(&self, band: RadioBand) -> Antenna {
         self.fem.antenna(band)
+    }
+
+    fn get_filter(&self) -> FilterState {
+        self.fem.filter()
+    }
+
+    fn band_ranges(&self) -> BandRanges {
+        self.fem.ranges()
+    }
+
+    /// The hub writes the driver's settings itself, so the frequency the
+    /// filter is chosen for is read back from the sub-GHz transceiver.
+    fn set_filter(&mut self, filter: Option<u8>) -> Result<(), KaonicError> {
+        log::debug!("set filter ({}) = {:?}", self.name, filter);
+
+        let centre = self.bands[band_index(RadioBand::Band09)]
+            .as_ref()
+            .and_then(|trx| trx.centre_hz());
+
+        self.fem.set_filter(filter, centre)
     }
 }
 

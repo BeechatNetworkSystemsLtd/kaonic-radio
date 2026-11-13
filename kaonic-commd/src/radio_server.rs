@@ -8,8 +8,8 @@ use std::{
 
 use kaonic_ctrl::{
     protocol::{
-        GetStatisticsResponse, Message, MessageBuilder, Payload, RadioFrame, ReceiveModule,
-        TransmitModule,
+        BandRangeInfo, FilterInfo, GetFiltersResponse, GetStatisticsResponse, Message,
+        MessageBuilder, Payload, RadioFrame, ReceiveModule, TransmitModule,
     },
     server::ServerHandler,
 };
@@ -19,7 +19,7 @@ use kaonic_radio::{
         PLATFORM_RECEIVE_TIMEOUT, PlatformRadio, PlatformRadioEvent, PlatformRadioFrame,
         create_machine,
     },
-    radio::Radio,
+    radio::{Radio, RadioBand},
 };
 
 use rand::rngs::OsRng;
@@ -431,6 +431,59 @@ impl ServerHandler<Message> for RadioServer {
                             band: get.band,
                             antenna,
                         });
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
+            Payload::GetFiltersRequest(get) => {
+                if get.module < self.radios.len() {
+                    let (state, ranges) = {
+                        let radio = self.radios[get.module].lock().unwrap();
+                        (radio.get_filter(), radio.band_ranges())
+                    };
+
+                    response.payload = Payload::GetFiltersResponse(GetFiltersResponse {
+                        module: get.module,
+                        filters: state
+                            .filters
+                            .iter()
+                            .map(|filter| FilterInfo {
+                                label: filter.label.to_string(),
+                                min_khz: filter.min_khz,
+                                max_khz: filter.max_khz,
+                            })
+                            .collect(),
+                        selected: state.selected,
+                        active: state.active,
+                        ranges: [
+                            (RadioBand::Band09, ranges.sub_ghz),
+                            (RadioBand::Band24, ranges.band_24),
+                        ]
+                        .into_iter()
+                        .filter_map(|(band, range)| {
+                            range.map(|range| BandRangeInfo {
+                                band,
+                                min_khz: range.min_khz,
+                                max_khz: range.max_khz,
+                            })
+                        })
+                        .collect(),
+                    });
+                } else {
+                    response.payload = Payload::Error;
+                }
+            }
+            Payload::SetFilterRequest(set) => {
+                if set.module < self.radios.len() {
+                    let result = self.radios[set.module]
+                        .lock()
+                        .unwrap()
+                        .set_filter(set.filter);
+
+                    response.payload = match result {
+                        Ok(_) => Payload::SetFilterResponse,
+                        Err(_) => Payload::Error,
+                    };
                 } else {
                     response.payload = Payload::Error;
                 }

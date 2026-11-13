@@ -168,6 +168,50 @@ pub struct GetAntennaResponse {
     pub antenna: Antenna,
 }
 
+/// One sub-GHz filter of a radio's front end. A filter is known by its index
+/// in `GetFiltersResponse::filters`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilterInfo {
+    pub label: String,
+    /// Passband, in kHz.
+    pub min_khz: u32,
+    pub max_khz: u32,
+}
+
+/// A frequency range a radio's front end is built for, per band.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BandRangeInfo {
+    pub band: RadioBand,
+    pub min_khz: u32,
+    pub max_khz: u32,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GetFiltersRequest {
+    pub module: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GetFiltersResponse {
+    pub module: usize,
+    /// Empty when the radio has no filter control.
+    pub filters: Vec<FilterInfo>,
+    /// An index into `filters`; `None` is auto.
+    pub selected: Option<u8>,
+    /// The filter in use now; `None` without filters.
+    pub active: Option<u8>,
+    /// What the front end is built for, for display; empty when not known.
+    pub ranges: Vec<BandRangeInfo>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SetFilterRequest {
+    pub module: usize,
+    /// An index into the module's filters; `None` is auto. Also re-applies
+    /// the filter for the current frequency.
+    pub filter: Option<u8>,
+}
+
 //***********************************************************************************************//
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -202,6 +246,10 @@ pub enum Payload {
     SetAntennaResponse,
     GetAntennaRequest(GetAntennaRequest),
     GetAntennaResponse(GetAntennaResponse),
+    GetFiltersRequest(GetFiltersRequest),
+    GetFiltersResponse(GetFiltersResponse),
+    SetFilterRequest(SetFilterRequest),
+    SetFilterResponse,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -393,5 +441,84 @@ impl<const MTU: usize, const R: usize> PeerCoder<Message, MTU, R> for MessageCod
         message.validate()?;
 
         Ok(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encode(payload: &Payload) -> Vec<u8> {
+        let mut out = Vec::new();
+        payload
+            .serialize(&mut rmp_serde::Serializer::new(&mut out))
+            .unwrap();
+        out
+    }
+
+    /// rmp-serde names a variant by its name and a struct by its fields in
+    /// order; clients that do not link this crate (the hub) encode the same.
+    #[test]
+    fn filter_messages_have_a_fixed_encoding() {
+        let get = Payload::GetFiltersRequest(GetFiltersRequest { module: 1 });
+        let mut expected = vec![0x81, 0xb1];
+        expected.extend_from_slice(b"GetFiltersRequest");
+        expected.extend_from_slice(&[0x91, 0x01]);
+        assert_eq!(encode(&get), expected);
+
+        let set = Payload::SetFilterRequest(SetFilterRequest { module: 0, filter: None });
+        let mut expected = vec![0x81, 0xb0];
+        expected.extend_from_slice(b"SetFilterRequest");
+        expected.extend_from_slice(&[0x92, 0x00, 0xc0]);
+        assert_eq!(encode(&set), expected);
+
+        let set = Payload::SetFilterRequest(SetFilterRequest { module: 1, filter: Some(2) });
+        let mut expected = vec![0x81, 0xb0];
+        expected.extend_from_slice(b"SetFilterRequest");
+        expected.extend_from_slice(&[0x92, 0x01, 0x02]);
+        assert_eq!(encode(&set), expected);
+
+        let mut expected = vec![0xb1];
+        expected.extend_from_slice(b"SetFilterResponse");
+        assert_eq!(encode(&Payload::SetFilterResponse), expected);
+    }
+
+    #[test]
+    fn filter_response_round_trips() {
+        let response = GetFiltersResponse {
+            module: 1,
+            filters: vec![FilterInfo {
+                label: "Wide".into(),
+                min_khz: 730_000,
+                max_khz: 960_000,
+            }],
+            selected: None,
+            active: Some(0),
+            ranges: vec![BandRangeInfo {
+                band: RadioBand::Band09,
+                min_khz: 863_000,
+                max_khz: 928_000,
+            }],
+        };
+        let bytes = encode(&Payload::GetFiltersResponse(response.clone()));
+
+        match rmp_serde::from_slice(&bytes).unwrap() {
+            Payload::GetFiltersResponse(decoded) => assert_eq!(decoded, response),
+            other => panic!("{other:?}"),
+        }
+
+        // What a client without this crate reads (the hub's commd client).
+        let mut expected = vec![0x81, 0xb2];
+        expected.extend_from_slice(b"GetFiltersResponse");
+        expected.extend_from_slice(&[0x95, 0x01, 0x91, 0x93, 0xa4]);
+        expected.extend_from_slice(b"Wide");
+        expected.extend_from_slice(&[0xce, 0x00, 0x0b, 0x23, 0x90]);
+        expected.extend_from_slice(&[0xce, 0x00, 0x0e, 0xa6, 0x00]);
+        expected.extend_from_slice(&[0xc0, 0x00]);
+        expected.extend_from_slice(&[0x91, 0x93, 0xa6]);
+        expected.extend_from_slice(b"Band09");
+        expected.extend_from_slice(&[0xce, 0x00, 0x0d, 0x2b, 0x18]);
+        expected.extend_from_slice(&[0xce, 0x00, 0x0e, 0x29, 0x00]);
+        assert_eq!(bytes, expected);
     }
 }

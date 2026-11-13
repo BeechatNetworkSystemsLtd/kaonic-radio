@@ -15,8 +15,13 @@ use radio_rf215::{
 
 use crate::{
     error::KaonicError,
+    filter::{BandRanges, FilterState},
     platform::{
-        kaonic1s::{fem::Kaonic1SRadioFem, fpga::Kaonic1SFpga, Kaonic1SFrame},
+        kaonic1s::{
+            fem::Kaonic1SRadioFem,
+            fpga::Kaonic1SFpga,
+            Kaonic1SFrame,
+        },
         linux::{LinuxClock, LinuxGpioInterrupt, LinuxGpioReset, LinuxSpi, SharedBus},
         linux_rf215::AtomicInterrupt,
     },
@@ -268,5 +273,19 @@ impl Radio for Kaonic1SRadio {
 
     fn get_antenna(&self, band: RadioBand) -> Antenna {
         self.fem.antenna(band)
+    }
+
+    fn get_filter(&self) -> FilterState {
+        self.fem.filter()
+    }
+
+    fn band_ranges(&self) -> BandRanges {
+        self.fem.ranges()
+    }
+
+    fn set_filter(&mut self, filter: Option<u8>) -> Result<(), KaonicError> {
+        log::debug!("set filter ({}) = {:?}", self.radio.name(), filter);
+
+        self.fem.set_filter(filter, None)
     }
 }

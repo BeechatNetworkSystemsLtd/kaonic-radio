@@ -168,6 +168,36 @@ message AntennaRequest {
 }
 
 //***************************************************************************//
+// Sub-GHz filter
+//***************************************************************************//
+
+message RadioFilter {
+  string label   = 1;
+  uint32 min_khz = 2; // passband
+  uint32 max_khz = 3;
+}
+
+message RadioBandRange {
+  RadioBand band    = 1;
+  uint32    min_khz = 2;
+  uint32    max_khz = 3;
+}
+
+// A filter is known by its index in `filters`.
+message RadioFilters {
+  RadioModule             module   = 1;
+  repeated RadioFilter    filters  = 2; // empty: no filter control
+  optional uint32         selected = 3; // absent: auto
+  optional uint32         active   = 4; // the filter in use now
+  repeated RadioBandRange ranges   = 5; // what the front end is built for (informative)
+}
+
+message RadioFilterSelect {
+  RadioModule     module = 1;
+  optional uint32 filter = 2; // absent: auto
+}
+
+//***************************************************************************//
 // Radio service
 //***************************************************************************//
 
@@ -211,6 +241,8 @@ service Radio {
   rpc SetAcceleration (RadioAcceleration) returns (Empty)             {}
   rpc GetAntenna    (AntennaRequest)  returns (RadioAntenna) {}
   rpc SetAntenna    (RadioAntenna)    returns (Empty)        {}
+  rpc GetFilters    (ModuleRequest)     returns (RadioFilters) {}
+  rpc SetFilter     (RadioFilterSelect) returns (Empty)        {}
   rpc Transmit      (TransmitRequest) returns (TransmitResponse) {}
   rpc TransmitEventStream (TransmitEventRequest) returns (stream TransmitEventResponse) {}
   rpc ReceiveStream (ReceiveRequest)  returns (stream ReceiveResponse) {}

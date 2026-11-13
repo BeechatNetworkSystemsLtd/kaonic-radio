@@ -15,6 +15,7 @@ use crate::{
     platform::kaonic1s::{config::fpga_enable_gpio, fpga::Kaonic1SFpga},
 };
 
+pub mod bank;
 mod config;
 pub mod fem;
 pub mod fpga;
