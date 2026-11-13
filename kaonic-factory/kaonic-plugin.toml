@@ -1,10 +1,11 @@
+# A core program: updated as a package, never installed as a plugin.
 [kaonic-plugin]
-name = "Kaonic Factory"
-description = "Self-Test factory utility server"
-version = "0.1.0"
-service = "kaonic-factory.service"
+format = 2
+id = "kaonic-factory"
+name = "Kaonic Factory Server"
+description = "Self-test server for factory checks of the radio and the board"
+version = "{version}"
 developer = "Beechat Network Systems Ltd"
-github_url = "https://github.com/BeechatNetworkSystemsLtd/kaonic-radio"
-symlink = "/usr/bin/kaonic-factory"
 channel = "stable"
-
+url = "https://github.com/BeechatNetworkSystemsLtd/kaonic-radio"
+icon = "files/icon.png"

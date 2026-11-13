@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d6c59c"/><stop offset="1" stop-color="#9c8650"/>
+    </linearGradient>
+    <linearGradient id="gear" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6c7a3a"/><stop offset="1" stop-color="#36401b"/>
+    </linearGradient>
+    <linearGradient id="probe" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f7d36a"/><stop offset="1" stop-color="#e48b2c"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#2a2410" flood-opacity="0.45"/>
+    </filter>
+    <clipPath id="tileclip"><rect x="48" y="44" width="416" height="416" rx="92"/></clipPath>
+  </defs>
+  <rect x="48" y="44" width="416" height="416" rx="92" fill="url(#tile)" filter="url(#shadow)"/>
+  <rect x="48" y="44" width="416" height="208" rx="92" fill="#ffffff" opacity="0.1"/>
+  <!-- hazard stripes at the foot, as on the installer icon -->
+  <g clip-path="url(#tileclip)">
+    <rect x="48" y="418" width="416" height="42" fill="#6b5a2f" opacity="0.55"/>
+    <g fill="#8a7740" opacity="0.8">
+      <path d="M40 460 L72 418 H102 L70 460Z"/><path d="M110 460 L142 418 H172 L140 460Z"/><path d="M180 460 L212 418 H242 L210 460Z"/>
+      <path d="M250 460 L282 418 H312 L280 460Z"/><path d="M320 460 L352 418 H382 L350 460Z"/><path d="M390 460 L422 418 H452 L420 460Z"/>
+    </g>
+  </g>
+  <!-- gear -->
+  <g filter="url(#soft)" transform="translate(236 236)">
+    <g fill="url(#gear)">
+      <circle r="112"/>
+      <g id="teeth">
+        <rect x="-24" y="-150" width="48" height="56" rx="8"/>
+      </g>
+      <use href="#teeth" transform="rotate(45)"/><use href="#teeth" transform="rotate(90)"/><use href="#teeth" transform="rotate(135)"/>
+      <use href="#teeth" transform="rotate(180)"/><use href="#teeth" transform="rotate(225)"/><use href="#teeth" transform="rotate(270)"/><use href="#teeth" transform="rotate(315)"/>
+    </g>
+    <circle r="62" fill="#1d2410"/>
+    <circle r="62" fill="none" stroke="#c9b78a" stroke-width="6"/>
+    <!-- a test trace in the hub -->
+    <path d="M-46 4 H-24 L-14 -26 L2 30 L14 -10 L22 4 H46" fill="none" stroke="#8ef08a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- probe -->
+  <g filter="url(#soft)" transform="rotate(-40 360 330)">
+    <rect x="300" y="318" width="120" height="26" rx="13" fill="url(#probe)"/>
+    <rect x="404" y="314" width="34" height="34" rx="8" fill="#3e4520"/>
+    <path d="M300 331 L262 331" stroke="#c9b78a" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="258" cy="331" r="7" fill="#fff4c8"/>
+  </g>
+</svg>
